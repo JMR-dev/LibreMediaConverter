@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Built FFmpeg AAR - see tools/ffmpeg/ for the build recipe
+app/libs/*.aar

@@ -1,41 +1,92 @@
 plugins {
     alias(libs.plugins.android.application)
+    // Required even under AGP 9: the Compose compiler plugin is NOT built in.
+    alias(libs.plugins.kotlin.compose)
 }
 
 android {
-    namespace = "com.example.androidmediaconverter"
+    namespace = "dev.jasonmross.mediaconverter"
+
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.example.androidmediaconverter"
+        applicationId = "dev.jasonmross.mediaconverter"
         minSdk = 33
+        // AGP 9 defaults targetSdk to compileSdk, so always state it explicitly.
         targetSdk = 37
         versionCode = 1
-        versionName = "1.0"
+        versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // 64-bit only. The 16 KB page-size rules apply to these ABIs; 32-bit is not
+        // required by Play and would add ~2 more copies of the FFmpeg .so files.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    buildFeatures {
+        compose = true
     }
 
     buildTypes {
         release {
             optimization {
+                // Left off until the JNI keep rules land with FFmpeg (see plan, Phase 6).
                 enable = false
             }
         }
     }
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            // Uncompressed .so, so the APK zip-aligns them on 16 KB boundaries.
+            useLegacyPackaging = false
+        }
     }
 }
 
+// Top-level: android.kotlinOptions {} was removed in AGP 9.
+// jvmTarget is inherited from compileOptions.targetCompatibility.
+kotlin {
+    compilerOptions {}
+}
+
 dependencies {
-    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
-    implementation(libs.material)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    // Media3 Transformer: the hardware conversion path (MediaCodec decode -> GL surface
+    // -> MediaCodec encode). Apache-2.0, so no licensing exposure.
+    implementation(libs.media3.transformer)
+    implementation(libs.media3.effect)
+    implementation(libs.media3.common)
+    implementation(libs.media3.muxer)
+
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.graphics)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.material3.windowsize)
+    debugImplementation(libs.compose.ui.tooling)
+
     testImplementation(libs.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
+
+    androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
