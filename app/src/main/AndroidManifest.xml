@@ -1,5 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!--
+      mediaProcessing is API 35+. Foreground service types became mandatory at API 34,
+      but this type did not exist yet, so API 34 has to fall back to dataSync. minSdk is
+      33, where no type is required at all. See ConversionForegroundType.
+    -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING"
+        android:minSdkVersion="35" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+        android:maxSdkVersion="34" />
+
+    <!-- Runtime permission since API 33, so it always applies here. Notifications are
+         off by default on new installs. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -20,6 +39,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          setForeground() runs WorkManager's own SystemForegroundService, so the type
+          must be declared on THAT service, not on one of ours. Both types are listed
+          because the manifest cannot branch on API level; the type actually passed at
+          runtime is chosen in ConversionForegroundType.
+        -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="mediaProcessing|dataSync"
+            tools:node="merge" />
     </application>
 
 </manifest>

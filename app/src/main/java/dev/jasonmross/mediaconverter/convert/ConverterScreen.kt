@@ -1,5 +1,6 @@
 package dev.jasonmross.mediaconverter.convert
 
+import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +46,18 @@ fun ConverterScreen(
         ActivityResultContracts.CreateDocument("video/mp4")
     ) { uri -> uri?.let(viewModel::save) }
 
+    // Requested at the point of use rather than on first launch, so the ask carries
+    // its own justification. The conversion starts either way: without the permission
+    // the foreground service still runs, but its progress notification is confined to
+    // the Task Manager instead of the shade.
+    val requestNotifications = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { viewModel.convert() }
+
+    fun startConversion() {
+        requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     Column(
         modifier = modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -64,7 +77,11 @@ fun ConverterScreen(
 
             is ConversionState.Ready -> {
                 FileCard(s.input)
-                Button(onClick = viewModel::convert) { Text("Convert") }
+                Text(
+                    "We'll show progress in a notification so you can leave the app.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(onClick = ::startConversion) { Text("Convert") }
                 OutlinedButton(onClick = { pickInput.launch(arrayOf("video/*")) }) {
                     Text("Choose a different file")
                 }
@@ -77,13 +94,23 @@ fun ConverterScreen(
                     progress = { s.percent / 100f },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                OutlinedButton(onClick = viewModel::cancel) { Text("Cancel") }
+            }
+
+            is ConversionState.Waiting -> {
+                FileCard(s.input)
+                Text(
+                    "Paused. The system limits background media processing to six " +
+                        "hours a day, so this will resume automatically.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedButton(onClick = viewModel::cancel) { Text("Cancel") }
             }
 
             is ConversionState.Converted -> {
                 FileCard(s.input)
                 Text(
-                    "Done in ${formatSeconds(s.elapsedMs)} — " +
-                        "${formatBytes(s.staged.length())} output.",
+                    "Done — ${formatBytes(s.staged.length())} output.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Button(onClick = { chooseDestination.launch(viewModel.suggestedOutputName()) }) {
@@ -124,6 +151,3 @@ private fun formatBytes(bytes: Long): String = when {
     bytes >= 1_000 -> String.format(Locale.US, "%.0f kB", bytes / 1e3)
     else -> "$bytes B"
 }
-
-private fun formatSeconds(ms: Long): String =
-    String.format(Locale.US, "%.1f s", ms / 1000.0)

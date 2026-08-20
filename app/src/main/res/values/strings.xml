@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">Media Converter</string>
+
+    <string name="channel_conversions">Conversions</string>
+    <string name="channel_conversions_description">Progress for running conversions</string>
+    <string name="notification_progress">Converting… %1$d%%</string>
+    <string name="notification_preparing">Preparing…</string>
+    <string name="action_cancel">Cancel</string>
 </resources>

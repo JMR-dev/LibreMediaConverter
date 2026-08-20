@@ -74,6 +74,10 @@ dependencies {
     implementation(libs.media3.common)
     implementation(libs.media3.muxer)
 
+    // Durable job queue. WorkManager survives process death, which is what makes the
+    // queue resumable after the foreground-service timeout fires.
+    implementation(libs.androidx.work.runtime.ktx)
+
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.graphics)
@@ -88,5 +92,6 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.work.testing)
     debugImplementation(libs.compose.ui.test.manifest)
 }
