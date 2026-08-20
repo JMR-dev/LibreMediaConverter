@@ -5,26 +5,31 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
+import dev.jasonmross.mediaconverter.model.EnginePreference
+import dev.jasonmross.mediaconverter.model.OutputFormat
+import dev.jasonmross.mediaconverter.model.QualityTier
 import java.util.Locale
 
 @UnstableApi
@@ -34,6 +39,7 @@ fun ConverterScreen(
     viewModel: ConversionViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
 
     // ACTION_OPEN_DOCUMENT rather than the photo picker: the picker is images and video
     // only, offers no audio at all, and will not reliably surface .mkv/.flac/.webm.
@@ -43,23 +49,22 @@ fun ConverterScreen(
     ) { uri -> uri?.let(viewModel::onInputPicked) }
 
     val chooseDestination = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("video/mp4")
+        ActivityResultContracts.CreateDocument(settings.format.mimeType)
     ) { uri -> uri?.let(viewModel::save) }
 
-    // Requested at the point of use rather than on first launch, so the ask carries
-    // its own justification. The conversion starts either way: without the permission
-    // the foreground service still runs, but its progress notification is confined to
-    // the Task Manager instead of the shade.
+    // Requested at the point of use rather than on first launch, so the ask carries its
+    // own justification. The conversion starts either way: without the permission the
+    // foreground service still runs, but its progress notification is confined to the
+    // Task Manager instead of the shade.
     val requestNotifications = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { viewModel.convert() }
 
-    fun startConversion() {
-        requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-    }
-
     Column(
-        modifier = modifier.fillMaxSize().padding(24.dp),
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Media Converter", style = MaterialTheme.typography.headlineMedium)
@@ -67,22 +72,32 @@ fun ConverterScreen(
         when (val s = state) {
             is ConversionState.Idle -> {
                 Text(
-                    "Pick a video to transcode to H.265.",
+                    "Pick a file to convert.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Button(onClick = { pickInput.launch(arrayOf("video/*")) }) {
-                    Text("Choose file")
-                }
+                Button(onClick = { pickInput.launch(arrayOf("*/*")) }) { Text("Choose file") }
             }
 
             is ConversionState.Ready -> {
                 FileCard(s.input)
-                Text(
-                    "We'll show progress in a notification so you can leave the app.",
-                    style = MaterialTheme.typography.bodySmall,
+                FormatPicker(
+                    selected = settings.format,
+                    onSelect = viewModel::setFormat,
                 )
-                Button(onClick = ::startConversion) { Text("Convert") }
-                OutlinedButton(onClick = { pickInput.launch(arrayOf("video/*")) }) {
+                QualityPicker(
+                    selected = settings.quality,
+                    onSelect = viewModel::setQuality,
+                )
+                EnginePicker(
+                    selected = settings.enginePreference,
+                    onSelect = viewModel::setEnginePreference,
+                )
+                Button(
+                    onClick = {
+                        requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                ) { Text("Convert") }
+                OutlinedButton(onClick = { pickInput.launch(arrayOf("*/*")) }) {
                     Text("Choose a different file")
                 }
             }
@@ -113,9 +128,15 @@ fun ConverterScreen(
                     "Done — ${formatBytes(s.staged.length())} output.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                if (s.routeReason.isNotBlank()) {
+                    // Surfacing the routing decision rather than hiding it: it explains
+                    // why a job was slow, and makes the software fallback visible.
+                    AssistChip(onClick = {}, label = { Text(s.routeReason) })
+                }
                 Button(onClick = { chooseDestination.launch(viewModel.suggestedOutputName()) }) {
                     Text("Save file")
                 }
+                OutlinedButton(onClick = viewModel::reset) { Text("Start over") }
             }
 
             is ConversionState.Saved -> {
@@ -133,6 +154,58 @@ fun ConverterScreen(
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FormatPicker(selected: OutputFormat, onSelect: (OutputFormat) -> Unit) {
+    Text("Output format", style = MaterialTheme.typography.titleSmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutputFormat.entries.forEach { format ->
+            FilterChip(
+                selected = format == selected,
+                onClick = { onSelect(format) },
+                label = { Text(format.label) },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun QualityPicker(selected: QualityTier, onSelect: (QualityTier) -> Unit) {
+    Text("Quality", style = MaterialTheme.typography.titleSmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        QualityTier.entries.forEach { tier ->
+            FilterChip(
+                selected = tier == selected,
+                onClick = { onSelect(tier) },
+                label = { Text(tier.label) },
+            )
+        }
+    }
+    Text(selected.description, style = MaterialTheme.typography.bodySmall)
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EnginePicker(selected: EnginePreference, onSelect: (EnginePreference) -> Unit) {
+    Text("Engine", style = MaterialTheme.typography.titleSmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        EnginePreference.entries.forEach { preference ->
+            FilterChip(
+                selected = preference == selected,
+                onClick = { onSelect(preference) },
+                label = { Text(preference.label()) },
+            )
+        }
+    }
+}
+
+private fun EnginePreference.label(): String = when (this) {
+    EnginePreference.AUTO -> "Automatic"
+    EnginePreference.PREFER_HARDWARE -> "Prefer hardware"
+    EnginePreference.FORCE_SOFTWARE -> "Force software"
 }
 
 @Composable

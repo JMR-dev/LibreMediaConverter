@@ -8,6 +8,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import dev.jasonmross.mediaconverter.model.Engine
+import dev.jasonmross.mediaconverter.model.OutputFormat
+import dev.jasonmross.mediaconverter.model.QualityTier
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -85,6 +88,93 @@ class ConversionWorkerTest {
         val output = File(path!!)
         assertTrue("output file missing", output.exists())
         assertTrue("output file empty", output.length() > 0)
+    }
+
+    /**
+     * The whole point of the router, end to end.
+     *
+     * MP3 cannot be produced by Media3 on any Android version, so this asserts both
+     * that the job completes and that it was actually carried out by FFmpeg. Checking
+     * only that a file appeared would pass even if the routing were broken.
+     */
+    @Test
+    fun routesAnMp3JobToFfmpegAndProducesAFile() = runBlocking {
+        val request = ConversionWorker.request(
+            inputUri = Uri.fromFile(input),
+            displayName = "worker_sample.mp4",
+            sizeBytes = input.length(),
+            format = OutputFormat.MP3,
+        )
+        workManager.enqueue(request).result.get()
+
+        val terminal = withTimeout(TIMEOUT_MS) {
+            workManager.getWorkInfoByIdFlow(request.id).first { it != null && it.state.isFinished }
+        }
+
+        assertEquals(
+            "mp3 job did not succeed: ${terminal?.outputData?.getString(ConversionWorker.KEY_ERROR)}",
+            WorkInfo.State.SUCCEEDED,
+            terminal?.state,
+        )
+        assertEquals(
+            Engine.FFMPEG.name,
+            terminal?.outputData?.getString(ConversionWorker.KEY_ENGINE_USED),
+        )
+        val output = File(terminal!!.outputData.getString(ConversionWorker.KEY_OUTPUT_PATH)!!)
+        assertTrue("no mp3 written", output.exists() && output.length() > 0)
+        assertTrue("wrong extension: ${output.name}", output.name.endsWith(".mp3"))
+    }
+
+    @Test
+    fun routesAFastMp4JobToMedia3() = runBlocking {
+        val request = ConversionWorker.request(
+            inputUri = Uri.fromFile(input),
+            displayName = "worker_sample.mp4",
+            sizeBytes = input.length(),
+            format = OutputFormat.MP4_H265,
+            quality = QualityTier.FAST,
+        )
+        workManager.enqueue(request).result.get()
+
+        val terminal = withTimeout(TIMEOUT_MS) {
+            workManager.getWorkInfoByIdFlow(request.id).first { it != null && it.state.isFinished }
+        }
+
+        assertEquals(WorkInfo.State.SUCCEEDED, terminal?.state)
+        assertEquals(
+            Engine.MEDIA3.name,
+            terminal?.outputData?.getString(ConversionWorker.KEY_ENGINE_USED),
+        )
+    }
+
+    /** The quality tier is the reason the shipped binary is GPL, so verify it routes. */
+    @Test
+    fun routesABestQualityJobToFfmpeg() = runBlocking {
+        val request = ConversionWorker.request(
+            inputUri = Uri.fromFile(input),
+            displayName = "worker_sample.mp4",
+            sizeBytes = input.length(),
+            format = OutputFormat.MP4_H264,
+            quality = QualityTier.BEST,
+        )
+        workManager.enqueue(request).result.get()
+
+        val terminal = withTimeout(TIMEOUT_MS) {
+            workManager.getWorkInfoByIdFlow(request.id).first { it != null && it.state.isFinished }
+        }
+
+        assertEquals(WorkInfo.State.SUCCEEDED, terminal?.state)
+        assertEquals(
+            Engine.FFMPEG.name,
+            terminal?.outputData?.getString(ConversionWorker.KEY_ENGINE_USED),
+        )
+    }
+
+    @Test
+    fun outputNameTakesTheExtensionOfTheChosenFormat() {
+        assertEquals("clip_converted.mp3", ConversionWorker.outputNameFor("clip.mp4", OutputFormat.MP3))
+        assertEquals("clip_converted.gif", ConversionWorker.outputNameFor("clip.mov", OutputFormat.GIF))
+        assertEquals("clip_converted.mkv", ConversionWorker.outputNameFor("clip", OutputFormat.MKV_H264))
     }
 
     private companion object {

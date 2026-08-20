@@ -74,6 +74,11 @@ dependencies {
     implementation(libs.media3.common)
     implementation(libs.media3.muxer)
 
+    // FFmpeg, built from source by tools/ffmpeg. Not on any Maven repo: ffmpeg-kit was
+    // archived and delisted, and ffmpeg-kit-next is source-only by design.
+    // The AAR is gitignored; see app/libs/README.md to produce it.
+    implementation(files("libs/ffmpeg-kit-next-8.1.1.aar"))
+
     // Durable job queue. WorkManager survives process death, which is what makes the
     // queue resumable after the foreground-service timeout fires.
     implementation(libs.androidx.work.runtime.ktx)
