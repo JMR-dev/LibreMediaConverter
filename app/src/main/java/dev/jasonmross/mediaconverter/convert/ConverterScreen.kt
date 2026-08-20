@@ -26,8 +26,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.jasonmross.mediaconverter.ui.PrimaryButtonHeight
+import dev.jasonmross.mediaconverter.ui.ScreenPaddingHorizontal
+import dev.jasonmross.mediaconverter.ui.ScreenPaddingVertical
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
@@ -35,17 +37,6 @@ import dev.jasonmross.mediaconverter.model.EnginePreference
 import dev.jasonmross.mediaconverter.model.OutputFormat
 import dev.jasonmross.mediaconverter.model.QualityTier
 import java.util.Locale
-
-/** Primary actions are taller than the Material default so they read as the main affordance. */
-private val PrimaryButtonHeight: Dp = 56.dp
-
-/**
- * Horizontal screen inset.
- *
- * Deliberately tighter than the vertical inset so a full-width primary button reaches
- * close to both edges of the display.
- */
-private val ScreenPadding: Dp = 16.dp
 
 @UnstableApi
 @Composable
@@ -78,7 +69,7 @@ fun ConverterScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = ScreenPadding, vertical = 24.dp),
+            .padding(horizontal = ScreenPaddingHorizontal, vertical = ScreenPaddingVertical),
     ) {
         Text(
             "Media Converter",
