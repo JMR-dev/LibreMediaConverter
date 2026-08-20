@@ -41,8 +41,13 @@ interface SoftwareTranscoder {
  * test run — and they are also the ones a user meets on a bad day, so leaving them
  * unexercised means the error handling is the least-tested code in the app.
  *
- * Tests must call [reset] afterwards; [dev.jasonmross.mediaconverter.convert.FakeFailures]
+ * Tests must call [reset] afterwards; `FakeFailures` in the androidTest source set
  * does that for them.
+ *
+ * Every failure branch in the conversion and join paths is now forced by a test. The
+ * three that needed a seam are covered here; the rest are reachable directly, either
+ * with a content URI pointing at a provider that does not exist, or by constructing a
+ * worker's input Data by hand rather than through its request() helper.
  */
 object ConversionDependencies {
 

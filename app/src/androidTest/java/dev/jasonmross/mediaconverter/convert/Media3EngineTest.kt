@@ -8,6 +8,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -106,6 +107,32 @@ class Media3EngineTest {
         } finally {
             pool.shutdownNow()
         }
+    }
+
+    /**
+     * Transformer.start() failing synchronously.
+     *
+     * Previously written off as Media3-internal and unreachable. It is not: an output
+     * path whose parent directory does not exist makes start() fail, and the engine has
+     * to surface that as a rejected suspension rather than hanging forever waiting for
+     * a listener callback that will never come. A hang here would be far worse than an
+     * exception, because the worker would sit holding a foreground service.
+     */
+    @Test
+    fun anUnwritableOutputPathFailsInsteadOfHanging() {
+        val impossible = File("/does/not/exist/nested/out.mp4")
+        val failure = runCatching {
+            runBlocking {
+                withTimeout(30_000) {
+                    engine.transcode(Uri.fromFile(input), impossible, MimeTypes.VIDEO_H265) {}
+                }
+            }
+        }.exceptionOrNull()
+
+        assertTrue(
+            "an unwritable output must raise, not hang or silently pass; got $failure",
+            failure != null && failure !is kotlinx.coroutines.TimeoutCancellationException,
+        )
     }
 
     private fun durationMsOf(file: File): Long {
