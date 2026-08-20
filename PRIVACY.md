@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Media Converter does not collect any data.**
+**LibreMediaConverter does not collect any data.**
 
 That is the whole policy, but here is what it means concretely.
 

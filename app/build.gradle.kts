@@ -5,14 +5,14 @@ plugins {
 }
 
 android {
-    namespace = "dev.jasonmross.mediaconverter"
+    namespace = "org.libremediaconverter"
 
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "dev.jasonmross.mediaconverter"
+        applicationId = "org.libremediaconverter"
         minSdk = 33
         // AGP 9 defaults targetSdk to compileSdk, so always state it explicitly.
         targetSdk = 37

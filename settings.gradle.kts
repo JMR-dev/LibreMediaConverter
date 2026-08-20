@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AndroidMediaConverter"
+rootProject.name = "LibreMediaConverter"
 include(":app")

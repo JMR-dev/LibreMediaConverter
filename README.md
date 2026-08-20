@@ -1,4 +1,4 @@
-# Media Converter
+# LibreMediaConverter
 
 A free and open-source media converter for Android — batch video transcoding and
 compression, audio extraction and conversion, GIF and frame export, and file merging.
