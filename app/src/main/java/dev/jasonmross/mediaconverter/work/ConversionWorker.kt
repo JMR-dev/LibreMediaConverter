@@ -13,11 +13,8 @@ import androidx.work.WorkInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.arthenica.ffmpegkit.FFmpegKitConfig
-import dev.jasonmross.mediaconverter.codec.AndroidDeviceCodecs
-import dev.jasonmross.mediaconverter.convert.Media3Engine
+import dev.jasonmross.mediaconverter.convert.ConversionDependencies
 import dev.jasonmross.mediaconverter.convert.MediaProbe
-import dev.jasonmross.mediaconverter.convert.OutputPublisher
-import dev.jasonmross.mediaconverter.ffmpeg.FFmpegEngine
 import dev.jasonmross.mediaconverter.model.ConversionRequest
 import dev.jasonmross.mediaconverter.model.ConversionRouter
 import dev.jasonmross.mediaconverter.model.Engine
@@ -45,7 +42,8 @@ class ConversionWorker(
 ) : CoroutineWorker(context, params) {
 
     private val notifications = ConversionNotifications(applicationContext)
-    private val publisher = OutputPublisher(applicationContext)
+    // Resolved through ConversionDependencies so tests can force the failure paths.
+    private val publisher = ConversionDependencies.publisher(applicationContext)
 
     override suspend fun doWork(): Result {
         val inputUri = inputData.getString(KEY_INPUT_URI)?.let(Uri::parse)
@@ -69,7 +67,7 @@ class ConversionWorker(
         setForeground(foregroundInfo(displayName, percent = 0, indeterminate = true))
 
         val probe = MediaProbe.probe(applicationContext, inputUri)
-        val devices = AndroidDeviceCodecs.get()
+        val devices = ConversionDependencies.deviceCodecs()
         val request = ConversionRequest(
             format = format,
             quality = quality,
@@ -115,7 +113,7 @@ class ConversionWorker(
         staged: File,
         displayName: String,
     ) {
-        val engine = Media3Engine(applicationContext)
+        val engine = ConversionDependencies.hardware(applicationContext)
         try {
             engine.transcode(inputUri, staged, media3MimeType(request.format)) { percent ->
                 publishProgress(displayName, percent)
@@ -147,9 +145,10 @@ class ConversionWorker(
             inputUri.path
         } ?: error("Could not open the input file.")
 
-        FFmpegEngine().run(request, inputPath, staged, request.probe.durationMs) { percent ->
-            publishProgress(displayName, percent)
-        }
+        ConversionDependencies.software()
+            .run(request, inputPath, staged, request.probe.durationMs) { percent ->
+                publishProgress(displayName, percent)
+            }
     }
 
     private var lastNotified = 0L
@@ -178,14 +177,17 @@ class ConversionWorker(
      * later rather than tell the user the conversion failed — the work is still valid,
      * there is simply no budget right now.
      */
-    private fun handleTimeoutIfNeeded(cause: Throwable): Result {
-        if (stopReason == WorkInfo.STOP_REASON_FOREGROUND_SERVICE_TIMEOUT) {
-            Log.w(TAG, "Foreground service budget exhausted; will retry.", cause)
-            return Result.retry()
+    private fun handleTimeoutIfNeeded(cause: Throwable): Result =
+        when (FailureOutcome.forStopReason(stopReason)) {
+            FailureOutcome.RETRY -> {
+                Log.w(TAG, "Foreground service budget exhausted; will retry.", cause)
+                Result.retry()
+            }
+            FailureOutcome.FAIL -> {
+                Log.e(TAG, "Conversion failed.", cause)
+                Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
+            }
         }
-        Log.e(TAG, "Conversion failed.", cause)
-        return Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
-    }
 
     private fun media3MimeType(format: OutputFormat): String = when (format.videoCodec) {
         VideoCodec.H264 -> MimeTypes.VIDEO_H264

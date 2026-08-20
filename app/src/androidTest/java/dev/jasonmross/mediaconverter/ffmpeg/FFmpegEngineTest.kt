@@ -28,7 +28,7 @@ import java.io.File
 class FFmpegEngineTest {
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private val engine = FFmpegEngine()
+    private val engine: dev.jasonmross.mediaconverter.convert.SoftwareTranscoder = FFmpegEngine()
     private lateinit var input: File
     private val outputs = mutableListOf<File>()
 

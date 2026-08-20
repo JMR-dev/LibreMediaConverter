@@ -11,7 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import dev.jasonmross.mediaconverter.convert.OutputPublisher
+import dev.jasonmross.mediaconverter.convert.ConversionDependencies
 import dev.jasonmross.mediaconverter.ffmpeg.ConcatEngine
 import dev.jasonmross.mediaconverter.model.OutputFormat
 
@@ -33,7 +33,7 @@ class ConcatWorker(
 ) : CoroutineWorker(context, params) {
 
     private val notifications = ConversionNotifications(applicationContext)
-    private val publisher = OutputPublisher(applicationContext)
+    private val publisher = ConversionDependencies.publisher(applicationContext)
 
     override suspend fun doWork(): Result {
         val uris = inputData.getStringArray(KEY_INPUT_URIS)?.map(Uri::parse)
@@ -69,12 +69,15 @@ class ConcatWorker(
             )
         } catch (e: Throwable) {
             staged.delete()
-            if (stopReason == WorkInfo.STOP_REASON_FOREGROUND_SERVICE_TIMEOUT) {
-                Log.w(TAG, "Foreground budget exhausted while joining; will retry.", e)
-                Result.retry()
-            } else {
-                Log.e(TAG, "Joining failed.", e)
-                Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Joining failed.")))
+            when (FailureOutcome.forStopReason(stopReason)) {
+                FailureOutcome.RETRY -> {
+                    Log.w(TAG, "Foreground budget exhausted while joining; will retry.", e)
+                    Result.retry()
+                }
+                FailureOutcome.FAIL -> {
+                    Log.e(TAG, "Joining failed.", e)
+                    Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Joining failed.")))
+                }
             }
         }
     }

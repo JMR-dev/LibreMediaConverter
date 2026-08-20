@@ -56,7 +56,7 @@ class Media3EngineTest {
     fun transcodesH264ToH265AndReportsProgress(): Unit = runBlocking {
         val seen = mutableListOf<Int>()
 
-        val result = engine.transcode(
+        engine.transcode(
             input = Uri.fromFile(input),
             output = output,
             videoMimeType = MimeTypes.VIDEO_H265,
@@ -67,8 +67,9 @@ class Media3EngineTest {
         // Assert against the muxed file, not just the reported result: this is what
         // actually proves the output is HEVC rather than a silent fallback to H.264.
         assertEquals(MimeTypes.VIDEO_H265, videoMimeTypeOf(output))
-        assertTrue("no duration reported", result.approximateDurationMs > 0)
-        assertTrue("no frames encoded", result.videoFrameCount > 0)
+        // Assert against the muxed file rather than the engine's own report: a result
+        // object can claim success for a file that will not play.
+        assertTrue("output has no duration", durationMsOf(output) > 0)
         // Deliberately NOT asserting that progress fired. Polling is on a 250 ms tick,
         // and a 3 s 320x240 clip can finish inside one tick on fast hardware, which
         // would make the assertion fail intermittently for no real defect.
@@ -104,6 +105,19 @@ class Media3EngineTest {
             assertTrue(output.exists() && output.length() > 0)
         } finally {
             pool.shutdownNow()
+        }
+    }
+
+    private fun durationMsOf(file: File): Long {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            (0 until extractor.trackCount)
+                .map { extractor.getTrackFormat(it) }
+                .filter { it.containsKey(MediaFormat.KEY_DURATION) }
+                .maxOfOrNull { it.getLong(MediaFormat.KEY_DURATION) / 1000 } ?: 0L
+        } finally {
+            extractor.release()
         }
     }
 

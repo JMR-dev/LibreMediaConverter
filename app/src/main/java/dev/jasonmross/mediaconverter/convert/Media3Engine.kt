@@ -39,7 +39,7 @@ import kotlin.coroutines.resumeWithException
  * suspending function and never have to think about it.
  */
 @UnstableApi
-class Media3Engine(private val context: Context) : AutoCloseable {
+class Media3Engine(private val context: Context) : HardwareTranscoder {
 
     private val thread = HandlerThread("media3-transformer").apply { start() }
     private val handler = Handler(thread.looper)
@@ -52,12 +52,12 @@ class Media3Engine(private val context: Context) : AutoCloseable {
      * rewrite the moov atom, and a SAF fd is not reliably seekable. Callers stage into
      * app-private storage and publish afterwards.
      */
-    suspend fun transcode(
+    override suspend fun transcode(
         input: Uri,
         output: File,
-        videoMimeType: String = MimeTypes.VIDEO_H265,
-        onProgress: (Int) -> Unit = {},
-    ): ExportResult = suspendCancellableCoroutine { cont ->
+        videoMimeType: String,
+        onProgress: (Int) -> Unit,
+    ): Unit = suspendCancellableCoroutine { cont ->
         handler.post {
             val transformer = buildTransformer(videoMimeType, cont)
             val item = EditedMediaItem.Builder(MediaItem.fromUri(input)).build()
@@ -76,13 +76,13 @@ class Media3Engine(private val context: Context) : AutoCloseable {
 
     private fun buildTransformer(
         videoMimeType: String,
-        cont: CancellableContinuation<ExportResult>,
+        cont: CancellableContinuation<Unit>,
     ): Transformer = Transformer.Builder(context)
         .setLooper(thread.looper)
         .setVideoMimeType(videoMimeType)
         .addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, result: ExportResult) {
-                if (cont.isActive) cont.resume(result)
+                if (cont.isActive) cont.resume(Unit)
             }
 
             override fun onError(
@@ -104,7 +104,7 @@ class Media3Engine(private val context: Context) : AutoCloseable {
      */
     private fun pollProgress(
         transformer: Transformer,
-        cont: CancellableContinuation<ExportResult>,
+        cont: CancellableContinuation<Unit>,
         onProgress: (Int) -> Unit,
     ) {
         val holder = ProgressHolder()
@@ -123,6 +123,7 @@ class Media3Engine(private val context: Context) : AutoCloseable {
     override fun close() {
         thread.quitSafely()
     }
+
 
     private companion object {
         const val PROGRESS_INTERVAL_MS = 250L

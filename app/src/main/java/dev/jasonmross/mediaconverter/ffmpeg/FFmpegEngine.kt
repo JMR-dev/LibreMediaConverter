@@ -5,6 +5,7 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
 import com.arthenica.ffmpegkit.ReturnCode
+import dev.jasonmross.mediaconverter.convert.SoftwareTranscoder
 import dev.jasonmross.mediaconverter.model.ConversionRequest
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
@@ -23,7 +24,7 @@ import kotlin.coroutines.resumeWithException
  * to seek backwards to rewrite the moov atom, which a SAF descriptor does not reliably
  * support — so staging is the safe default for every format rather than a special case.
  */
-class FFmpegEngine {
+class FFmpegEngine : SoftwareTranscoder {
 
     init {
         FFmpegKitConfig.setLogLevel(Level.AV_LOG_WARNING)
@@ -37,12 +38,12 @@ class FFmpegEngine {
      * [durationMs] of zero means progress simply cannot be reported — the caller gets
      * an indeterminate job rather than a fabricated number.
      */
-    suspend fun run(
+    override suspend fun run(
         request: ConversionRequest,
         inputPath: String,
         output: File,
         durationMs: Long,
-        onProgress: (Int) -> Unit = {},
+        onProgress: (Int) -> Unit,
     ): Unit = suspendCancellableCoroutine { cont ->
         val args = FFmpegCommandBuilder.build(request, inputPath, output.absolutePath)
         Log.i(TAG, "ffmpeg ${args.joinToString(" ")}")

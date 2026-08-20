@@ -19,12 +19,12 @@ import java.io.File
  * The cost is one extra copy and transient double disk usage, which is why
  * [hasSpaceFor] exists.
  */
-class OutputPublisher(private val context: Context) {
+open class OutputPublisher(private val context: Context) {
 
     private val stagingDir: File
         get() = File(context.cacheDir, "conversions").apply { mkdirs() }
 
-    fun createStagingFile(name: String): File = File(stagingDir, name)
+    open fun createStagingFile(name: String): File = File(stagingDir, name)
 
     /**
      * True if there is room for a further [bytes], including headroom.
@@ -32,11 +32,11 @@ class OutputPublisher(private val context: Context) {
      * Staging means peak usage is roughly input + output at once, so a job that would
      * just barely fit is rejected rather than failing partway through.
      */
-    fun hasSpaceFor(bytes: Long): Boolean =
+    open fun hasSpaceFor(bytes: Long): Boolean =
         stagingDir.usableSpace > bytes + SPACE_HEADROOM_BYTES
 
     /** Copies a finished staging file into a user-chosen SAF destination. */
-    fun publish(staged: File, destination: Uri) {
+    open fun publish(staged: File, destination: Uri) {
         context.contentResolver.openOutputStream(destination)?.use { out ->
             staged.inputStream().use { it.copyTo(out) }
         } ?: error("Could not open destination for writing: $destination")
