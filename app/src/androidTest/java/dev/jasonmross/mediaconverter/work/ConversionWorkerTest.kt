@@ -52,6 +52,11 @@ class ConversionWorkerTest {
         File(context.cacheDir, "conversions").listFiles()?.forEach { it.delete() }
     }
 
+    /**
+     * Deliberately derives the expectation from the running API rather than pinning a
+     * value, so the same test is meaningful on an API 33, 34 or 35+ device. The three
+     * regimes are the whole reason ConversionForegroundType exists.
+     */
     @Test
     fun foregroundTypeMatchesTheRunningApiLevel() {
         val expected = when {
