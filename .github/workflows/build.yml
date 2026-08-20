@@ -1,9 +1,13 @@
 name: Build
 
+# Pull requests are covered by status_check.yml, which builds the real FFmpeg AAR and
+# runs the instrumented suite across API 33-37. This workflow keeps the post-merge and
+# release duties, and deliberately does not duplicate PR validation: its unit job falls
+# back to a stub AAR, which is a weaker check than the one status_check.yml performs.
 on:
   push:
     branches: [main]
-  pull_request:
+    tags: ['v*']
 
 jobs:
   test:
