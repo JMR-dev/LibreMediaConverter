@@ -10,6 +10,15 @@ concurrency:
   group: status-check-${{ github.ref }}
   cancel-in-progress: true
 
+# Third-party actions are pinned to a commit rather than a tag. A tag is mutable: the
+# owner can repoint v4 at new code, so a tag reference is an open invitation to run
+# whatever that repository contains tomorrow. The trailing comment records which
+# release each hash corresponds to, since a bare hash is unreadable.
+env:
+  GRADLE_CACHE_PATHS: |
+    ~/.gradle/caches
+    ~/.gradle/wrapper
+
 jobs:
   # ---------------------------------------------------------------------------
   # Validates the committed FFmpeg archive. It does not build anything: the whole
@@ -25,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify the committed archive
         run: |
@@ -66,19 +75,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'   # AGP 9 will not run on anything older
 
-      - uses: gradle/actions/setup-gradle@v4
+      # Gradle is invoked through the committed wrapper rather than a setup action.
+      # The wrapper verifies its own distribution against distributionSha256Sum, and
+      # caching is a handful of lines, so the action earned little here.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
 
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: unit-test-report
@@ -89,15 +105,13 @@ jobs:
   #
   # The range is the point: minSdk is 33 and targetSdk is 37, and the foreground
   # service type differs across it -- none below 34, dataSync at 34, mediaProcessing
-  # from 35. Testing a single level would leave two thirds of that branch unexercised,
-  # and running the range locally is what caught a test that had baked in an
-  # assumption about the host's encoders.
+  # from 35. Testing a single level would leave two thirds of that branch unexercised.
   #
   # FFmpeg is not built here. The AAR is committed under bin/, so a red run means the
   # code is broken rather than that a cross-compile hiccuped.
   # ---------------------------------------------------------------------------
   e2e:
-    name: E2E API ${{ matrix.api-level }}
+    name: E2E API ${{ matrix.label }}
     runs-on: ubuntu-latest
     needs: ffmpeg
     timeout-minutes: 60
@@ -108,27 +122,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - api-level: 33
-            system-image-api-level: 33
-          - api-level: 34
-            system-image-api-level: 34
-          - api-level: 35
-            system-image-api-level: 35
-          - api-level: 36
-            system-image-api-level: 36
-          # API 37 is published as android-37.0, not android-37, so the image level has
-          # to be given separately or the download resolves to no package at all.
-          - api-level: 37
-            system-image-api-level: "37.0"
+          - label: "33"
+            api-level: "33"
+          - label: "34"
+            api-level: "34"
+          - label: "35"
+            api-level: "35"
+          - label: "36"
+            api-level: "36"
+          # API 37 ships as android-37.0. The emulator action installs
+          # "platforms;android-${api-level}" and there is no platforms;android-37,
+          # so a bare 37 fails during SDK setup before an emulator ever starts.
+          # system-image-api-level alone does not fix it: that only names the image.
+          - label: "37"
+            api-level: "37.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
 
       # Without this the emulator falls back to software rendering and takes minutes
       # longer to boot, when it boots at all.
@@ -140,10 +160,9 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Instrumented tests
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api-level }}
-          system-image-api-level: ${{ matrix.system-image-api-level }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -154,10 +173,10 @@ jobs:
           disable-animations: true
           script: ./gradlew :app:connectedDebugAndroidTest
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: e2e-report-api${{ matrix.api-level }}
+          name: e2e-report-api${{ matrix.label }}
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
