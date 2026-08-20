@@ -57,7 +57,7 @@ class ConcatWorkerTest {
     }
 
     @Test
-    fun joinsTwoFilesAndReportsTheStrategyUsed() = runBlocking {
+    fun joinsTwoFilesAndReportsTheStrategyUsed(): Unit = runBlocking {
         val request = ConcatWorker.request(
             inputs = listOf(Uri.fromFile(clipA), Uri.fromFile(clipB)),
             totalBytes = clipA.length() + clipB.length(),
@@ -84,7 +84,7 @@ class ConcatWorkerTest {
     }
 
     @Test
-    fun aSingleInputFailsWithAnActionableMessage() = runBlocking {
+    fun aSingleInputFailsWithAnActionableMessage(): Unit = runBlocking {
         val request = ConcatWorker.request(
             inputs = listOf(Uri.fromFile(clipA)),
             totalBytes = clipA.length(),

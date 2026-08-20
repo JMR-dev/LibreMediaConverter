@@ -70,7 +70,7 @@ class ConversionWorkerTest {
     }
 
     @Test
-    fun runsAConversionThroughWorkManager() = runBlocking {
+    fun runsAConversionThroughWorkManager(): Unit = runBlocking {
         // H.264 rather than the H.265 default: on a device with no hardware encoder
         // this runs in software, and AVC is markedly quicker than HEVC there. The point
         // of this test is the WorkManager round trip, not the codec.
@@ -109,7 +109,7 @@ class ConversionWorkerTest {
      * only that a file appeared would pass even if the routing were broken.
      */
     @Test
-    fun routesAnMp3JobToFfmpegAndProducesAFile() = runBlocking {
+    fun routesAnMp3JobToFfmpegAndProducesAFile(): Unit = runBlocking {
         val request = ConversionWorker.request(
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",
@@ -145,7 +145,7 @@ class ConversionWorkerTest {
      * there. Asserting MEDIA3 unconditionally tests the test machine, not the router.
      */
     @Test
-    fun routesAFastMp4JobByDeviceCapability() = runBlocking {
+    fun routesAFastMp4JobByDeviceCapability(): Unit = runBlocking {
         val hasHardwareHevc = AndroidDeviceCodecs.get().canEncode(VideoCodec.H265)
 
         val request = ConversionWorker.request(
@@ -176,7 +176,7 @@ class ConversionWorkerTest {
 
     /** The quality tier is the reason the shipped binary is GPL, so verify it routes. */
     @Test
-    fun routesABestQualityJobToFfmpeg() = runBlocking {
+    fun routesABestQualityJobToFfmpeg(): Unit = runBlocking {
         val request = ConversionWorker.request(
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",

@@ -53,7 +53,7 @@ class Media3EngineTest {
     }
 
     @Test
-    fun transcodesH264ToH265AndReportsProgress() = runBlocking {
+    fun transcodesH264ToH265AndReportsProgress(): Unit = runBlocking {
         val seen = mutableListOf<Int>()
 
         val result = engine.transcode(

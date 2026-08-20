@@ -76,7 +76,7 @@ class ConcatEngineTest {
     // --- the fast path ------------------------------------------------------
 
     @Test
-    fun matchingClipsAreJoinedByStreamCopy() = runBlocking {
+    fun matchingClipsAreJoinedByStreamCopy(): Unit = runBlocking {
         val out = output("joined_matching.mp4")
         val result = engine.join(listOf(Uri.fromFile(clipA), Uri.fromFile(clipB)), out)
 
@@ -96,7 +96,7 @@ class ConcatEngineTest {
     // --- the correctness path ----------------------------------------------
 
     @Test
-    fun mismatchedClipsAreReEncodedRatherThanStreamCopied() = runBlocking {
+    fun mismatchedClipsAreReEncodedRatherThanStreamCopied(): Unit = runBlocking {
         val out = output("joined_mismatched.mp4")
         val result = engine.join(listOf(Uri.fromFile(clipA), Uri.fromFile(clipMismatched)), out)
 
@@ -115,7 +115,7 @@ class ConcatEngineTest {
     }
 
     @Test
-    fun reEncodedOutputIsPlayableAndCarriesBothTracks() = runBlocking {
+    fun reEncodedOutputIsPlayableAndCarriesBothTracks(): Unit = runBlocking {
         val out = output("joined_playable.mp4")
         engine.join(listOf(Uri.fromFile(clipA), Uri.fromFile(clipMismatched)), out)
 
@@ -147,7 +147,7 @@ class ConcatEngineTest {
     }
 
     @Test
-    fun theListFileIsCleanedUpAfterJoining() = runBlocking {
+    fun theListFileIsCleanedUpAfterJoining(): Unit = runBlocking {
         val out = output("joined_cleanup.mp4")
         engine.join(listOf(Uri.fromFile(clipA), Uri.fromFile(clipB)), out)
         assertTrue(

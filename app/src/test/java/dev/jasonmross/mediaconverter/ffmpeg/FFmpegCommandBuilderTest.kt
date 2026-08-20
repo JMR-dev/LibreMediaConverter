@@ -69,18 +69,40 @@ class FFmpegCommandBuilderTest {
         assertPair(cmd(OutputFormat.MP4_H265, QualityTier.BEST), "-tag:v", "hvc1")
     }
 
+    /**
+     * Regression test for a failure found with real footage on a Pixel 10 Pro XL.
+     *
+     * The source was H.264 High 4:4:4 Predictive. FFmpeg decodes that to yuv444p and,
+     * without an explicit pixel format, hands those frames straight to an encoder that
+     * cannot accept them — hevc_mediacodec died with "Invalid to call at Released
+     * state" partway through. Every video encode path has to name the format so FFmpeg
+     * inserts the conversion, not just the one path that happened to have it.
+     */
     @Test
-    fun `h264 output is forced to yuv420p for hardware player compatibility`() {
-        assertPair(cmd(OutputFormat.MP4_H264, QualityTier.BEST), "-pix_fmt", "yuv420p")
+    fun `every video encode path forces yuv420p`() {
+        val videoFormats = listOf(
+            OutputFormat.MP4_H264, OutputFormat.MP4_H265,
+            OutputFormat.MKV_H264, OutputFormat.MKV_H265,
+            OutputFormat.WEBM_VP9,
+        )
+        videoFormats.forEach { format ->
+            listOf(QualityTier.FAST, QualityTier.BEST).forEach { quality ->
+                listOf(true, false).forEach { hw ->
+                    val args = cmd(format, quality, hardwareEncodeAvailable = hw)
+                    assertPair(args, "-pix_fmt", "yuv420p")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `audio only outputs do not set a pixel format`() {
+        listOf(OutputFormat.MP3, OutputFormat.FLAC, OutputFormat.WAV).forEach {
+            assertFalse("${it.name} should not set -pix_fmt", cmd(it).contains("-pix_fmt"))
+        }
     }
 
     // --- the hardware fallback path ---------------------------------------
-
-    @Test
-    fun `fast quality uses the mediacodec wrappers`() {
-        assertPair(cmd(OutputFormat.MP4_H264, QualityTier.FAST), "-c:v", "h264_mediacodec")
-        assertPair(cmd(OutputFormat.MP4_H265, QualityTier.FAST), "-c:v", "hevc_mediacodec")
-    }
 
     /**
      * Regression test for a defect found on a device with no hardware HEVC encoder.
@@ -92,24 +114,15 @@ class FFmpegCommandBuilderTest {
      * honest about what it is doing.
      */
     @Test
-    fun `fast quality without a hardware encoder uses a fast software preset`() {
-        val h264 = cmd(OutputFormat.MP4_H264, QualityTier.FAST, hardwareEncodeAvailable = false)
-        assertPair(h264, "-c:v", "libx264")
-        assertPair(h264, "-preset", "veryfast")
-        assertFalse("must not claim the mediacodec path", h264.contains("h264_mediacodec"))
-
-        val h265 = cmd(OutputFormat.MP4_H265, QualityTier.FAST, hardwareEncodeAvailable = false)
-        assertPair(h265, "-c:v", "libx265")
-        assertPair(h265, "-preset", "veryfast")
-        assertFalse("must not claim the mediacodec path", h265.contains("hevc_mediacodec"))
-    }
-
-    @Test
-    fun `fast quality with a hardware encoder still prefers mediacodec`() {
-        assertPair(
-            cmd(OutputFormat.MP4_H264, QualityTier.FAST, hardwareEncodeAvailable = true),
-            "-c:v", "h264_mediacodec",
-        )
+    fun `the encoder choice no longer depends on hardware availability`() {
+        // Once FFmpeg stopped selecting MediaCodec encoders, this flag only affects
+        // whether the router sends the job to Media3 at all -- not what FFmpeg does.
+        listOf(OutputFormat.MP4_H264, OutputFormat.MP4_H265).forEach { format ->
+            assertEquals(
+                cmd(format, QualityTier.FAST, hardwareEncodeAvailable = true),
+                cmd(format, QualityTier.FAST, hardwareEncodeAvailable = false),
+            )
+        }
     }
 
     @Test
@@ -120,13 +133,6 @@ class FFmpegCommandBuilderTest {
         val best = cmd(OutputFormat.MP4_H264, QualityTier.BEST)
         assertEquals("veryfast", fast[fast.indexOf("-preset") + 1])
         assertEquals("medium", best[best.indexOf("-preset") + 1])
-    }
-
-    @Test
-    fun `fast quality targets a bitrate because mediacodec has no crf`() {
-        val args = cmd(OutputFormat.MP4_H264, QualityTier.FAST)
-        assertTrue(args.contains("-b:v"))
-        assertFalse(args.contains("-crf"))
     }
 
     // --- audio -------------------------------------------------------------

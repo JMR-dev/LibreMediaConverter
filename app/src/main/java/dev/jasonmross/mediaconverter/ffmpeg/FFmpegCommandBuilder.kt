@@ -25,6 +25,18 @@ object FFmpegCommandBuilder {
     private const val CRF_H264 = 20
     private const val CRF_H265 = 24
 
+    /**
+     * Force 4:2:0 chroma on every video encode.
+     *
+     * Sources are not always 4:2:0. Real footage encoded as H.264 High 4:4:4 Predictive
+     * exists, and FFmpeg will happily decode it to yuv444p and then hand those frames to
+     * an encoder that cannot take them. The MediaCodec wrappers fail hard in that case —
+     * "Invalid to call at Released state" partway through the export — and hardware
+     * players reject 4:4:4 output anyway. Naming the pixel format makes FFmpeg insert
+     * the conversion instead of failing.
+     */
+    private val PIX_FMT = listOf("-pix_fmt", "yuv420p")
+
     fun build(
         request: ConversionRequest,
         inputPath: String,
@@ -78,41 +90,41 @@ object FFmpegCommandBuilder {
                         "-c:v", "libx265", "-crf", "$CRF_H265", "-preset", "medium",
                         // Without this, many players and Apple devices refuse HEVC in MP4.
                         "-tag:v", "hvc1",
-                    )
+                    ) + PIX_FMT
                     dev.jasonmross.mediaconverter.model.VideoCodec.VP9 -> listOf(
                         "-c:v", "libvpx-vp9", "-crf", "31", "-b:v", "0",
-                    )
+                    ) + PIX_FMT
                     else -> listOf(
                         "-c:v", "libx264", "-crf", "$CRF_H264", "-preset", "medium",
-                        // 4:2:0 for compatibility; some sources decode to 4:4:4, which
-                        // most hardware players cannot handle.
-                        "-pix_fmt", "yuv420p",
-                    )
+                    ) + PIX_FMT
                 }
 
-                // FFmpeg's MediaCodec wrappers, used when a job landed on FFmpeg for
-                // container reasons but the user still asked for speed.
+                // Software encoding, always.
                 //
-                // Only when the device actually has a hardware encoder. Otherwise the
-                // wrapper binds to the platform's software codec (c2.android.*) and
-                // encodes far slower than libx264/libx265 would, while still calling
-                // itself the fast path. In that case use a real software encoder with a
-                // fast preset, which is what the user asked for in substance.
+                // FFmpeg's *_mediacodec encoders used to be selected here, on the theory
+                // that a job routed to FFmpeg for container reasons could still encode in
+                // hardware. In practice they are undocumented, per-device flaky, and were
+                // observed failing twice on real footage on a Pixel 10 Pro XL -- once
+                // binding to a software codec while claiming to be the fast path, and once
+                // dying mid-export with "Error submitting video frame to the encoder" even
+                // after the pixel format was pinned.
+                //
+                // They also duplicate, badly, something Media3 already does properly. A
+                // job only reaches FFmpeg because Media3 could not handle it, which is
+                // itself evidence that hardware encoding is unlikely to work for that
+                // input. Fast therefore means a fast *preset*, not a different encoder.
                 QualityTier.FAST -> when (format.videoCodec) {
-                    dev.jasonmross.mediaconverter.model.VideoCodec.H265 ->
-                        if (request.hardwareEncodeAvailable) {
-                            listOf("-c:v", "hevc_mediacodec", "-b:v", "5M", "-tag:v", "hvc1")
-                        } else {
-                            listOf("-c:v", "libx265", "-crf", "$CRF_H265", "-preset", "veryfast", "-tag:v", "hvc1")
-                        }
-                    dev.jasonmross.mediaconverter.model.VideoCodec.VP9 ->
-                        listOf("-c:v", "libvpx-vp9", "-crf", "31", "-b:v", "0", "-deadline", "realtime")
-                    else ->
-                        if (request.hardwareEncodeAvailable) {
-                            listOf("-c:v", "h264_mediacodec", "-b:v", "5M")
-                        } else {
-                            listOf("-c:v", "libx264", "-crf", "$CRF_H264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
-                        }
+                    dev.jasonmross.mediaconverter.model.VideoCodec.H265 -> listOf(
+                        "-c:v", "libx265", "-crf", "$CRF_H265", "-preset", "veryfast",
+                        "-tag:v", "hvc1",
+                    ) + PIX_FMT
+                    dev.jasonmross.mediaconverter.model.VideoCodec.VP9 -> listOf(
+                        "-c:v", "libvpx-vp9", "-crf", "31", "-b:v", "0",
+                        "-deadline", "realtime",
+                    ) + PIX_FMT
+                    else -> listOf(
+                        "-c:v", "libx264", "-crf", "$CRF_H264", "-preset", "veryfast",
+                    ) + PIX_FMT
                 }
             }
         }
