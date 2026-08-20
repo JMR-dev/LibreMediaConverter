@@ -1,9 +1,8 @@
 name: Build
 
-# Pull requests are covered by status_check.yml, which builds the real FFmpeg AAR and
-# runs the instrumented suite across API 33-37. This workflow keeps the post-merge and
-# release duties, and deliberately does not duplicate PR validation: its unit job falls
-# back to a stub AAR, which is a weaker check than the one status_check.yml performs.
+# Pull requests are covered by status_check.yml, which runs the unit tests and the
+# instrumented suite across API 33-37. This workflow keeps the post-merge and release
+# duties and does not duplicate PR validation.
 on:
   push:
     branches: [main]
@@ -23,19 +22,6 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # The FFmpeg AAR is not committed, so provide a stub for jobs that only need
-      # to compile and run JVM tests. Anything that actually calls into FFmpeg is an
-      # instrumented test and does not run here.
-      - name: Stub the FFmpeg AAR
-        run: |
-          mkdir -p app/libs
-          if [ ! -f app/libs/ffmpeg-kit-next-8.1.1.aar ]; then
-            echo "::warning::Using an empty FFmpeg AAR stub; instrumented tests are skipped."
-            mkdir -p /tmp/stub/jni && printf '<manifest package="com.arthenica.ffmpegkit"/>' > /tmp/stub/AndroidManifest.xml
-            (cd /tmp/stub && zip -qr ffmpeg-kit-next-8.1.1.aar .)
-            cp /tmp/stub/ffmpeg-kit-next-8.1.1.aar app/libs/
-          fi
-
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
 
@@ -46,32 +32,9 @@ jobs:
           name: unit-test-report
           path: app/build/reports/tests/
 
-  ffmpeg:
-    name: Build FFmpeg AAR
-    runs-on: ubuntu-latest
-    # Expensive (a full cross-compile of FFmpeg, x264, x265 and friends), so it runs
-    # only for releases rather than on every push.
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build the AAR in a container
-        run: |
-          cd tools/ffmpeg
-          podman build -t ffmpeg-kit-builder:ci -f Containerfile . || \
-            docker build -t ffmpeg-kit-builder:ci -f Containerfile .
-          mkdir -p out
-          (podman run --rm -v "$PWD/out":/work/out:Z ffmpeg-kit-builder:ci full || \
-           docker run --rm -v "$PWD/out":/work/out ffmpeg-kit-builder:ci full)
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-aar
-          path: tools/ffmpeg/out/ffmpeg-kit-next-*.aar
-
   release:
     name: Release
-    needs: [test, ffmpeg]
+    needs: [test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -83,11 +46,6 @@ jobs:
           java-version: '17'
 
       - uses: gradle/actions/setup-gradle@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ffmpeg-aar
-          path: app/libs/
 
       - name: Build release artifacts
         run: ./gradlew assembleRelease bundleRelease

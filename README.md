@@ -82,19 +82,10 @@ restored after a restart.
 
 Requires JDK 17+ (AGP 9 will not run on older) and the Android SDK with API 37.
 
-The FFmpeg AAR is **not committed** — it is a 35 MB binary, and F-Droid strips
-checked-in native libraries. Build it first:
-
-```sh
-cd tools/ffmpeg
-podman build -t ffmpeg-kit-builder:local -f Containerfile .
-mkdir -p out
-podman run --name ffmpeg-build -v "$PWD/out":/work/out:Z \
-    localhost/ffmpeg-kit-builder:local full
-cp out/ffmpeg-kit-next-*.aar ../../app/libs/
-```
-
-Then:
+FFmpeg is committed as a prebuilt archive under [`bin/`](bin/README.md), so a clone
+builds without a cross-compile. That is deliberate: rebuilding it per CI run made test
+results ambiguous, because a red build could mean broken code or a build that hiccuped.
+See [`bin/README.md`](bin/README.md) for its provenance and how to regenerate it.
 
 ```sh
 ./gradlew :app:assembleDebug          # debug APK
@@ -104,7 +95,9 @@ Then:
 ```
 
 See [`tools/ffmpeg/README.md`](tools/ffmpeg/README.md) for why the build is
-containerised and which flags matter.
+containerised and which flags matter. That recipe remains the authority — the committed
+archive is its output, and is also what satisfies the GPL corresponding-source
+obligation.
 
 ## Testing
 

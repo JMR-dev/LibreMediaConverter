@@ -14,5 +14,6 @@
 .cxx
 local.properties
 
-# Built FFmpeg AAR - see tools/ffmpeg/ for the build recipe
-app/libs/*.aar
+# The FFmpeg AAR is committed under bin/ so test runs do not depend on a rebuild.
+# Build outputs from tools/ffmpeg are not.
+tools/ffmpeg/out/

@@ -76,10 +76,13 @@ dependencies {
     implementation(libs.media3.common)
     implementation(libs.media3.muxer)
 
-    // FFmpeg, built from source by tools/ffmpeg. Not on any Maven repo: ffmpeg-kit was
-    // archived and delisted, and ffmpeg-kit-next is source-only by design.
-    // The AAR is gitignored; see app/libs/README.md to produce it.
-    implementation(files("libs/ffmpeg-kit-next-8.1.1.aar"))
+    // FFmpeg, committed under bin/. Not on any Maven repo: ffmpeg-kit was archived and
+    // delisted, and ffmpeg-kit-next is source-only by design.
+    //
+    // The prebuilt archive is checked in on purpose. Rebuilding it per CI run made test
+    // results ambiguous -- a red build could mean broken code or a cross-compile that
+    // hiccuped. See bin/README.md for provenance and how to regenerate it.
+    implementation(files(rootProject.file("bin/ffmpeg-kit-next-8.1.1.aar")))
     // A local .aar carries no transitive dependencies, so the wrapper's own runtime
     // dependency has to be declared here explicitly.
     implementation(libs.smart.exception.java)
