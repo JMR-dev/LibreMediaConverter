@@ -26,6 +26,11 @@ import java.io.File
 /**
  * Measures the two claims that motivate the whole architecture, against real media.
  *
+ * **This is a benchmark, not part of the automated suite.** It needs real, long-form
+ * media that is not committed to the repository, so it skips unless someone stages
+ * files deliberately. Do not read a passing run of the test suite as evidence these
+ * numbers still hold — correctness lives in the tests that ship their own fixtures.
+ *
  * Not a correctness test — the assertions are deliberately loose. These exist to
  * produce numbers for two decisions that were otherwise taken on faith:
  *
