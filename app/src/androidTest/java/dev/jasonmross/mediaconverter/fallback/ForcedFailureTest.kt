@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import dev.jasonmross.mediaconverter.convert.ConversionDependencies
+import dev.jasonmross.mediaconverter.model.DeviceCodecs
 import dev.jasonmross.mediaconverter.model.Engine
 import dev.jasonmross.mediaconverter.model.OutputFormat
 import dev.jasonmross.mediaconverter.model.QualityTier
@@ -77,6 +78,12 @@ class ForcedFailureTest {
         val software = FakeFailures.RecordingSoftware()
         ConversionDependencies.hardware = { hardware }
         ConversionDependencies.software = { software }
+        // Pin the device profile. This test is about the fallback mechanism, not about
+        // routing, and most emulators expose no hardware video encoder at all -- so the
+        // router would legitimately send the job straight to FFmpeg and the hardware
+        // path would never be attempted. Without this the test passes on a Pixel and
+        // fails on every emulator, which says nothing about the code under test.
+        ConversionDependencies.deviceCodecs = { DeviceCodecs.PERMISSIVE }
 
         val terminal = runToCompletion(convertRequest(OutputFormat.MP4_H264))
 
