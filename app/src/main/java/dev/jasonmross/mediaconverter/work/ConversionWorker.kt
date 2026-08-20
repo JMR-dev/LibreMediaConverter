@@ -69,8 +69,15 @@ class ConversionWorker(
         setForeground(foregroundInfo(displayName, percent = 0, indeterminate = true))
 
         val probe = MediaProbe.probe(applicationContext, inputUri)
-        val request = ConversionRequest(format, quality, preference, probe)
-        val decision = ConversionRouter.route(request, AndroidDeviceCodecs.get())
+        val devices = AndroidDeviceCodecs.get()
+        val request = ConversionRequest(
+            format = format,
+            quality = quality,
+            enginePreference = preference,
+            probe = probe,
+            hardwareEncodeAvailable = devices.canEncode(format.videoCodec),
+        )
+        val decision = ConversionRouter.route(request, devices)
         Log.i(TAG, "Routing $displayName -> ${format.name} via ${decision.engine} (${decision.reason})")
 
         val staged = publisher.createStagingFile(outputNameFor(displayName, format))

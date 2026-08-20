@@ -84,4 +84,13 @@ data class ConversionRequest(
     val quality: QualityTier = QualityTier.FAST,
     val enginePreference: EnginePreference = EnginePreference.AUTO,
     val probe: InputProbe = InputProbe(),
+    /**
+     * Whether this device has a real hardware encoder for the target codec.
+     *
+     * When it does not, FFmpeg's `*_mediacodec` wrappers still appear to work: they
+     * bind to the platform's *software* codec (`c2.android.*`) and encode at a crawl
+     * while presenting as the fast path. Knowing this lets the Fast tier choose a
+     * genuinely fast software preset instead of a mislabelled slow one.
+     */
+    val hardwareEncodeAvailable: Boolean = true,
 )

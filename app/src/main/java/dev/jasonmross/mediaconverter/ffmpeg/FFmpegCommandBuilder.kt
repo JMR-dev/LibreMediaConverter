@@ -90,15 +90,29 @@ object FFmpegCommandBuilder {
                     )
                 }
 
-                // FFmpeg's MediaCodec wrappers. Used when a job landed on FFmpeg for
+                // FFmpeg's MediaCodec wrappers, used when a job landed on FFmpeg for
                 // container reasons but the user still asked for speed.
+                //
+                // Only when the device actually has a hardware encoder. Otherwise the
+                // wrapper binds to the platform's software codec (c2.android.*) and
+                // encodes far slower than libx264/libx265 would, while still calling
+                // itself the fast path. In that case use a real software encoder with a
+                // fast preset, which is what the user asked for in substance.
                 QualityTier.FAST -> when (format.videoCodec) {
                     dev.jasonmross.mediaconverter.model.VideoCodec.H265 ->
-                        listOf("-c:v", "hevc_mediacodec", "-b:v", "5M", "-tag:v", "hvc1")
+                        if (request.hardwareEncodeAvailable) {
+                            listOf("-c:v", "hevc_mediacodec", "-b:v", "5M", "-tag:v", "hvc1")
+                        } else {
+                            listOf("-c:v", "libx265", "-crf", "$CRF_H265", "-preset", "veryfast", "-tag:v", "hvc1")
+                        }
                     dev.jasonmross.mediaconverter.model.VideoCodec.VP9 ->
-                        listOf("-c:v", "libvpx-vp9", "-crf", "31", "-b:v", "0")
+                        listOf("-c:v", "libvpx-vp9", "-crf", "31", "-b:v", "0", "-deadline", "realtime")
                     else ->
-                        listOf("-c:v", "h264_mediacodec", "-b:v", "5M")
+                        if (request.hardwareEncodeAvailable) {
+                            listOf("-c:v", "h264_mediacodec", "-b:v", "5M")
+                        } else {
+                            listOf("-c:v", "libx264", "-crf", "$CRF_H264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
+                        }
                 }
             }
         }

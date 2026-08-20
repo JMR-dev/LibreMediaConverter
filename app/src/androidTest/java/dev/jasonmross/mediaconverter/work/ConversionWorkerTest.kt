@@ -8,9 +8,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import dev.jasonmross.mediaconverter.codec.AndroidDeviceCodecs
 import dev.jasonmross.mediaconverter.model.Engine
 import dev.jasonmross.mediaconverter.model.OutputFormat
 import dev.jasonmross.mediaconverter.model.QualityTier
+import dev.jasonmross.mediaconverter.model.VideoCodec
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -69,10 +71,14 @@ class ConversionWorkerTest {
 
     @Test
     fun runsAConversionThroughWorkManager() = runBlocking {
+        // H.264 rather than the H.265 default: on a device with no hardware encoder
+        // this runs in software, and AVC is markedly quicker than HEVC there. The point
+        // of this test is the WorkManager round trip, not the codec.
         val request = ConversionWorker.request(
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",
             sizeBytes = input.length(),
+            format = OutputFormat.MP4_H264,
         )
         workManager.enqueue(request).result.get()
 
@@ -130,8 +136,18 @@ class ConversionWorkerTest {
         assertTrue("wrong extension: ${output.name}", output.name.endsWith(".mp3"))
     }
 
+    /**
+     * A Fast MP4 job takes the hardware path *when the device has one*.
+     *
+     * The expectation is derived from the device rather than assumed. Emulators
+     * typically expose only `c2.android.*` software codecs, which the capability probe
+     * correctly rejects as non-hardware, so the same job legitimately routes to FFmpeg
+     * there. Asserting MEDIA3 unconditionally tests the test machine, not the router.
+     */
     @Test
-    fun routesAFastMp4JobToMedia3() = runBlocking {
+    fun routesAFastMp4JobByDeviceCapability() = runBlocking {
+        val hasHardwareHevc = AndroidDeviceCodecs.get().canEncode(VideoCodec.H265)
+
         val request = ConversionWorker.request(
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",
@@ -145,9 +161,15 @@ class ConversionWorkerTest {
             workManager.getWorkInfoByIdFlow(request.id).first { it != null && it.state.isFinished }
         }
 
-        assertEquals(WorkInfo.State.SUCCEEDED, terminal?.state)
         assertEquals(
-            Engine.MEDIA3.name,
+            "job did not succeed: ${terminal?.outputData?.getString(ConversionWorker.KEY_ERROR)}",
+            WorkInfo.State.SUCCEEDED,
+            terminal?.state,
+        )
+        assertEquals(
+            if (hasHardwareHevc) "hardware HEVC present, expected the Media3 path"
+            else "no hardware HEVC encoder, expected the FFmpeg path",
+            if (hasHardwareHevc) Engine.MEDIA3.name else Engine.FFMPEG.name,
             terminal?.outputData?.getString(ConversionWorker.KEY_ENGINE_USED),
         )
     }

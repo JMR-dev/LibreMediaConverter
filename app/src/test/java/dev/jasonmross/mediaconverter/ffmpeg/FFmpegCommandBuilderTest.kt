@@ -13,8 +13,13 @@ class FFmpegCommandBuilderTest {
     private fun cmd(
         format: OutputFormat,
         quality: QualityTier = QualityTier.BEST,
+        hardwareEncodeAvailable: Boolean = true,
     ): List<String> = FFmpegCommandBuilder.build(
-        ConversionRequest(format = format, quality = quality),
+        ConversionRequest(
+            format = format,
+            quality = quality,
+            hardwareEncodeAvailable = hardwareEncodeAvailable,
+        ),
         inputPath = "/cache/in.mp4",
         outputPath = "/cache/out.${format.extension}",
     )
@@ -75,6 +80,46 @@ class FFmpegCommandBuilderTest {
     fun `fast quality uses the mediacodec wrappers`() {
         assertPair(cmd(OutputFormat.MP4_H264, QualityTier.FAST), "-c:v", "h264_mediacodec")
         assertPair(cmd(OutputFormat.MP4_H265, QualityTier.FAST), "-c:v", "hevc_mediacodec")
+    }
+
+    /**
+     * Regression test for a defect found on a device with no hardware HEVC encoder.
+     *
+     * FFmpeg's *_mediacodec wrappers do not fail on such a device — they quietly bind
+     * to the platform software codec (c2.android.*) and encode far slower than
+     * libx264/libx265 would, while still presenting as the fast path. When no hardware
+     * encoder exists, a real software encoder on a fast preset is both quicker and
+     * honest about what it is doing.
+     */
+    @Test
+    fun `fast quality without a hardware encoder uses a fast software preset`() {
+        val h264 = cmd(OutputFormat.MP4_H264, QualityTier.FAST, hardwareEncodeAvailable = false)
+        assertPair(h264, "-c:v", "libx264")
+        assertPair(h264, "-preset", "veryfast")
+        assertFalse("must not claim the mediacodec path", h264.contains("h264_mediacodec"))
+
+        val h265 = cmd(OutputFormat.MP4_H265, QualityTier.FAST, hardwareEncodeAvailable = false)
+        assertPair(h265, "-c:v", "libx265")
+        assertPair(h265, "-preset", "veryfast")
+        assertFalse("must not claim the mediacodec path", h265.contains("hevc_mediacodec"))
+    }
+
+    @Test
+    fun `fast quality with a hardware encoder still prefers mediacodec`() {
+        assertPair(
+            cmd(OutputFormat.MP4_H264, QualityTier.FAST, hardwareEncodeAvailable = true),
+            "-c:v", "h264_mediacodec",
+        )
+    }
+
+    @Test
+    fun `fast software preset is faster than the best quality preset`() {
+        // Both use libx264; the distinction between the tiers has to survive the
+        // fallback, otherwise Fast and Best become the same slow thing.
+        val fast = cmd(OutputFormat.MP4_H264, QualityTier.FAST, hardwareEncodeAvailable = false)
+        val best = cmd(OutputFormat.MP4_H264, QualityTier.BEST)
+        assertEquals("veryfast", fast[fast.indexOf("-preset") + 1])
+        assertEquals("medium", best[best.indexOf("-preset") + 1])
     }
 
     @Test
