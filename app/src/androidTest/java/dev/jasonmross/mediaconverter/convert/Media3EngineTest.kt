@@ -1,0 +1,128 @@
+package dev.jasonmross.mediaconverter.convert
+
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/**
+ * End-to-end hardware transcode through [Media3Engine].
+ *
+ * This is the Phase 1 verification: it proves the MediaCodec pipeline actually runs on
+ * a device, and — more importantly — that the engine can be driven from a thread with
+ * no Looper of its own without tripping Transformer's single-thread requirement.
+ */
+@UnstableApi
+@RunWith(AndroidJUnit4::class)
+class Media3EngineTest {
+
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private lateinit var engine: Media3Engine
+    private lateinit var input: File
+    private lateinit var output: File
+
+    @Before
+    fun setUp() {
+        engine = Media3Engine(context)
+        input = File(context.cacheDir, "sample_h264.mp4")
+        InstrumentationRegistry.getInstrumentation().context.assets
+            .open("sample_h264.mp4")
+            .use { asset -> input.outputStream().use { asset.copyTo(it) } }
+        output = File(context.cacheDir, "out_hevc.mp4")
+        output.delete()
+    }
+
+    @After
+    fun tearDown() {
+        engine.close()
+        input.delete()
+        output.delete()
+    }
+
+    @Test
+    fun transcodesH264ToH265AndReportsProgress() = runBlocking {
+        val seen = mutableListOf<Int>()
+
+        val result = engine.transcode(
+            input = Uri.fromFile(input),
+            output = output,
+            videoMimeType = MimeTypes.VIDEO_H265,
+        ) { percent -> seen += percent }
+
+        assertTrue("export produced no file", output.exists())
+        assertTrue("export produced an empty file", output.length() > 0)
+        // Assert against the muxed file, not just the reported result: this is what
+        // actually proves the output is HEVC rather than a silent fallback to H.264.
+        assertEquals(MimeTypes.VIDEO_H265, videoMimeTypeOf(output))
+        assertTrue("no duration reported", result.approximateDurationMs > 0)
+        assertTrue("no frames encoded", result.videoFrameCount > 0)
+        // Deliberately NOT asserting that progress fired. Polling is on a 250 ms tick,
+        // and a 3 s 320x240 clip can finish inside one tick on fast hardware, which
+        // would make the assertion fail intermittently for no real defect.
+        seen.forEach { assertTrue("progress out of range: $it", it in 0..100) }
+    }
+
+    /**
+     * Regression guard for the Transformer threading trap.
+     *
+     * Transformer binds to the Looper of the thread that built it, falling back to the
+     * main Looper when that thread has none — and then throws IllegalStateException
+     * when start() is called from elsewhere. A WorkManager Worker runs on exactly such
+     * a Looper-less thread, so this test drives the engine from one to prove the
+     * HandlerThread indirection holds before any of that lands in Phase 2.
+     */
+    @Test
+    fun runsFromAThreadWithNoLooper() {
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            val task = pool.submit<Throwable?> {
+                check(android.os.Looper.myLooper() == null) {
+                    "precondition failed: this thread should have no Looper"
+                }
+                runCatching {
+                    runBlocking { engine.transcode(Uri.fromFile(input), output) }
+                }.exceptionOrNull()
+            }
+            val failure = task.get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            assertTrue(
+                "transcode from a Looper-less thread failed: $failure",
+                failure == null,
+            )
+            assertTrue(output.exists() && output.length() > 0)
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    private fun videoMimeTypeOf(file: File): String? {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
+                if (mime.startsWith("video/")) return mime
+            }
+            return null
+        } finally {
+            extractor.release()
+        }
+    }
+
+    private companion object {
+        const val TIMEOUT_SECONDS = 120L
+    }
+}
