@@ -1,0 +1,117 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Unit tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'   # AGP 9 requires JDK 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The FFmpeg AAR is not committed, so provide a stub for jobs that only need
+      # to compile and run JVM tests. Anything that actually calls into FFmpeg is an
+      # instrumented test and does not run here.
+      - name: Stub the FFmpeg AAR
+        run: |
+          mkdir -p app/libs
+          if [ ! -f app/libs/ffmpeg-kit-next-8.1.1.aar ]; then
+            echo "::warning::Using an empty FFmpeg AAR stub; instrumented tests are skipped."
+            mkdir -p /tmp/stub/jni && printf '<manifest package="com.arthenica.ffmpegkit"/>' > /tmp/stub/AndroidManifest.xml
+            (cd /tmp/stub && zip -qr ffmpeg-kit-next-8.1.1.aar .)
+            cp /tmp/stub/ffmpeg-kit-next-8.1.1.aar app/libs/
+          fi
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/
+
+  ffmpeg:
+    name: Build FFmpeg AAR
+    runs-on: ubuntu-latest
+    # Expensive (a full cross-compile of FFmpeg, x264, x265 and friends), so it runs
+    # only for releases rather than on every push.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the AAR in a container
+        run: |
+          cd tools/ffmpeg
+          podman build -t ffmpeg-kit-builder:ci -f Containerfile . || \
+            docker build -t ffmpeg-kit-builder:ci -f Containerfile .
+          mkdir -p out
+          (podman run --rm -v "$PWD/out":/work/out:Z ffmpeg-kit-builder:ci full || \
+           docker run --rm -v "$PWD/out":/work/out ffmpeg-kit-builder:ci full)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-aar
+          path: tools/ffmpeg/out/ffmpeg-kit-next-*.aar
+
+  release:
+    name: Release
+    needs: [test, ffmpeg]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-aar
+          path: app/libs/
+
+      - name: Build release artifacts
+        run: ./gradlew assembleRelease bundleRelease
+
+      # GPL-3.0 requires that complete corresponding source accompany the binary.
+      # FFmpeg's guidance says to host it on the same server as the binary; for a Play
+      # listing that is impossible, so it is attached to the GitHub release next to the
+      # APK and linked from both the store listing and the in-app About screen.
+      - name: Assemble corresponding source
+        run: |
+          mkdir -p release-source
+          cp -r tools/ffmpeg release-source/
+          {
+            echo "FFmpeg corresponding source for ${GITHUB_REF_NAME}"
+            echo
+            echo "Upstream: https://github.com/arthenica/ffmpeg-kit-next"
+            echo "Tag:      v8.1.1  (FFmpeg 8.1.2)"
+            echo
+            echo "The exact configure line used is printed in the build log and is"
+            echo "reproduced by running tools/ffmpeg as documented in its README."
+          } > release-source/README.txt
+          tar czf ffmpeg-corresponding-source.tar.gz release-source
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+            ffmpeg-corresponding-source.tar.gz
+            LICENSE
+            LICENSES/README.md

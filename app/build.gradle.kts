@@ -35,8 +35,10 @@ android {
     buildTypes {
         release {
             optimization {
-                // Left off until the JNI keep rules land with FFmpeg (see plan, Phase 6).
-                enable = false
+                // R8 full mode. Keep rules for the JNI boundary live in
+                // src/main/keepRules/rules.keep -- without them the native FFmpeg
+                // calls break at runtime in release builds only.
+                enable = true
             }
         }
     }
@@ -78,6 +80,9 @@ dependencies {
     // archived and delisted, and ffmpeg-kit-next is source-only by design.
     // The AAR is gitignored; see app/libs/README.md to produce it.
     implementation(files("libs/ffmpeg-kit-next-8.1.1.aar"))
+    // A local .aar carries no transitive dependencies, so the wrapper's own runtime
+    // dependency has to be declared here explicitly.
+    implementation(libs.smart.exception.java)
 
     // Durable job queue. WorkManager survives process death, which is what makes the
     // queue resumable after the foreground-service timeout fires.

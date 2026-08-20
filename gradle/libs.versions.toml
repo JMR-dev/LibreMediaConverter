@@ -24,6 +24,7 @@ annotation = "1.10.0"
 junit = "4.13.2"
 androidxJunit = "1.3.0"
 espressoCore = "3.7.0"
+smartException = "0.2.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -62,6 +63,12 @@ media3-muxer = { group = "androidx.media3", name = "media3-muxer", version.ref =
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+
+# Required at runtime by the ffmpeg-kit-next wrapper: AbstractSession.fail()
+# references smartexception.java.Exceptions. Debug builds tolerate its absence through
+# lazy class loading, so this only surfaces as a crash on the first FFmpeg error --
+# or, as it did here, as an R8 missing-class error.
+smart-exception-java = { group = "com.arthenica", name = "smart-exception-java", version.ref = "smartException" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }

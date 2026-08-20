@@ -1,12 +1,39 @@
-# Add project specific R8 rules here.
-# AGP will combine all keep rule files in src/main/keepRules to pass to R8
-#
-# For more details, see
-#   https://d.android.com/r/tools/r8/keep-rules
+# R8 keep rules.
+# AGP combines every file under src/<variant>/keepRules and passes them to R8.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# --- FFmpegKit JNI boundary -------------------------------------------------
+# The native library looks these classes and members up by name through JNI.
+# R8 cannot see those references, so without explicit keeps it will rename or
+# remove them and the native calls fail at runtime with NoSuchMethodError --
+# only in release builds, and only once a conversion is actually attempted.
+-keep class com.arthenica.ffmpegkit.** { *; }
+-keep class com.arthenica.smartexception.** { *; }
+
+# Callback types the native layer instantiates and invokes.
+-keep interface com.arthenica.ffmpegkit.FFmpegSessionCompleteCallback { *; }
+-keep interface com.arthenica.ffmpegkit.FFprobeSessionCompleteCallback { *; }
+-keep interface com.arthenica.ffmpegkit.MediaInformationSessionCompleteCallback { *; }
+-keep interface com.arthenica.ffmpegkit.LogCallback { *; }
+-keep interface com.arthenica.ffmpegkit.StatisticsCallback { *; }
+
+# Any method the native side calls back into.
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+# --- WorkManager ------------------------------------------------------------
+# Workers are constructed reflectively from a class name stored in the WorkManager
+# database, so a renamed worker breaks jobs that were enqueued before the update.
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+
+# --- Media3 -----------------------------------------------------------------
+# Transformer selects codecs and muxers reflectively in places.
+-keep class androidx.media3.** { *; }
+-dontwarn androidx.media3.**
+
+# Keep the source file and line numbers so release crash reports stay readable,
+# then hide the original file name.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

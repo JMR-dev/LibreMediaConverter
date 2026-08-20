@@ -5,8 +5,9 @@ compression, audio extraction and conversion, GIF and frame export, and file mer
 
 Android 13+ (API 33). Built with Jetpack Compose and Material 3.
 
-> **Status: early development.** The project scaffold and UI shell exist; the conversion
-> pipeline is being built out. Not yet usable.
+> **Status: working, unreleased.** Both conversion engines, the router, the background
+> job queue and the join flow are implemented and building. The FFmpeg format tests have
+> been written but not yet executed on a device.
 
 ## Licensing at a glance
 
@@ -65,16 +66,62 @@ extension appears in any Android Vulkan Profile tier.
 So this app is hardware accelerated via MediaCodec, and GPU accelerated for effects via
 GL shaders. Both are real; neither is "the GPU decoding video."
 
+## Features
+
+| | Formats |
+|---|---|
+| Video out | MP4 (H.264/H.265), MKV (H.264/H.265), WebM (VP9) |
+| Audio out | MP3, AAC/M4A, FLAC, Opus, WAV |
+| Images | GIF, PNG frame sequences |
+| Other | Join several files into one |
+
+Conversions run as durable background work, so they survive leaving the app and are
+restored after a restart.
+
 ## Building
 
-Requires JDK 17+ and the Android SDK with API 37.
+Requires JDK 17+ (AGP 9 will not run on older) and the Android SDK with API 37.
 
-```
-./gradlew :app:assembleDebug
+The FFmpeg AAR is **not committed** — it is a 35 MB binary, and F-Droid strips
+checked-in native libraries. Build it first:
+
+```sh
+cd tools/ffmpeg
+podman build -t ffmpeg-kit-builder:local -f Containerfile .
+mkdir -p out
+podman run --name ffmpeg-build -v "$PWD/out":/work/out:Z \
+    localhost/ffmpeg-kit-builder:local full
+cp out/ffmpeg-kit-next-*.aar ../../app/libs/
 ```
 
-The FFmpeg native library is built separately from source; that build is not yet wired
-into this repository.
+Then:
+
+```sh
+./gradlew :app:assembleDebug          # debug APK
+./gradlew :app:testDebugUnitTest      # JVM tests
+./gradlew :app:connectedDebugAndroidTest   # device tests, needs a running device
+./gradlew :app:assembleRelease        # R8-minified release
+```
+
+See [`tools/ffmpeg/README.md`](tools/ffmpeg/README.md) for why the build is
+containerised and which flags matter.
+
+## Testing
+
+Unit tests cover the parts that decide correctness without needing hardware: the
+routing matrix, the FFmpeg argument builder, and the stream-copy-versus-re-encode
+planner. They run against fabricated device profiles, so branches like "this device
+cannot encode HEVC" are reachable regardless of what the test machine is.
+
+Instrumented tests cover the parts that only a device can prove: real hardware
+transcoding, the foreground service type, and each FFmpeg output format asserted
+against the produced file rather than the exit code.
+
+## Privacy
+
+The app has **no `INTERNET` permission**, so it cannot open a network connection at all.
+Nothing is uploaded, and there is no analytics or advertising. See [PRIVACY.md](PRIVACY.md),
+which also explains the permissions WorkManager adds automatically.
 
 ## Contributing
 
