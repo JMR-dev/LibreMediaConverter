@@ -23,8 +23,22 @@ android {
 
         // 64-bit only. The 16 KB page-size rules apply to these ABIs; 32-bit is not
         // required by Play and would add ~2 more copies of the FFmpeg .so files.
+        //
+        // Overridable so a test run can build for just the ABI it will execute on.
+        // FFmpeg's native libraries dominate the APK, so shipping both ABIs to an
+        // x86_64 emulator doubles it for no benefit -- and on API 37, whose system
+        // image leaves less free userdata, the full APK does not fit at all:
+        // "Requested internal only, but not enough space".
+        //
+        //   ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64
+        //
+        // Release builds ignore this and always ship both.
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            val requested = (findProperty("abiFilters") as String?)
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+            abiFilters += requested ?: listOf("arm64-v8a", "x86_64")
         }
     }
 

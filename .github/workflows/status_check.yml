@@ -171,7 +171,15 @@ jobs:
           # SwiftShader's JIT, which is a known crash source.
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest
+          # The default userdata partition is not big enough for this APK once the
+          # FFmpeg libraries are in it. API 37's system image leaves the least room and
+          # was the level that actually failed, with "Requested internal only, but not
+          # enough space" -- but the margin was thin everywhere, so give them all room.
+          disk-size: 8G
+          # Build only the ABI the emulator can execute. FFmpeg's native libraries
+          # dominate the APK, so shipping arm64 to an x86_64 emulator doubles the
+          # install for code that can never run: 114 MB against 80 MB.
+          script: ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
