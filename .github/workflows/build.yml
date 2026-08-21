@@ -8,26 +8,44 @@ on:
     branches: [main]
     tags: ['v*']
 
+# Actions are pinned to a commit rather than a tag, with the release in a trailing
+# comment. A tag is mutable -- the owner can repoint it at new code -- so a tag
+# reference amounts to running whatever that repository contains tomorrow. This matters
+# more here than on pull requests: these jobs sign nothing today, but they do publish
+# the artifacts people install.
+env:
+  GRADLE_CACHE_PATHS: |
+    ~/.gradle/caches
+    ~/.gradle/wrapper
+
 jobs:
   test:
-    name: Unit tests and lint
+    name: Unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'   # AGP 9 requires JDK 17
 
-      - uses: gradle/actions/setup-gradle@v4
+      # Gradle runs through the committed wrapper rather than a setup action. The
+      # wrapper verifies its own distribution against distributionSha256Sum, and
+      # caching is a handful of lines, so the action earned little here.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
 
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest
+        run: ./gradlew :app:testDebugUnitTest
 
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unit-test-report
           path: app/build/reports/tests/
@@ -36,19 +54,50 @@ jobs:
     name: Release
     needs: [test]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      # Needed to create the release. Declared explicitly rather than relying on the
+      # repository default, so the token's reach is visible here.
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
 
+      # No -PabiFilters here: released artifacts must carry every ABI. That override
+      # exists only so emulator jobs skip libraries they cannot execute.
       - name: Build release artifacts
-        run: ./gradlew assembleRelease bundleRelease
+        run: ./gradlew :app:assembleRelease :app:bundleRelease
+
+      - name: Verify the released artifacts
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          # A release that shipped one ABI, or lost 16 KB alignment, would install
+          # fine on a test device and fail for users or at Play submission. Both are
+          # cheap to check and expensive to discover later.
+          for abi in arm64-v8a x86_64; do
+            n=$(unzip -l "$APK" | grep -c "lib/$abi/.*\.so$" || true)
+            echo "  $abi: $n shared libraries"
+            test "$n" -gt 0 || { echo "::error::release APK is missing $abi"; exit 1; }
+          done
+          unzip -q -o "$APK" 'lib/*' -d /tmp/relcheck
+          bad=0
+          for f in /tmp/relcheck/lib/*/*.so; do
+            align=$(readelf -lW "$f" | awk '$1=="LOAD"{print $NF}' | sort -u)
+            [ "$align" = "0x4000" ] || { echo "::error::$(basename "$f") is $align"; bad=1; }
+          done
+          test "$bad" -eq 0 || exit 1
+          echo "  all libraries are 16 KB aligned"
 
       # GPL-3.0 requires that complete corresponding source accompany the binary.
       # FFmpeg's guidance says to host it on the same server as the binary; for a Play
@@ -58,18 +107,20 @@ jobs:
         run: |
           mkdir -p release-source
           cp -r tools/ffmpeg release-source/
+          cp bin/README.md release-source/PREBUILT.md
           {
             echo "FFmpeg corresponding source for ${GITHUB_REF_NAME}"
             echo
             echo "Upstream: https://github.com/arthenica/ffmpeg-kit-next"
             echo "Tag:      v8.1.1  (FFmpeg 8.1.2)"
             echo
-            echo "The exact configure line used is printed in the build log and is"
-            echo "reproduced by running tools/ffmpeg as documented in its README."
+            echo "tools/ffmpeg reproduces the binary shipped in this release."
+            echo "PREBUILT.md records its provenance, including the SHA-256 and the"
+            echo "configure line read back out of the shipped libavutil."
           } > release-source/README.txt
           tar czf ffmpeg-corresponding-source.tar.gz release-source
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
             app/build/outputs/apk/release/*.apk
