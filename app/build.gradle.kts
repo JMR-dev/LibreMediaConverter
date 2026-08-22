@@ -114,6 +114,31 @@ kotlin {
     compilerOptions {}
 }
 
+// --- Prerelease guard for the floating dependency versions ------------------------------
+// The library versions in libs.versions.toml float on minor + patch ("1.+"). Gradle resolves
+// `+` to the highest version it finds, and it does NOT skip prereleases -- so without this,
+// androidx would quietly hand the app an alpha. That is not hypothetical here: at the time
+// of writing lifecycle, navigation, work, datastore and annotation ALL publish an alpha or
+// rc numbered above their newest stable, so five of the floats would have moved onto
+// unreleased code on the next build, with nothing in the diff to say so.
+//
+// Rejecting them here means "+" reads as "the newest RELEASED version", which is what
+// floating was meant to buy. Trying an alpha stays possible -- name the exact version in
+// the catalog, and it is pinned rather than floating, which is the right way round.
+val prereleaseMarker = Regex("""[-.](alpha|beta|rc|eap|dev|snapshot|pre|m)\d*$""", RegexOption.IGNORE_CASE)
+
+configurations.configureEach {
+    resolutionStrategy {
+        componentSelection {
+            all {
+                if (prereleaseMarker.containsMatchIn(candidate.version)) {
+                    reject("prerelease; floating versions take released builds only")
+                }
+            }
+        }
+    }
+}
+
 detekt {
     // Merge the project overrides in config/detekt onto detekt's bundled defaults, so this
     // repo's file only has to carry the rules it actually changes.

@@ -9,12 +9,28 @@ this file covers only what is not obvious from the code.
 
 ## Build, test, lint
 
-**Do not pick a JDK for the daemon — the repo does.** `gradle/gradle-daemon-jvm.properties` pins
-`toolchainVersion=25` and carries foojay download URLs per platform, so Gradle provisions and runs
-the daemon on **Java 25** regardless of what `JAVA_HOME` points at (that only sets the launcher).
-`./gradlew --version` prints both if you need to confirm which is which. This is why CI's
-`java-version: '17'` is not the version that compiles anything, and why the daemon JVM is identical
-on a laptop and on a runner. Change it with `./gradlew updateDaemonJvm`, not by hand.
+**Everything is on Java 24** — daemon, CI, IDE, and the app's own bytecode. Four places say so and
+they must not drift apart:
+
+| Where | What sets it |
+|---|---|
+| Gradle daemon | `gradle/gradle-daemon-jvm.properties` → `toolchainVersion=24` |
+| CI | `java-version: '24'` in both workflows |
+| IDE | `.idea/misc.xml` |
+| App bytecode | `compileOptions` in `app/build.gradle.kts` |
+
+**Do not pick a JDK for the daemon — the repo does.** `gradle-daemon-jvm.properties` carries foojay
+download URLs per platform, so Gradle provisions and runs the daemon on Java 24 regardless of what
+`JAVA_HOME` says (that only sets the *launcher* — `./gradlew --version` prints both). Change it with
+`./gradlew updateDaemonJvm --jvm-version=NN`, never by hand.
+
+**24, not 25, is deliberate.** Kotlin 2.2.10 refuses `jvmTarget` 25 outright — its available targets
+stop at 24 — so the app's bytecode cannot join a 25 toolchain, and 24 is the highest number all four
+rows can actually hold. D8 dexes Java 24 class files and R8 minifies them, both verified.
+
+The Gradle wrapper does **not** float and cannot: `distributionUrl` names one archive and
+`distributionSha256Sum` is that file's checksum. Bump it with `./gradlew wrapper --gradle-version X
+--gradle-distribution-sha256-sum <sha>` so the two stay consistent.
 
 ```bash
 ./gradlew :app:assembleDebug          # build debug APK
@@ -73,6 +89,29 @@ install for code that can never run — and on API 37 the full APK does not fit 
 - **Coverage is reported, not gated** — currently ~31% of lines. A floor needs a baseline that has
   settled first.
 - `kotlin.code.style=official`. Gradle stays Kotlin DSL.
+
+## Dependency versions
+
+Libraries **float on minor + patch** (`coreKtx = "1.+"`). Three groups deliberately do not:
+
+- **`agp`, `kotlin`, `ksp` are version-locked to each other.** AGP 9.3.1's POM declares
+  `kotlin-gradle-plugin` 2.2.10, and that is what AGP's built-in Kotlin compiles with. Android lint
+  will suggest Kotlin 2.4.10; taking it breaks the Compose compiler unless KGP is *also* forced onto
+  the root buildscript classpath. Move all three together, by hand, or none.
+- **ktlint, detekt and JaCoCo are pinned.** A new rule in a linter makes files nobody touched stop
+  passing, so CI goes red on a PR whose diff cannot explain it. Upgrading them is its own commit:
+  run the tool, read the new findings, fix or relax them.
+- **The FFmpeg AAR** is a committed file, not a coordinate.
+
+**`+` does not mean "newest stable" on its own** — Gradle will happily resolve it to an alpha, and
+androidx routinely publishes alphas numbered above the current stable (at last check: lifecycle,
+navigation, work, datastore and annotation all did). The `componentSelection` block in
+`app/build.gradle.kts` rejects prereleases, which is the only reason `2.+` means 2.11.0 rather than
+2.12.0-alpha01. **Do not remove it.** To try a prerelease, name the exact version in the catalog —
+that pins it, which is the right way round.
+
+Because versions float, a build can change without a commit. `./gradlew :app:dependencies
+--configuration debugRuntimeClasspath` shows what actually resolved.
 
 ## Traps
 
