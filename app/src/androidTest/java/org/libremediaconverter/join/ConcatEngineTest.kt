@@ -5,9 +5,6 @@ import android.media.MediaFormat
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import org.libremediaconverter.convert.MediaProbe
-import org.libremediaconverter.ffmpeg.ConcatEngine
-import org.libremediaconverter.model.ConcatStrategy
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -15,6 +12,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.convert.MediaProbe
+import org.libremediaconverter.ffmpeg.ConcatEngine
+import org.libremediaconverter.model.ConcatStrategy
 import java.io.File
 
 /**
@@ -57,8 +57,10 @@ class ConcatEngineTest {
         return out
     }
 
-    private fun output(name: String) =
-        File(context.cacheDir, name).also { it.delete(); staged += it }
+    private fun output(name: String) = File(context.cacheDir, name).also {
+        it.delete()
+        staged += it
+    }
 
     private fun durationMs(file: File): Long {
         val extractor = MediaExtractor()

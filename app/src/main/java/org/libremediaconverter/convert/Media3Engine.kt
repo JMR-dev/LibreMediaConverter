@@ -69,7 +69,10 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
         val plan = CopyPlanner.plan(request.spec, request.probe)
         handler.post {
             val transformer = runCatching { buildTransformer(plan, cont) }
-                .getOrElse { cont.resumeWithException(it); return@post }
+                .getOrElse {
+                    cont.resumeWithException(it)
+                    return@post
+                }
 
             // Dropping the tracks the target does not have is what stops an audio-only export
             // from carrying a re-encoded video track. Without setRemoveVideo, asking for M4A
@@ -92,7 +95,10 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
             }
 
             runCatching { transformer.start(composition, output.absolutePath) }
-                .onFailure { cont.resumeWithException(it); return@post }
+                .onFailure {
+                    cont.resumeWithException(it)
+                    return@post
+                }
 
             pollProgress(transformer, cont, onProgress)
         }
@@ -104,10 +110,7 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
      *   is supposed to have sent such a job to FFmpeg — so it fails loudly instead of quietly
      *   writing MP4, which is what the old code did.
      */
-    private fun buildTransformer(
-        plan: ConversionPlan,
-        cont: CancellableContinuation<Unit>,
-    ): Transformer {
+    private fun buildTransformer(plan: ConversionPlan, cont: CancellableContinuation<Unit>): Transformer {
         val muxerFactory = requireNotNull(Media3Muxers.factoryFor(plan.container)) {
             "Media3 cannot mux ${plan.container}; this job should have routed to FFmpeg."
         }
@@ -128,11 +131,7 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
                     if (cont.isActive) cont.resume(Unit)
                 }
 
-                override fun onError(
-                    composition: Composition,
-                    result: ExportResult,
-                    exception: ExportException,
-                ) {
+                override fun onError(composition: Composition, result: ExportResult, exception: ExportException) {
                     if (cont.isActive) cont.resumeWithException(exception)
                 }
             })
@@ -192,7 +191,6 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
     override fun close() {
         thread.quitSafely()
     }
-
 
     private companion object {
         const val PROGRESS_INTERVAL_MS = 250L

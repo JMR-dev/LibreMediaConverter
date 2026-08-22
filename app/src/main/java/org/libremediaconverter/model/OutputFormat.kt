@@ -45,11 +45,9 @@ enum class Container(
     /** Whether this container can hold a video track at all. */
     val canHoldVideo: Boolean get() = videoExtension != null
 
-    fun extensionFor(hasVideo: Boolean): String =
-        if (hasVideo) videoExtension ?: audioExtension else audioExtension
+    fun extensionFor(hasVideo: Boolean): String = if (hasVideo) videoExtension ?: audioExtension else audioExtension
 
-    fun mimeTypeFor(hasVideo: Boolean): String =
-        if (hasVideo) videoMime ?: audioMime else audioMime
+    fun mimeTypeFor(hasVideo: Boolean): String = if (hasVideo) videoMime ?: audioMime else audioMime
 }
 
 /**
@@ -88,11 +86,7 @@ enum class AudioCodec(val label: String) {
  * now comes from [ContainerCapabilities] instead, which is explicit and unit-tested rather than
  * implicit in which combinations someone remembered to enumerate.
  */
-data class OutputSpec(
-    val container: Container,
-    val videoCodec: VideoCodec,
-    val audioCodec: AudioCodec,
-) {
+data class OutputSpec(val container: Container, val videoCodec: VideoCodec, val audioCodec: AudioCodec) {
     /** Whether the output keeps a video track — the thing extension and MIME type turn on. */
     val hasVideo: Boolean get() = videoCodec != VideoCodec.NONE
 
@@ -104,7 +98,8 @@ data class OutputSpec(
 
     /** True when neither track is re-encoded, i.e. this is a pure container change. */
     val isPureRemux: Boolean
-        get() = videoCodec.isCopyOrAbsent() && audioCodec.isCopyOrAbsent() &&
+        get() = videoCodec.isCopyOrAbsent() &&
+            audioCodec.isCopyOrAbsent() &&
             (videoCodec == VideoCodec.COPY || audioCodec == AudioCodec.COPY)
 
     val extension: String get() = container.extensionFor(hasVideo)

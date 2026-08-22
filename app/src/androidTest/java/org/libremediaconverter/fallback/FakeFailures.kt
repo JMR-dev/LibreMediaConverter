@@ -7,7 +7,6 @@ import org.libremediaconverter.convert.HardwareTranscoder
 import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.model.ConversionRequest
-import org.libremediaconverter.model.OutputFormat
 import java.io.File
 
 /**

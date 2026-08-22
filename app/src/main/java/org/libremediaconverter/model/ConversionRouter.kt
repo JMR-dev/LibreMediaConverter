@@ -57,7 +57,10 @@ object ConversionRouter {
 
     internal val MEDIA3_MUXABLE_AUDIO: Map<Container, Set<AudioCodec>> = mapOf(
         Container.MP4 to setOf(
-            AudioCodec.AAC, AudioCodec.OPUS, AudioCodec.VORBIS, AudioCodec.PCM,
+            AudioCodec.AAC,
+            AudioCodec.OPUS,
+            AudioCodec.VORBIS,
+            AudioCodec.PCM,
         ),
     )
 

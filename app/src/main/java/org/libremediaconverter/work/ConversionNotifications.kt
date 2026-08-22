@@ -35,7 +35,7 @@ class ConversionNotifications(private val context: Context) {
                     context.getString(R.string.notification_preparing)
                 } else {
                     context.getString(R.string.notification_progress, percent)
-                }
+                },
             )
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
@@ -57,10 +57,9 @@ class ConversionNotifications(private val context: Context) {
      * notification appears only in the Task Manager rather than the shade — so
      * progress silently vanishes from the user's point of view.
      */
-    fun areEnabled(): Boolean =
-        context.getSystemService(NotificationManager::class.java)
-            .areNotificationsEnabled()
-            .also { if (!it) Log.i(TAG, "Notifications disabled; progress will not be visible.") }
+    fun areEnabled(): Boolean = context.getSystemService(NotificationManager::class.java)
+        .areNotificationsEnabled()
+        .also { if (!it) Log.i(TAG, "Notifications disabled; progress will not be visible.") }
 
     companion object {
         const val CHANNEL_ID = "conversions"

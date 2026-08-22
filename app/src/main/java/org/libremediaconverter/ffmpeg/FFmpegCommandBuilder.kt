@@ -53,17 +53,14 @@ object FFmpegCommandBuilder {
     /** Containers in the ISO base-media family, where HEVC needs the hvc1 brand. */
     private val MP4_FAMILY = setOf(Container.MP4, Container.MOV)
 
-    fun build(
-        request: ConversionRequest,
-        inputPath: String,
-        outputPath: String,
-    ): List<String> {
+    fun build(request: ConversionRequest, inputPath: String, outputPath: String): List<String> {
         val plan = CopyPlanner.plan(request.spec, request.probe)
         return buildList {
             add("-hide_banner")
             // Overwrite: the output path is one we just created in our own cache.
             add("-y")
-            add("-i"); add(inputPath)
+            add("-i")
+            add(inputPath)
 
             if (request.spec.isImageOutput) {
                 addAll(imageArgs(request))
@@ -86,7 +83,8 @@ object FFmpegCommandBuilder {
             "-vf",
             "fps=12,scale=480:-1:flags=lanczos,split[a][b];" +
                 "[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer",
-            "-loop", "0",
+            "-loop",
+            "0",
         )
 
         else -> listOf("-an", "-vf", "fps=1", "-vsync", "0")
@@ -99,7 +97,8 @@ object FFmpegCommandBuilder {
             VideoPlan.Drop -> listOf("-vn")
 
             VideoPlan.Copy -> buildList {
-                add("-c:v"); add("copy")
+                add("-c:v")
+                add("copy")
                 // The hvc1 brand matters on the copy path too, not just when encoding: remuxing
                 // HEVC out of Matroska into MP4 otherwise produces a file Apple devices and many
                 // hardware players refuse, even though the samples are byte-identical.
@@ -128,9 +127,15 @@ object FFmpegCommandBuilder {
             // that hardware encoding is unlikely to work for that input. Fast therefore means a
             // fast *preset*, not a different encoder.
             VideoCodec.H265 -> listOf(
-                "-c:v", "libx265", "-crf", "$CRF_H265", "-preset", preset,
+                "-c:v",
+                "libx265",
+                "-crf",
+                "$CRF_H265",
+                "-preset",
+                preset,
                 // Without this, many players and Apple devices refuse HEVC in MP4.
-                "-tag:v", "hvc1",
+                "-tag:v",
+                "hvc1",
             ) + PIX_FMT
 
             VideoCodec.VP9 -> buildList {
@@ -140,7 +145,12 @@ object FFmpegCommandBuilder {
             }
 
             VideoCodec.H264 -> listOf(
-                "-c:v", "libx264", "-crf", "$CRF_H264", "-preset", preset,
+                "-c:v",
+                "libx264",
+                "-crf",
+                "$CRF_H264",
+                "-preset",
+                preset,
             ) + PIX_FMT
 
             // No silent substitution. A trailing `else -> libx264` would hand back H.264 for a
@@ -151,11 +161,11 @@ object FFmpegCommandBuilder {
             // about rather than papering over.
             VideoCodec.VP8, VideoCodec.AV1 -> error(
                 "This app cannot encode ${codec.label}; it can only copy an existing " +
-                    "${codec.label} stream."
+                    "${codec.label} stream.",
             )
 
             VideoCodec.COPY, VideoCodec.NONE -> error(
-                "encodeVideo called for $codec, which is not an encode"
+                "encodeVideo called for $codec, which is not an encode",
             )
         }
     }
@@ -167,31 +177,32 @@ object FFmpegCommandBuilder {
         return if (sourceIsHevc) listOf("-tag:v", "hvc1") else emptyList()
     }
 
-    private fun audioArgs(plan: ConversionPlan): List<String> =
-        when (val audio = plan.audio) {
-            AudioPlan.Drop -> listOf("-an")
-            AudioPlan.Copy -> listOf("-c:a", "copy")
-            is AudioPlan.Encode -> when (audio.codec) {
-                AudioCodec.MP3 -> listOf("-c:a", "libmp3lame", "-q:a", "2")
-                AudioCodec.FLAC -> listOf("-c:a", "flac")
-                AudioCodec.PCM -> listOf("-c:a", "pcm_s16le")
-                AudioCodec.OPUS -> listOf("-c:a", "libopus", "-b:a", "128k")
-                AudioCodec.VORBIS -> listOf("-c:a", "libvorbis", "-q:a", "5")
-                else -> listOf("-c:a", "aac", "-b:a", "192k")
-            }
+    private fun audioArgs(plan: ConversionPlan): List<String> = when (val audio = plan.audio) {
+        AudioPlan.Drop -> listOf("-an")
+        AudioPlan.Copy -> listOf("-c:a", "copy")
+        is AudioPlan.Encode -> when (audio.codec) {
+            AudioCodec.MP3 -> listOf("-c:a", "libmp3lame", "-q:a", "2")
+            AudioCodec.FLAC -> listOf("-c:a", "flac")
+            AudioCodec.PCM -> listOf("-c:a", "pcm_s16le")
+            AudioCodec.OPUS -> listOf("-c:a", "libopus", "-b:a", "128k")
+            AudioCodec.VORBIS -> listOf("-c:a", "libvorbis", "-q:a", "5")
+            else -> listOf("-c:a", "aac", "-b:a", "192k")
         }
+    }
 
     private fun containerArgs(plan: ConversionPlan): List<String> = buildList {
         // Name the muxer rather than letting FFmpeg infer it from the output path. Inference is
         // unreliable for MPEG-TS and ASF, and the app now lets the user pick a container
         // independently of the preset that used to imply it.
-        add("-f"); add(plan.container.ffmpegFormat)
+        add("-f")
+        add(plan.container.ffmpegFormat)
 
         if (plan.container in MP4_FAMILY) {
             // Move the moov atom to the front so the file starts playing before it is
             // fully downloaded. This is also the reason output never goes through a SAF
             // file descriptor: faststart has to seek backwards to rewrite the header.
-            add("-movflags"); add("+faststart")
+            add("-movflags")
+            add("+faststart")
         }
     }
 

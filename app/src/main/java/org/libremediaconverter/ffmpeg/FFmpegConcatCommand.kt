@@ -28,21 +28,31 @@ object FFmpegConcatCommand {
         format: OutputFormat,
     ): List<String> = when (strategy) {
         ConcatStrategy.STREAM_COPY -> buildList {
-            add("-hide_banner"); add("-y")
+            add("-hide_banner")
+            add("-y")
             // -safe 0 permits absolute paths in the list file, which ours are.
-            add("-f"); add("concat")
-            add("-safe"); add("0")
-            add("-i"); add(listFile.absolutePath)
-            add("-c"); add("copy")
+            add("-f")
+            add("concat")
+            add("-safe")
+            add("0")
+            add("-i")
+            add(listFile.absolutePath)
+            add("-c")
+            add("copy")
             if (format.container == org.libremediaconverter.model.Container.MP4) {
-                add("-movflags"); add("+faststart")
+                add("-movflags")
+                add("+faststart")
             }
             add(output.absolutePath)
         }
 
         ConcatStrategy.REENCODE -> buildList {
-            add("-hide_banner"); add("-y")
-            inputPaths.forEach { add("-i"); add(it) }
+            add("-hide_banner")
+            add("-y")
+            inputPaths.forEach {
+                add("-i")
+                add(it)
+            }
             // Normalise every input to a common size and frame rate before joining,
             // otherwise the concat filter refuses mismatched inputs.
             val filter = buildString {
@@ -53,15 +63,23 @@ object FFmpegConcatCommand {
                 inputPaths.indices.forEach { i -> append("[v$i][$i:a]") }
                 append("concat=n=${inputPaths.size}:v=1:a=1[v][a]")
             }
-            add("-filter_complex"); add(filter)
-            add("-map"); add("[v]")
-            add("-map"); add("[a]")
-            add("-c:v"); add("libx264")
-            add("-crf"); add("20")
-            add("-pix_fmt"); add("yuv420p")
-            add("-c:a"); add("aac")
+            add("-filter_complex")
+            add(filter)
+            add("-map")
+            add("[v]")
+            add("-map")
+            add("[a]")
+            add("-c:v")
+            add("libx264")
+            add("-crf")
+            add("20")
+            add("-pix_fmt")
+            add("yuv420p")
+            add("-c:a")
+            add("aac")
             if (format.container == org.libremediaconverter.model.Container.MP4) {
-                add("-movflags"); add("+faststart")
+                add("-movflags")
+                add("+faststart")
             }
             add(output.absolutePath)
         }

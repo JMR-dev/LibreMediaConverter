@@ -8,7 +8,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import org.libremediaconverter.convert.ConversionDependencies
@@ -27,10 +26,7 @@ import org.libremediaconverter.model.OutputFormat
  * concatenated; showing a fabricated percentage would be worse than showing none.
  */
 @UnstableApi
-class ConcatWorker(
-    context: Context,
-    params: WorkerParameters,
-) : CoroutineWorker(context, params) {
+class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     private val notifications = ConversionNotifications(applicationContext)
     private val publisher = ConversionDependencies.publisher(applicationContext)
@@ -43,7 +39,7 @@ class ConcatWorker(
         }
         val totalBytes = inputData.getLong(KEY_TOTAL_BYTES, 0L)
         val format = OutputFormat.valueOf(
-            inputData.getString(KEY_FORMAT) ?: OutputFormat.MP4_H264.name
+            inputData.getString(KEY_FORMAT) ?: OutputFormat.MP4_H264.name,
         )
 
         if (!publisher.hasSpaceFor(totalBytes)) {
@@ -55,7 +51,7 @@ class ConcatWorker(
                 NOTIFICATION_ID,
                 notifications.build(id, "Joining ${uris.size} files", 0, indeterminate = true),
                 ConversionForegroundType.current(),
-            )
+            ),
         )
 
         val staged = publisher.createStagingFile("joined.${format.extension}")
@@ -65,7 +61,7 @@ class ConcatWorker(
                 workDataOf(
                     KEY_OUTPUT_PATH to staged.absolutePath,
                     KEY_STRATEGY to result.strategy.name,
-                )
+                ),
             )
         } catch (e: Throwable) {
             staged.delete()
@@ -99,18 +95,15 @@ class ConcatWorker(
         private const val NOTIFICATION_ID = 1002
         private const val TAG = "ConcatWorker"
 
-        fun request(
-            inputs: List<Uri>,
-            totalBytes: Long,
-            format: OutputFormat = OutputFormat.MP4_H264,
-        ) = OneTimeWorkRequestBuilder<ConcatWorker>()
-            .setInputData(
-                Data.Builder()
-                    .putStringArray(KEY_INPUT_URIS, inputs.map(Uri::toString).toTypedArray())
-                    .putLong(KEY_TOTAL_BYTES, totalBytes)
-                    .putString(KEY_FORMAT, format.name)
-                    .build()
-            )
-            .build()
+        fun request(inputs: List<Uri>, totalBytes: Long, format: OutputFormat = OutputFormat.MP4_H264) =
+            OneTimeWorkRequestBuilder<ConcatWorker>()
+                .setInputData(
+                    Data.Builder()
+                        .putStringArray(KEY_INPUT_URIS, inputs.map(Uri::toString).toTypedArray())
+                        .putLong(KEY_TOTAL_BYTES, totalBytes)
+                        .putString(KEY_FORMAT, format.name)
+                        .build(),
+                )
+                .build()
     }
 }

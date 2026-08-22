@@ -8,14 +8,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import org.libremediaconverter.codec.AndroidDeviceCodecs
-import org.libremediaconverter.model.Engine
-import org.libremediaconverter.model.AudioCodec
-import org.libremediaconverter.model.Container
-import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.model.OutputSpec
-import org.libremediaconverter.model.VideoCodec
-import org.libremediaconverter.model.QualityTier
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -25,6 +17,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.codec.AndroidDeviceCodecs
+import org.libremediaconverter.model.AudioCodec
+import org.libremediaconverter.model.Container
+import org.libremediaconverter.model.Engine
+import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.OutputSpec
+import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.model.VideoCodec
 import java.io.File
 
 /**
@@ -170,8 +170,11 @@ class ConversionWorkerTest {
             terminal?.state,
         )
         assertEquals(
-            if (hasHardwareHevc) "hardware HEVC present, expected the Media3 path"
-            else "no hardware HEVC encoder, expected the FFmpeg path",
+            if (hasHardwareHevc) {
+                "hardware HEVC present, expected the Media3 path"
+            } else {
+                "no hardware HEVC encoder, expected the FFmpeg path"
+            },
             if (hasHardwareHevc) Engine.MEDIA3.name else Engine.FFMPEG.name,
             terminal?.outputData?.getString(ConversionWorker.KEY_ENGINE_USED),
         )

@@ -2,11 +2,11 @@ package org.libremediaconverter.convert
 
 import android.content.Context
 import android.net.Uri
+import org.libremediaconverter.codec.AndroidDeviceCodecs
 import org.libremediaconverter.ffmpeg.FFmpegEngine
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.DeviceCodecs
 import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.codec.AndroidDeviceCodecs
 import java.io.File
 
 /** The hardware conversion path. Implemented by [Media3Engine]. */

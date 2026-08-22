@@ -32,8 +32,7 @@ open class OutputPublisher(private val context: Context) {
      * Staging means peak usage is roughly input + output at once, so a job that would
      * just barely fit is rejected rather than failing partway through.
      */
-    open fun hasSpaceFor(bytes: Long): Boolean =
-        stagingDir.usableSpace > bytes + SPACE_HEADROOM_BYTES
+    open fun hasSpaceFor(bytes: Long): Boolean = stagingDir.usableSpace > bytes + SPACE_HEADROOM_BYTES
 
     /** Copies a finished staging file into a user-chosen SAF destination. */
     open fun publish(staged: File, destination: Uri) {

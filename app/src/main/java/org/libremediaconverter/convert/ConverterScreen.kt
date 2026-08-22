@@ -34,9 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import org.libremediaconverter.ui.PrimaryButtonHeight
-import org.libremediaconverter.ui.ScreenPaddingHorizontal
-import org.libremediaconverter.ui.ScreenPaddingVertical
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
@@ -50,14 +47,14 @@ import org.libremediaconverter.model.OutputSpec
 import org.libremediaconverter.model.QualityTier
 import org.libremediaconverter.model.Validation
 import org.libremediaconverter.model.VideoCodec
+import org.libremediaconverter.ui.PrimaryButtonHeight
+import org.libremediaconverter.ui.ScreenPaddingHorizontal
+import org.libremediaconverter.ui.ScreenPaddingVertical
 import java.util.Locale
 
 @UnstableApi
 @Composable
-fun ConverterScreen(
-    modifier: Modifier = Modifier,
-    viewModel: ConversionViewModel = viewModel(),
-) {
+fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val validation by viewModel.validation.collectAsStateWithLifecycle()
@@ -66,11 +63,11 @@ fun ConverterScreen(
     // only, offers no audio at all, and will not reliably surface .mkv/.flac/.webm.
     // SAF needs no runtime permission.
     val pickInput = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
+        ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(viewModel::onInputPicked) }
 
     val chooseDestination = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(settings.spec.mimeType)
+        ActivityResultContracts.CreateDocument(settings.spec.mimeType),
     ) { uri -> uri?.let(viewModel::save) }
 
     // Requested at the point of use rather than on first launch, so the ask carries its
@@ -78,7 +75,7 @@ fun ConverterScreen(
     // foreground service still runs, but its progress notification is confined to the
     // Task Manager instead of the shade.
     val requestNotifications = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
+        ActivityResultContracts.RequestPermission(),
     ) { viewModel.convert() }
 
     Column(

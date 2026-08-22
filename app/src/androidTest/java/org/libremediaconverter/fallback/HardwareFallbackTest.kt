@@ -6,9 +6,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.model.QualityTier
-import org.libremediaconverter.work.ConversionWorker
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -18,6 +15,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.work.ConversionWorker
 import java.io.File
 
 /**
