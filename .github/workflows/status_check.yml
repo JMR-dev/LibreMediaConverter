@@ -14,6 +14,14 @@ concurrency:
 # owner can repoint v4 at new code, so a tag reference is an open invitation to run
 # whatever that repository contains tomorrow. The trailing comment records which
 # release each hash corresponds to, since a bare hash is unreadable.
+# Nothing here writes: these jobs read the code, build it and attach reports. Declared
+# explicitly rather than inherited from the repository default, for the same reason the
+# action SHAs above are pinned -- the token's reach should be readable here, and a default
+# that widens later should not silently widen these jobs with it. build.yml's release job
+# makes the opposite declaration for the same reason.
+permissions:
+  contents: read
+
 env:
   GRADLE_CACHE_PATHS: |
     ~/.gradle/caches
