@@ -95,8 +95,15 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         private const val NOTIFICATION_ID = 1002
         private const val TAG = "ConcatWorker"
 
+        /**
+         * How many files are being joined is tagged as well as passed as input `Data`, because
+         * `WorkInfo` gives a job's tags back and its input `Data` never. It is the one thing the
+         * join screen says about a job in flight, and after a restart nothing else can supply
+         * it. See [JobTags].
+         */
         fun request(inputs: List<Uri>, totalBytes: Long, format: OutputFormat = OutputFormat.MP4_H264) =
             OneTimeWorkRequestBuilder<ConcatWorker>()
+                .addTag(JobTags.inputCount(inputs.size))
                 .setInputData(
                     Data.Builder()
                         .putStringArray(KEY_INPUT_URIS, inputs.map(Uri::toString).toTypedArray())
