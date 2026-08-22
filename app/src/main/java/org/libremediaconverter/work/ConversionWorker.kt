@@ -254,6 +254,12 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         fun outputNameFor(inputName: String, spec: OutputSpec): String = inputName.substringBeforeLast('.', inputName) +
             "_converted.${spec.extension}"
 
+        /**
+         * The name and size are tagged as well as passed as input `Data`, and that is not
+         * redundant. `WorkInfo` hands back a job's tags and its output but never the `Data` it
+         * was enqueued with, so after a restart the tags are the only way for the UI to say
+         * *which file* a job it did not start is working on. See [JobTags].
+         */
         fun request(
             inputUri: Uri,
             displayName: String,
@@ -262,6 +268,8 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             quality: QualityTier = QualityTier.FAST,
             enginePreference: EnginePreference = EnginePreference.AUTO,
         ) = OneTimeWorkRequestBuilder<ConversionWorker>()
+            .addTag(JobTags.displayName(displayName))
+            .addTag(JobTags.sizeBytes(sizeBytes))
             .setInputData(
                 Data.Builder()
                     .putString(KEY_INPUT_URI, inputUri.toString())

@@ -30,6 +30,9 @@ import org.libremediaconverter.model.QualityTier
 import org.libremediaconverter.model.Validation
 import org.libremediaconverter.model.VideoCodec
 import org.libremediaconverter.work.ConversionWorker
+import org.libremediaconverter.work.JobTags
+import org.libremediaconverter.work.Reattachment
+import org.libremediaconverter.work.jobSnapshots
 import java.io.File
 import java.util.UUID
 
@@ -102,6 +105,69 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
         ContainerCapabilities.validate(settings.spec, state.probe() ?: InputProbe())
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Validation.Valid)
 
+    init {
+        reattach()
+    }
+
+    /**
+     * Picks up a conversion this ViewModel did not start.
+     *
+     * The queue outliving the process is the entire reason [ConversionWorker] exists, but the
+     * ViewModel used to be where that stopped: its `activeWorkId` is a plain field, so a process
+     * reclaimed after a conversion finished came back to an empty screen while the output sat in
+     * `cacheDir` with nothing in the UI able to reach it. The realistic case is not a crash
+     * mid-transcode — it is the job finishing, the user not saving yet, and the process being
+     * reclaimed hours later as an ordinary background one.
+     *
+     * Nothing is persisted for this. The query is by worker class name, which WorkManager tags
+     * every request with on its own, so it finds work enqueued by an earlier run of the app —
+     * and by an earlier *version* of it — which an id saved in a `SavedStateHandle` would not.
+     *
+     * One known wart, not fixed here because it is a different defect: the save dialog's
+     * suggested name and MIME type come from the current picker rather than from the job that
+     * ran, so a reattached job converting to something other than the default format is offered
+     * the default extension. That derivation is wrong on its own terms and is left to the change
+     * that fixes it properly.
+     */
+    private fun reattach() {
+        viewModelScope.launch {
+            val reattachment = Reattachment.choose(
+                workManager.jobSnapshots(
+                    tag = ConversionWorker::class.java.name,
+                    outputPathKey = ConversionWorker.KEY_OUTPUT_PATH,
+                ),
+            ) ?: return@launch
+
+            // The query suspends, so by now the user may have picked a file or started a
+            // conversion of their own. Either owns the screen; reattaching over it would throw
+            // away what they just did. Both this check and the assignment below run on the main
+            // dispatcher with no suspension point between them, so nothing can interleave.
+            if (_state.value !is ConversionState.Idle || activeWorkId != null) return@launch
+
+            // Only a job that is the sole explanation for its staged file gets to name the input.
+            // When several jobs report the same file — which nothing prevents while the staging
+            // name is derived from the input's display name — the file is still the user's, but
+            // saying which of them produced it would be a guess, so the card falls back to a
+            // neutral label rather than borrowing the other job's.
+            val tags = (reattachment as? Reattachment.Certain)?.job?.tags.orEmpty()
+            val input = InputFile(
+                // The picked URI is not recoverable — WorkManager gives back a job's tags and
+                // its output, never the Data it was enqueued with — and nothing in the states
+                // reattachment produces reads it. The card shows the name and size, which the
+                // tags carry; a reattached job that is cancelled goes to Idle rather than Ready,
+                // so this can never reach the Convert button. Leaving the probe unset costs the
+                // card its source details, and re-probing is what there is no URI for.
+                uri = Uri.EMPTY,
+                displayName = JobTags.displayNameOf(tags) ?: UNKNOWN_INPUT_NAME,
+                sizeBytes = JobTags.sizeBytesOf(tags) ?: 0L,
+            )
+            activeWorkId = reattachment.job.id
+            // No initial state of our own: the flow's first emission carries the job's real
+            // state, so observe() maps it exactly as it would for a conversion started here.
+            observe(reattachment.job.id, input, cancelled = ConversionState.Idle)
+        }
+    }
+
     fun setPreset(format: OutputFormat) = _settings.update { it.copy(spec = format.spec) }
     fun setContainer(container: Container) = _settings.update { it.copy(spec = it.spec.copy(container = container)) }
 
@@ -161,7 +227,13 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
         observe(request.id, input)
     }
 
-    private fun observe(id: UUID, input: InputFile) {
+    /**
+     * @param cancelled where a cancellation lands. For a conversion started here that is the
+     *   picked file, ready to convert again. For one picked up by [reattach] there is no picked
+     *   file — the URI that job holds belongs to a process that no longer exists — so it lands
+     *   on Idle instead, rather than offering a Convert button over a file nothing can open.
+     */
+    private fun observe(id: UUID, input: InputFile, cancelled: ConversionState = ConversionState.Ready(input)) {
         observer?.cancel()
         observer = viewModelScope.launch {
             workManager.getWorkInfoByIdFlow(id).collect { info ->
@@ -197,12 +269,17 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
 
+                    // A worker that dies before it can report anything leaves no output data at
+                    // all — a foreground-service start refused after a process restart is one
+                    // way — and an exception's message can be an empty string. Both would read
+                    // as a failure with nothing said, so blank falls back like missing does.
                     WorkInfo.State.FAILED -> ConversionState.Failed(
                         info.outputData.getString(ConversionWorker.KEY_ERROR)
+                            ?.takeIf { it.isNotBlank() }
                             ?: "Conversion failed.",
                     )
 
-                    WorkInfo.State.CANCELLED -> ConversionState.Ready(input)
+                    WorkInfo.State.CANCELLED -> cancelled
                     WorkInfo.State.BLOCKED -> ConversionState.Converting(input, 0)
                 }
             }
@@ -278,5 +355,14 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         return InputFile(uri, name, size)
+    }
+
+    private companion object {
+        /**
+         * Shown for a reattached job whose tags predate them — work enqueued by an earlier
+         * version of the app. Neutral on purpose: it is a real file of the user's, and calling
+         * it "unknown" would read as an error rather than as a gap in what survived.
+         */
+        const val UNKNOWN_INPUT_NAME = "Media file"
     }
 }
