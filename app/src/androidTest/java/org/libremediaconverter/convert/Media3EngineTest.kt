@@ -11,10 +11,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.model.OutputFormat
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -60,7 +62,7 @@ class Media3EngineTest {
         engine.transcode(
             input = Uri.fromFile(input),
             output = output,
-            videoMimeType = MimeTypes.VIDEO_H265,
+            format = OutputFormat.MP4_H265,
         ) { percent -> seen += percent }
 
         assertTrue("export produced no file", output.exists())
@@ -75,6 +77,77 @@ class Media3EngineTest {
         // and a 3 s 320x240 clip can finish inside one tick on fast hardware, which
         // would make the assertion fail intermittently for no real defect.
         seen.forEach { assertTrue("progress out of range: $it", it in 0..100) }
+    }
+
+    /**
+     * Regression guard for the audio-extraction bug.
+     *
+     * [OutputFormat.M4A_AAC] declares `VideoCodec.NONE`, and the router sends it to Media3. But
+     * the engine used to build a bare `EditedMediaItem` and take a video MIME type that defaulted
+     * to HEVC, so "extract the audio" transcoded the *video* to H.265 and wrote it to a file named
+     * `.m4a`. Nothing failed; the output was simply not what was asked for.
+     *
+     * This is the test the suite was missing — [Media3EngineTest] had no audio-only case at all,
+     * which is why the defect survived.
+     */
+    @Test
+    fun audioOnlyExportDropsTheVideoTrack(): Unit = runBlocking {
+        val audio = File(context.cacheDir, "out_audio.m4a")
+        audio.delete()
+        try {
+            engine.transcode(Uri.fromFile(input), audio, OutputFormat.M4A_AAC)
+
+            assertTrue("export produced no file", audio.exists() && audio.length() > 0)
+            val tracks = trackMimeTypesOf(audio)
+            assertEquals("expected exactly one track, got $tracks", 1, tracks.size)
+            assertEquals(MimeTypes.AUDIO_AAC, tracks.single())
+            assertNull("an audio-only export must carry no video track", videoMimeTypeOf(audio))
+            assertTrue("output has no duration", durationMsOf(audio) > 0)
+        } finally {
+            audio.delete()
+        }
+    }
+
+    /**
+     * WAV output, which reaches Media3 for the same reason M4A does.
+     *
+     * `Container.WAV` is in the router's Media3 set, but until the engine passed a muxer factory
+     * the only muxer Transformer ever used was the MP4 one — so asking for WAV produced an MP4.
+     * Asserting the RIFF header proves the container, not merely that a file appeared; this
+     * follows what `FFmpegEngineTest` already does for its formats.
+     */
+    @Test
+    fun wavExportWritesARiffHeader(): Unit = runBlocking {
+        val wav = File(context.cacheDir, "out_audio.wav")
+        wav.delete()
+        try {
+            engine.transcode(Uri.fromFile(input), wav, OutputFormat.WAV)
+
+            assertTrue("export produced no file", wav.exists() && wav.length() > 0)
+            assertEquals("RIFF", String(wav.readBytes().copyOfRange(0, 4), Charsets.US_ASCII))
+        } finally {
+            wav.delete()
+        }
+    }
+
+    /**
+     * Ogg/Opus output, the third container the router claims for Media3.
+     *
+     * Asserted by magic bytes rather than `MediaExtractor`: platform extractor support for raw
+     * Ogg is inconsistent across the API levels in the CI matrix, and "OggS" is unambiguous.
+     */
+    @Test
+    fun opusExportWritesAnOggHeader(): Unit = runBlocking {
+        val ogg = File(context.cacheDir, "out_audio.opus")
+        ogg.delete()
+        try {
+            engine.transcode(Uri.fromFile(input), ogg, OutputFormat.OPUS)
+
+            assertTrue("export produced no file", ogg.exists() && ogg.length() > 0)
+            assertEquals("OggS", String(ogg.readBytes().copyOfRange(0, 4), Charsets.US_ASCII))
+        } finally {
+            ogg.delete()
+        }
     }
 
     /**
@@ -124,7 +197,7 @@ class Media3EngineTest {
         val failure = runCatching {
             runBlocking {
                 withTimeout(30_000) {
-                    engine.transcode(Uri.fromFile(input), impossible, MimeTypes.VIDEO_H265) {}
+                    engine.transcode(Uri.fromFile(input), impossible, OutputFormat.MP4_H265) {}
                 }
             }
         }.exceptionOrNull()
@@ -143,6 +216,17 @@ class Media3EngineTest {
                 .map { extractor.getTrackFormat(it) }
                 .filter { it.containsKey(MediaFormat.KEY_DURATION) }
                 .maxOfOrNull { it.getLong(MediaFormat.KEY_DURATION) / 1000 } ?: 0L
+        } finally {
+            extractor.release()
+        }
+    }
+
+    private fun trackMimeTypesOf(file: File): List<String> {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(file.absolutePath)
+            (0 until extractor.trackCount)
+                .map { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME).orEmpty() }
         } finally {
             extractor.release()
         }

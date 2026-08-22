@@ -100,7 +100,7 @@ class RealMediaBenchmark {
         val hwOut = File(context.cacheDir, "bench_hw.mp4").apply { delete() }
         val engine = Media3Engine(context)
         val hwMs = try {
-            runCatching { timed { engine.transcode(uri, hwOut, MimeTypes.VIDEO_H265) } }
+            runCatching { timed { engine.transcode(uri, hwOut, OutputFormat.MP4_H265) } }
                 .onFailure { Log.w(TAG, "BENCH hardware: UNSUPPORTED (${it.message})") }
                 .getOrNull()
         } finally {
@@ -162,7 +162,7 @@ class RealMediaBenchmark {
         val out = File(context.cacheDir, "bench_av1_out.mp4").apply { delete() }
         val engine = Media3Engine(context)
         val ms = try {
-            timed { engine.transcode(Uri.fromFile(input), out, MimeTypes.VIDEO_H265) }
+            timed { engine.transcode(Uri.fromFile(input), out, OutputFormat.MP4_H265) }
         } finally {
             engine.close()
         }

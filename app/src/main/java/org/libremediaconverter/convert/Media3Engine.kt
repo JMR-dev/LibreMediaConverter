@@ -15,6 +15,9 @@ import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.libremediaconverter.model.AudioCodec
+import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.VideoCodec
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -55,12 +58,19 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
     override suspend fun transcode(
         input: Uri,
         output: File,
-        videoMimeType: String,
+        format: OutputFormat,
         onProgress: (Int) -> Unit,
     ): Unit = suspendCancellableCoroutine { cont ->
         handler.post {
-            val transformer = buildTransformer(videoMimeType, cont)
-            val item = EditedMediaItem.Builder(MediaItem.fromUri(input)).build()
+            val transformer = runCatching { buildTransformer(format, cont) }
+                .getOrElse { cont.resumeWithException(it); return@post }
+            // Dropping the tracks the target format does not have is what stops an audio-only
+            // export from carrying a re-encoded video track. Without setRemoveVideo, asking for
+            // M4A produced an HEVC stream in a file named .m4a.
+            val item = EditedMediaItem.Builder(MediaItem.fromUri(input))
+                .setRemoveVideo(format.videoCodec == VideoCodec.NONE)
+                .setRemoveAudio(format.audioCodec == AudioCodec.NONE)
+                .build()
 
             cont.invokeOnCancellation {
                 // cancel() has the same single-thread requirement as start().
@@ -74,26 +84,69 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
         }
     }
 
+    /**
+     * @throws IllegalArgumentException if [format] names a container Media3 cannot mux. That is a
+     *   routing bug rather than a runtime condition — [org.libremediaconverter.model.ConversionRouter]
+     *   is supposed to have sent such a job to FFmpeg — so it fails loudly instead of quietly
+     *   writing MP4, which is what the old code did.
+     */
     private fun buildTransformer(
-        videoMimeType: String,
+        format: OutputFormat,
         cont: CancellableContinuation<Unit>,
-    ): Transformer = Transformer.Builder(context)
-        .setLooper(thread.looper)
-        .setVideoMimeType(videoMimeType)
-        .addListener(object : Transformer.Listener {
-            override fun onCompleted(composition: Composition, result: ExportResult) {
-                if (cont.isActive) cont.resume(Unit)
-            }
+    ): Transformer {
+        val muxerFactory = requireNotNull(Media3Muxers.factoryFor(format.container)) {
+            "Media3 cannot mux ${format.container}; this job should have routed to FFmpeg."
+        }
 
-            override fun onError(
-                composition: Composition,
-                result: ExportResult,
-                exception: ExportException,
-            ) {
-                if (cont.isActive) cont.resumeWithException(exception)
-            }
-        })
-        .build()
+        val builder = Transformer.Builder(context)
+            .setLooper(thread.looper)
+            .setMuxerFactory(muxerFactory)
+
+        // Only name a MIME type for a track the output actually keeps. Naming one for a removed
+        // track makes Transformer build an encoder for samples that will never arrive.
+        videoMimeTypeFor(format.videoCodec)?.let(builder::setVideoMimeType)
+        audioMimeTypeFor(format.audioCodec)?.let(builder::setAudioMimeType)
+
+        return builder
+            .addListener(object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, result: ExportResult) {
+                    if (cont.isActive) cont.resume(Unit)
+                }
+
+                override fun onError(
+                    composition: Composition,
+                    result: ExportResult,
+                    exception: ExportException,
+                ) {
+                    if (cont.isActive) cont.resumeWithException(exception)
+                }
+            })
+            .build()
+    }
+
+    /**
+     * Media3 encodes only H.264 and H.265 of the codecs this app offers.
+     *
+     * VP8/VP9/AV1 targets never reach here — the router sends them to FFmpeg because
+     * `Transformer.setVideoMimeType` rejects them — so anything unexpected returns null and lets
+     * Transformer pick, rather than silently substituting H.265 the way the old mapping did.
+     */
+    private fun videoMimeTypeFor(codec: VideoCodec): String? = when (codec) {
+        VideoCodec.H264 -> MimeTypes.VIDEO_H264
+        VideoCodec.H265 -> MimeTypes.VIDEO_H265
+        VideoCodec.NONE -> null
+        VideoCodec.VP8, VideoCodec.VP9, VideoCodec.AV1 -> null
+    }
+
+    private fun audioMimeTypeFor(codec: AudioCodec): String? = when (codec) {
+        AudioCodec.AAC -> MimeTypes.AUDIO_AAC
+        AudioCodec.OPUS -> MimeTypes.AUDIO_OPUS
+        AudioCodec.VORBIS -> MimeTypes.AUDIO_VORBIS
+        AudioCodec.PCM -> MimeTypes.AUDIO_RAW
+        AudioCodec.NONE -> null
+        // MP3 and FLAC have no Android encoder; the router routes them to FFmpeg.
+        AudioCodec.MP3, AudioCodec.FLAC -> null
+    }
 
     /**
      * Polls export progress on the Transformer's own thread.

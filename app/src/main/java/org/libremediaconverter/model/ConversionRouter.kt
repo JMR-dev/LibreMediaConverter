@@ -13,8 +13,14 @@ package org.libremediaconverter.model
  */
 object ConversionRouter {
 
-    /** Containers Media3 can mux. Anything else has to go to FFmpeg. */
-    private val MEDIA3_CONTAINERS = setOf(
+    /**
+     * Containers Media3 can mux. Anything else has to go to FFmpeg.
+     *
+     * Not private: `Media3Muxers` has to supply a `Muxer.Factory` for every entry, and a test
+     * asserts the two agree. They drifted once already — this set was correct while the engine
+     * silently wrote MP4 for all five.
+     */
+    internal val MEDIA3_CONTAINERS = setOf(
         Container.MP4,
         Container.WEBM,
         Container.OGG,
