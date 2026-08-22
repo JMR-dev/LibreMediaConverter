@@ -47,12 +47,21 @@ object Media3Muxers {
         // than inheriting one, which is how the MP4-for-everything bug went unnoticed.
         Container.MP4 -> DefaultMuxer.Factory()
 
+        // The four muxers described above, plus the containers Media3 never had one for. MOV is
+        // among them despite being MP4's own family: `Mp4Muxer` exposes only FILE_FORMAT_DEFAULT
+        // and FILE_FORMAT_MP4_WITH_AUXILIARY_TRACKS_EXTENSION — no QuickTime.
         Container.WEBM,
         Container.OGG,
         Container.WAV,
         Container.AAC_ADTS,
         Container.MKV,
+        Container.MOV,
+        Container.MPEG_TS,
+        Container.AVI,
+        Container.FLV,
+        Container.ASF,
         Container.MP3,
+        Container.FLAC,
         Container.GIF,
         Container.IMAGE_SEQUENCE,
         -> null

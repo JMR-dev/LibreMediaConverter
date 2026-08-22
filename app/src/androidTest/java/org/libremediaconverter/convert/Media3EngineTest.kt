@@ -16,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.OutputFormat
 import java.io.File
 import java.util.concurrent.Executors
@@ -62,7 +63,7 @@ class Media3EngineTest {
         engine.transcode(
             input = Uri.fromFile(input),
             output = output,
-            format = OutputFormat.MP4_H265,
+            request = ConversionRequest(OutputFormat.MP4_H265.spec),
         ) { percent -> seen += percent }
 
         assertTrue("export produced no file", output.exists())
@@ -95,7 +96,7 @@ class Media3EngineTest {
         val audio = File(context.cacheDir, "out_audio.m4a")
         audio.delete()
         try {
-            engine.transcode(Uri.fromFile(input), audio, OutputFormat.M4A_AAC)
+            engine.transcode(Uri.fromFile(input), audio, ConversionRequest(OutputFormat.M4A_AAC.spec))
 
             assertTrue("export produced no file", audio.exists() && audio.length() > 0)
             val tracks = trackMimeTypesOf(audio)
@@ -155,7 +156,7 @@ class Media3EngineTest {
         val failure = runCatching {
             runBlocking {
                 withTimeout(30_000) {
-                    engine.transcode(Uri.fromFile(input), impossible, OutputFormat.MP4_H265) {}
+                    engine.transcode(Uri.fromFile(input), impossible, ConversionRequest(OutputFormat.MP4_H265.spec)) {}
                 }
             }
         }.exceptionOrNull()

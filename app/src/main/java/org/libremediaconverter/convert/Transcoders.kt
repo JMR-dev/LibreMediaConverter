@@ -12,16 +12,17 @@ import java.io.File
 /** The hardware conversion path. Implemented by [Media3Engine]. */
 interface HardwareTranscoder : AutoCloseable {
     /**
-     * Takes the whole [OutputFormat] rather than just a video MIME type.
+     * Takes the whole [ConversionRequest] rather than just a video MIME type.
      *
      * The narrower signature was the reason "extract audio to M4A" produced an HEVC video track:
      * the container, the audio codec and "this output has no video at all" had nowhere to travel,
-     * so the engine defaulted all three.
+     * so the engine defaulted all three. Passing the request also carries the input probe, which
+     * is what `CopyPlanner` needs to decide whether a track can be transmuxed.
      */
     suspend fun transcode(
         input: Uri,
         output: File,
-        format: OutputFormat = OutputFormat.MP4_H265,
+        request: ConversionRequest = ConversionRequest(OutputFormat.MP4_H265.spec),
         onProgress: (Int) -> Unit = {},
     )
 }

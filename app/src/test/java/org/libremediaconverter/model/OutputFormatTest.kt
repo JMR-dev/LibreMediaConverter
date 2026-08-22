@@ -61,4 +61,66 @@ class OutputFormatTest {
             assertTrue(it.description.isNotBlank())
         }
     }
+
+    // --- containers are now load-bearing ------------------------------------
+
+    /**
+     * Extension and MIME type moved from the preset onto the container.
+     *
+     * They used to be per-preset literals, which is why `OutputFormat.FLAC` could declare
+     * `Container.MKV` with extension `flac` and nobody noticed — nothing read the container. Now
+     * `-f`, the filename and the SAF create-document MIME all derive from it.
+     */
+    @Test
+    fun `every container names an extension, a mime type and an ffmpeg muxer`() {
+        Container.entries.forEach { container ->
+            listOf(true, false).forEach { hasVideo ->
+                val ext = container.extensionFor(hasVideo)
+                assertTrue("$container has no extension", ext.isNotBlank())
+                assertFalse("$container extension has a dot", ext.startsWith("."))
+                assertTrue(
+                    "$container has no mime type",
+                    container.mimeTypeFor(hasVideo).contains('/'),
+                )
+            }
+            assertTrue("$container names no muxer", container.ffmpegFormat.isNotBlank())
+        }
+    }
+
+    @Test
+    fun `audio-only variants of a container get their own extension`() {
+        assertEquals("mp4", Container.MP4.extensionFor(hasVideo = true))
+        assertEquals("m4a", Container.MP4.extensionFor(hasVideo = false))
+        assertEquals("mkv", Container.MKV.extensionFor(hasVideo = true))
+        assertEquals("mka", Container.MKV.extensionFor(hasVideo = false))
+    }
+
+    /** Regression guard: FLAC used to be declared as Matroska with a `.flac` extension. */
+    @Test
+    fun `FLAC is its own container, not Matroska`() {
+        assertEquals(Container.FLAC, OutputFormat.FLAC.container)
+        assertEquals("flac", OutputFormat.FLAC.extension)
+        assertEquals("flac", Container.FLAC.ffmpegFormat)
+    }
+
+    @Test
+    fun `the remux presets copy both tracks`() {
+        listOf(OutputFormat.REMUX_MP4, OutputFormat.REMUX_MKV).forEach {
+            assertEquals(VideoCodec.COPY, it.videoCodec)
+            assertEquals(AudioCodec.COPY, it.audioCodec)
+            assertTrue("${it.name} should be a pure remux", it.spec.isPureRemux)
+        }
+    }
+
+    @Test
+    fun `a spec that encodes anything is not a remux`() {
+        assertFalse(OutputFormat.MP4_H265.spec.isPureRemux)
+        assertFalse(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.AAC).isPureRemux,
+        )
+        assertFalse(
+            "dropping both tracks copies nothing",
+            OutputSpec(Container.MP4, VideoCodec.NONE, AudioCodec.NONE).isPureRemux,
+        )
+    }
 }

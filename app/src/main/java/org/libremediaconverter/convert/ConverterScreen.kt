@@ -3,6 +3,7 @@ package org.libremediaconverter.convert
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -16,13 +17,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -33,9 +40,16 @@ import org.libremediaconverter.ui.ScreenPaddingVertical
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
+import org.libremediaconverter.model.AudioCodec
+import org.libremediaconverter.model.CodecNames
+import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.EnginePreference
+import org.libremediaconverter.model.InputKind
 import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.OutputSpec
 import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.model.Validation
+import org.libremediaconverter.model.VideoCodec
 import java.util.Locale
 
 @UnstableApi
@@ -46,6 +60,7 @@ fun ConverterScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val validation by viewModel.validation.collectAsStateWithLifecycle()
 
     // ACTION_OPEN_DOCUMENT rather than the photo picker: the picker is images and video
     // only, offers no audio at all, and will not reliably surface .mkv/.flac/.webm.
@@ -55,7 +70,7 @@ fun ConverterScreen(
     ) { uri -> uri?.let(viewModel::onInputPicked) }
 
     val chooseDestination = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(settings.format.mimeType)
+        ActivityResultContracts.CreateDocument(settings.spec.mimeType)
     ) { uri -> uri?.let(viewModel::save) }
 
     // Requested at the point of use rather than on first launch, so the ask carries its
@@ -110,13 +125,24 @@ fun ConverterScreen(
 
                     is ConversionState.Ready -> {
                         FileCard(s.input)
-                        FormatPicker(settings.format, viewModel::setFormat)
+                        FormatPicker(settings.matchingPreset, viewModel::setPreset)
+                        AdvancedPicker(
+                            spec = settings.spec,
+                            validation = validation,
+                            onContainer = viewModel::setContainer,
+                            onVideoCodec = viewModel::setVideoCodec,
+                            onAudioCodec = viewModel::setAudioCodec,
+                            onSuggestion = viewModel::applySuggestion,
+                        )
                         QualityPicker(settings.quality, viewModel::setQuality)
                         EnginePicker(settings.enginePreference, viewModel::setEnginePreference)
                         Button(
                             onClick = {
                                 requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                             },
+                            // The Advanced picker lets an impossible combination be selected on
+                            // purpose, so this is what stops it from being run.
+                            enabled = validation.isValid,
                             modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
                         ) { Text("Convert") }
                         OutlinedButton(
@@ -159,8 +185,9 @@ fun ConverterScreen(
                         )
                         if (s.routeReason.isNotBlank()) {
                             // Surfacing the routing decision rather than hiding it: it
-                            // explains why a job was slow, and makes the software
-                            // fallback visible.
+                            // explains why a job was slow, makes the software fallback
+                            // visible, and is how the user learns a remux happened rather
+                            // than a re-encode.
                             AssistChip(onClick = {}, label = { Text(s.routeReason) })
                         }
                         Button(
@@ -200,7 +227,7 @@ fun ConverterScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FormatPicker(selected: OutputFormat, onSelect: (OutputFormat) -> Unit) {
+private fun FormatPicker(selected: OutputFormat?, onSelect: (OutputFormat) -> Unit) {
     Text("Output format", style = MaterialTheme.typography.titleSmall)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutputFormat.entries.forEach { format ->
@@ -211,6 +238,128 @@ private fun FormatPicker(selected: OutputFormat, onSelect: (OutputFormat) -> Uni
             )
         }
     }
+    if (selected == null) {
+        Text(
+            "Custom — set below.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * The full container × codec matrix.
+ *
+ * Every combination stays selectable, including the ones that cannot work. Disabling or hiding
+ * them would leave the user guessing why the option they wanted is not there; letting them pick it
+ * and then saying what is wrong — and what would work instead — teaches the constraint. The
+ * Convert button is what actually blocks the job.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AdvancedPicker(
+    spec: OutputSpec,
+    validation: Validation,
+    onContainer: (Container) -> Unit,
+    onVideoCodec: (VideoCodec) -> Unit,
+    onAudioCodec: (AudioCodec) -> Unit,
+    onSuggestion: (OutputSpec) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
+    TextButton(onClick = { expanded = !expanded }) {
+        Text(if (expanded) "Hide advanced" else "Advanced")
+    }
+
+    AnimatedVisibility(visible = expanded) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Container", style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Container.entries.forEach { container ->
+                    FilterChip(
+                        selected = container == spec.container,
+                        onClick = { onContainer(container) },
+                        label = { Text(container.label) },
+                    )
+                }
+            }
+
+            Text("Video", style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                VideoCodec.entries.forEach { codec ->
+                    FilterChip(
+                        selected = codec == spec.videoCodec,
+                        onClick = { onVideoCodec(codec) },
+                        label = { Text(codec.label) },
+                    )
+                }
+            }
+
+            Text("Audio", style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AudioCodec.entries.forEach { codec ->
+                    FilterChip(
+                        selected = codec == spec.audioCodec,
+                        onClick = { onAudioCodec(codec) },
+                        label = { Text(codec.label) },
+                    )
+                }
+            }
+
+            Text(
+                "Copy keeps the original stream — no re-encoding, so it finishes in seconds.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    if (validation is Validation.Invalid) {
+        ValidationError(validation, onSuggestion)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ValidationError(invalid: Validation.Invalid, onSuggestion: (OutputSpec) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(invalid.message, style = MaterialTheme.typography.bodyMedium)
+            if (invalid.suggestions.isNotEmpty()) {
+                Text("Try instead:", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    invalid.suggestions.forEach { suggestion ->
+                        AssistChip(
+                            onClick = { onSuggestion(suggestion) },
+                            label = { Text(describe(suggestion)) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun describe(spec: OutputSpec): String {
+    val video = when (spec.videoCodec) {
+        VideoCodec.NONE -> null
+        else -> spec.videoCodec.label
+    }
+    val audio = when (spec.audioCodec) {
+        AudioCodec.NONE -> null
+        else -> spec.audioCodec.label
+    }
+    val tracks = listOfNotNull(video, audio).joinToString(" + ")
+    return if (tracks.isEmpty()) spec.container.label else "${spec.container.label} · $tracks"
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -250,14 +399,85 @@ private fun EnginePreference.label(): String = when (this) {
     EnginePreference.FORCE_SOFTWARE -> "Force software"
 }
 
+/**
+ * Name, size, and what the file actually turned out to be.
+ *
+ * The codec lines are what make "Copy" a meaningful choice — without knowing the source is H.264,
+ * "copy the video" is a guess. They degrade explicitly rather than silently: an audio file says so
+ * instead of showing a blank video row, and a file nothing could read says that rather than
+ * pretending it has an unknown codec.
+ */
 @Composable
 private fun FileCard(input: InputFile) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(input.displayName, style = MaterialTheme.typography.titleMedium)
             Text(formatBytes(input.sizeBytes), style = MaterialTheme.typography.bodySmall)
+
+            val probe = input.probe
+            if (probe == null) {
+                Text("Reading…", style = MaterialTheme.typography.bodySmall)
+                return@Column
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            when (probe.kind) {
+                InputKind.UNPARSEABLE -> Text(
+                    "Could not identify this file. It will be converted with FFmpeg.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                InputKind.IMAGE -> {
+                    DetailRow("Type", "Image")
+                    if (probe.width > 0) DetailRow("Size", "${probe.width}×${probe.height}")
+                }
+
+                InputKind.AUDIO_ONLY -> {
+                    DetailRow("Container", probe.container?.label ?: "Unknown")
+                    DetailRow("Video", "No video track")
+                    DetailRow("Audio", CodecNames.describeAudio(probe.audioCodec))
+                    if (probe.durationMs > 0) DetailRow("Length", formatDuration(probe.durationMs))
+                }
+
+                InputKind.VIDEO -> {
+                    DetailRow("Container", probe.container?.label ?: "Unknown")
+                    DetailRow(
+                        "Video",
+                        buildString {
+                            append(CodecNames.describeVideo(probe.videoCodec))
+                            if (probe.width > 0) append(" · ${probe.width}×${probe.height}")
+                        },
+                    )
+                    DetailRow(
+                        "Audio",
+                        if (probe.audioCodec == null) {
+                            "No audio track"
+                        } else {
+                            CodecNames.describeAudio(probe.audioCodec)
+                        },
+                    )
+                    if (probe.durationMs > 0) DetailRow("Length", formatDuration(probe.durationMs))
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Text(
+        "$label: $value",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format(Locale.US, "%d:%02d", minutes, seconds)
 }
 
 private fun formatBytes(bytes: Long): String = when {

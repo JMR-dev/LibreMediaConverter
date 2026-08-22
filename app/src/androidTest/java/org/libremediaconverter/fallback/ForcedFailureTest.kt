@@ -66,7 +66,7 @@ class ForcedFailureTest {
             inputUri = Uri.fromFile(input),
             displayName = SAMPLE,
             sizeBytes = input.length(),
-            format = format,
+            spec = format.spec,
             quality = QualityTier.FAST,
         )
 

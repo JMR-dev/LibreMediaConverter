@@ -20,7 +20,18 @@ class ConversionRouterTest {
         probe: InputProbe = InputProbe(videoCodec = "h264"),
         device: DeviceCodecs = DeviceCodecs.PERMISSIVE,
     ) = ConversionRouter.route(
-        ConversionRequest(format, quality, preference, probe),
+        ConversionRequest(format.spec, quality, preference, probe),
+        device,
+    )
+
+    private fun route(
+        spec: OutputSpec,
+        quality: QualityTier = QualityTier.FAST,
+        preference: EnginePreference = EnginePreference.AUTO,
+        probe: InputProbe = InputProbe(videoCodec = "h264"),
+        device: DeviceCodecs = DeviceCodecs.PERMISSIVE,
+    ) = ConversionRouter.route(
+        ConversionRequest(spec, quality, preference, probe),
         device,
     )
 
@@ -174,6 +185,126 @@ class ConversionRouterTest {
         val d = route(OutputFormat.MP3, preference = EnginePreference.FORCE_SOFTWARE)
         assertEquals(Engine.FFMPEG, d.engine)
         assertEquals(Reason.USER_FORCED_SOFTWARE, d.reason)
+    }
+
+    // --- remux --------------------------------------------------------------
+
+    /**
+     * The test that keeps the Media3 transmux path alive.
+     *
+     * `COPY` belongs to none of the router's capability sets, so the obvious implementation — test
+     * the request's codecs directly — sends every remux to FFmpeg on the very first check. Nothing
+     * would fail: FFmpeg's `-c copy` produces a correct file, just on the CPU. Only an assertion
+     * about the *engine* catches it, which is why this one exists.
+     */
+    @Test
+    fun `a full stream copy into a Media3 container stays on hardware`() {
+        val d = route(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY),
+            probe = InputProbe(videoCodec = "h264", audioCodec = "aac", container = Container.MKV),
+        )
+        assertEquals(Engine.MEDIA3, d.engine)
+        assertEquals(Reason.REMUX_NO_REENCODE, d.reason)
+    }
+
+    /** A copy needs no encoder at all, so a device with none must not push it to software. */
+    @Test
+    fun `a stream copy ignores the device encoder capabilities`() {
+        val noEncoders = object : DeviceCodecs {
+            override fun canEncode(codec: VideoCodec) = false
+            override fun canDecode(codecName: String) = true
+        }
+        val d = route(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY),
+            probe = InputProbe(videoCodec = "h264", audioCodec = "aac", container = Container.MKV),
+            device = noEncoders,
+        )
+        assertEquals(Engine.MEDIA3, d.engine)
+    }
+
+    /** Nor does it decode, so a codec the device cannot decode is still copyable. */
+    @Test
+    fun `a stream copy ignores the device decoder capabilities`() {
+        val noDecoders = object : DeviceCodecs {
+            override fun canEncode(codec: VideoCodec) = true
+            override fun canDecode(codecName: String) = false
+        }
+        val d = route(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY),
+            probe = InputProbe(videoCodec = "av1", audioCodec = "aac", container = Container.MKV),
+            device = noDecoders,
+        )
+        assertEquals(Engine.MEDIA3, d.engine)
+    }
+
+    /**
+     * Copying MP3 audio into MP4 needs no encoder — but Media3's MP4 muxer cannot carry MP3.
+     *
+     * Two separate limits that used to be indistinguishable because nothing could reach this
+     * combination. The encoder gap is real and permanent (Android has no MP3 encoder); the muxer
+     * gap is what actually decides this job, and the reason has to say so rather than blaming an
+     * encoder nobody asked for.
+     */
+    @Test
+    fun `copying MP3 audio into MP4 needs FFmpeg because Media3 cannot mux it`() {
+        val d = route(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY),
+            probe = InputProbe(videoCodec = "h264", audioCodec = "mp3", container = Container.MKV),
+        )
+        assertEquals(Engine.FFMPEG, d.engine)
+        assertEquals(Reason.CONTAINER_CODEC_UNSUPPORTED, d.reason)
+    }
+
+    /** Opus, by contrast, Media3's MP4 muxer does carry. */
+    @Test
+    fun `copying Opus audio into MP4 stays on hardware`() {
+        val d = route(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY),
+            probe = InputProbe(videoCodec = "h264", audioCodec = "opus", container = Container.MKV),
+        )
+        assertEquals(Engine.MEDIA3, d.engine)
+        assertEquals(Reason.REMUX_NO_REENCODE, d.reason)
+    }
+
+    /** But Best quality is meaningless for a copy, so it must not force software. */
+    @Test
+    fun `best quality does not force software for a pure remux`() {
+        val d = route(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY),
+            quality = QualityTier.BEST,
+            probe = InputProbe(videoCodec = "h264", audioCodec = "aac", container = Container.MKV),
+        )
+        assertEquals(Engine.MEDIA3, d.engine)
+    }
+
+    /** An unreadable file cannot be copied either — there is nothing to demux. */
+    @Test
+    fun `an unparseable input still goes to FFmpeg even when a copy was asked for`() {
+        val d = route(
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY),
+            probe = InputProbe(videoCodec = InputProbe.UNPARSEABLE),
+        )
+        assertEquals(Engine.FFMPEG, d.engine)
+        assertEquals(Reason.NO_PLATFORM_DECODER, d.reason)
+    }
+
+    @Test
+    fun `the new containers are all FFmpeg-only`() {
+        listOf(
+            Container.MOV, Container.MKV, Container.MPEG_TS,
+            Container.AVI, Container.FLV, Container.ASF,
+        ).forEach { container ->
+            val d = route(
+                OutputSpec(container, VideoCodec.COPY, AudioCodec.COPY),
+                probe = InputProbe(
+                    videoCodec = "h264",
+                    audioCodec = "aac",
+                    container = Container.MP4,
+                ),
+            )
+            assertEquals("$container should need FFmpeg", Engine.FFMPEG, d.engine)
+            assertEquals(Reason.CONTAINER_UNSUPPORTED, d.reason)
+        }
     }
 
     // --- containers Media3 cannot write -------------------------------------

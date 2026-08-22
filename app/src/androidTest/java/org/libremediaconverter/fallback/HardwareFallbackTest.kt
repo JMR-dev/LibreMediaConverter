@@ -70,7 +70,7 @@ class HardwareFallbackTest {
             inputUri = Uri.fromFile(input),
             displayName = SAMPLE,
             sizeBytes = input.length(),
-            format = OutputFormat.MP4_H265,
+            spec = OutputFormat.MP4_H265.spec,
             // Fast deliberately: this is the tier the router sends to Media3, so it is
             // the tier where the fallback has to rescue the conversion.
             quality = QualityTier.FAST,

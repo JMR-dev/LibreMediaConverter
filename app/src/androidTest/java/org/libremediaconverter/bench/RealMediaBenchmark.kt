@@ -100,7 +100,7 @@ class RealMediaBenchmark {
         val hwOut = File(context.cacheDir, "bench_hw.mp4").apply { delete() }
         val engine = Media3Engine(context)
         val hwMs = try {
-            runCatching { timed { engine.transcode(uri, hwOut, OutputFormat.MP4_H265) } }
+            runCatching { timed { engine.transcode(uri, hwOut, ConversionRequest(OutputFormat.MP4_H265.spec)) } }
                 .onFailure { Log.w(TAG, "BENCH hardware: UNSUPPORTED (${it.message})") }
                 .getOrNull()
         } finally {
@@ -112,7 +112,7 @@ class RealMediaBenchmark {
         val swMs = timed {
             FFmpegEngine().run(
                 request = ConversionRequest(
-                    format = OutputFormat.MP4_H264,
+                    spec = OutputFormat.MP4_H264.spec,
                     quality = QualityTier.BEST,
                 ),
                 inputPath = input.absolutePath,
@@ -153,7 +153,7 @@ class RealMediaBenchmark {
 
         val probe = MediaProbe.probe(context, Uri.fromFile(input))
         val decision = ConversionRouter.route(
-            ConversionRequest(format = OutputFormat.MP4_H265, probe = probe),
+            ConversionRequest(spec = OutputFormat.MP4_H265.spec, probe = probe),
             AndroidDeviceCodecs.get(),
         )
         Log.i(TAG, "BENCH av1 probe: codec=${probe.videoCodec} duration=${probe.durationMs}ms")
@@ -162,7 +162,7 @@ class RealMediaBenchmark {
         val out = File(context.cacheDir, "bench_av1_out.mp4").apply { delete() }
         val engine = Media3Engine(context)
         val ms = try {
-            timed { engine.transcode(Uri.fromFile(input), out, OutputFormat.MP4_H265) }
+            timed { engine.transcode(Uri.fromFile(input), out, ConversionRequest(OutputFormat.MP4_H265.spec)) }
         } finally {
             engine.close()
         }

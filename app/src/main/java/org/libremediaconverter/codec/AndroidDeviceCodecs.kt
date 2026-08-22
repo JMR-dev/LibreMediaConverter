@@ -84,7 +84,10 @@ class AndroidDeviceCodecs private constructor(
             VideoCodec.VP8 -> MediaFormat.MIMETYPE_VIDEO_VP8
             VideoCodec.VP9 -> MediaFormat.MIMETYPE_VIDEO_VP9
             VideoCodec.AV1 -> MediaFormat.MIMETYPE_VIDEO_AV1
-            VideoCodec.NONE -> null
+            // Nothing is encoded for either, so there is no encoder to look for. Returning null
+            // makes canEncode answer true, which is the right answer: a copied or absent track
+            // places no demand on the hardware.
+            VideoCodec.COPY, VideoCodec.NONE -> null
         }
 
         /** Maps an FFprobe-style codec name onto a MediaFormat MIME type. */
