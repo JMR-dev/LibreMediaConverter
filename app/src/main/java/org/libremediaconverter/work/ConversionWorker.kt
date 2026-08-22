@@ -14,12 +14,18 @@ import androidx.work.workDataOf
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.MediaProbe
+import org.libremediaconverter.model.AudioCodec
+import org.libremediaconverter.model.Container
+import org.libremediaconverter.model.ContainerCapabilities
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.ConversionRouter
 import org.libremediaconverter.model.Engine
 import org.libremediaconverter.model.EnginePreference
 import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.OutputSpec
 import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.model.Validation
+import org.libremediaconverter.model.VideoCodec
 import java.io.File
 
 /**
@@ -48,9 +54,7 @@ class ConversionWorker(
             ?: return Result.failure(workDataOf(KEY_ERROR to "No input file."))
         val displayName = inputData.getString(KEY_DISPLAY_NAME) ?: "input"
         val sizeBytes = inputData.getLong(KEY_SIZE_BYTES, 0L)
-        val format = OutputFormat.valueOf(
-            inputData.getString(KEY_FORMAT) ?: OutputFormat.MP4_H265.name
-        )
+        val spec = readSpec()
         val quality = QualityTier.valueOf(
             inputData.getString(KEY_QUALITY) ?: QualityTier.FAST.name
         )
@@ -67,16 +71,26 @@ class ConversionWorker(
         val probe = MediaProbe.probe(applicationContext, inputUri)
         val devices = ConversionDependencies.deviceCodecs()
         val request = ConversionRequest(
-            format = format,
+            spec = spec,
             quality = quality,
             enginePreference = preference,
             probe = probe,
-            hardwareEncodeAvailable = devices.canEncode(format.videoCodec),
+            hardwareEncodeAvailable = devices.canEncode(spec.videoCodec),
         )
-        val decision = ConversionRouter.route(request, devices)
-        Log.i(TAG, "Routing $displayName -> ${format.name} via ${decision.engine} (${decision.reason})")
+        // The picker refuses an impossible combination before Convert is tappable, but a job can
+        // also arrive from a queued request made before the settings changed, or from a direct
+        // ConversionWorker.request(...) call. Checking here means an invalid spec fails with the
+        // reason rather than being silently coerced into something else.
+        val validation = ContainerCapabilities.validate(spec, probe)
+        if (validation is Validation.Invalid) {
+            Log.w(TAG, "Refusing $spec for $displayName: ${validation.message}")
+            return Result.failure(workDataOf(KEY_ERROR to validation.message))
+        }
 
-        val staged = publisher.createStagingFile(outputNameFor(displayName, format))
+        val decision = ConversionRouter.route(request, devices)
+        Log.i(TAG, "Routing $displayName -> $spec via ${decision.engine} (${decision.reason})")
+
+        val staged = publisher.createStagingFile(outputNameFor(displayName, spec))
 
         return try {
             when (decision.engine) {
@@ -113,7 +127,7 @@ class ConversionWorker(
     ) {
         val engine = ConversionDependencies.hardware(applicationContext)
         try {
-            engine.transcode(inputUri, staged, request.format) { percent ->
+            engine.transcode(inputUri, staged, request) { percent ->
                 publishProgress(displayName, percent)
             }
             return
@@ -187,6 +201,28 @@ class ConversionWorker(
             }
         }
 
+    /**
+     * Reads the output spec out of the worker's input Data.
+     *
+     * Carried as three separate strings rather than one preset name: the picker can now produce
+     * combinations no preset covers, so there is no enum entry to name. Unknown or missing values
+     * fall back to the default preset rather than throwing — a worker that crashes on malformed
+     * input reports "conversion failed" with no useful message.
+     */
+    private fun readSpec(): OutputSpec {
+        val fallback = OutputFormat.MP4_H265.spec
+        val container = inputData.getString(KEY_CONTAINER)
+            ?.let { name -> Container.entries.firstOrNull { it.name == name } }
+            ?: return fallback
+        val video = inputData.getString(KEY_VIDEO_CODEC)
+            ?.let { name -> VideoCodec.entries.firstOrNull { it.name == name } }
+            ?: return fallback
+        val audio = inputData.getString(KEY_AUDIO_CODEC)
+            ?.let { name -> AudioCodec.entries.firstOrNull { it.name == name } }
+            ?: return fallback
+        return OutputSpec(container, video, audio)
+    }
+
     override suspend fun getForegroundInfo(): ForegroundInfo =
         foregroundInfo(
             inputData.getString(KEY_DISPLAY_NAME) ?: "input",
@@ -205,7 +241,9 @@ class ConversionWorker(
         const val KEY_INPUT_URI = "input_uri"
         const val KEY_DISPLAY_NAME = "display_name"
         const val KEY_SIZE_BYTES = "size_bytes"
-        const val KEY_FORMAT = "format"
+        const val KEY_CONTAINER = "container"
+        const val KEY_VIDEO_CODEC = "video_codec"
+        const val KEY_AUDIO_CODEC = "audio_codec"
         const val KEY_QUALITY = "quality"
         const val KEY_ENGINE_PREFERENCE = "engine_preference"
         const val KEY_PROGRESS = "progress"
@@ -218,15 +256,22 @@ class ConversionWorker(
         private const val NOTIFICATION_INTERVAL_MS = 1_000L
         private const val TAG = "ConversionWorker"
 
-        fun outputNameFor(inputName: String, format: OutputFormat): String =
+        /**
+         * The staged and suggested filename.
+         *
+         * The extension comes from the container and whether a video track survives, so Matroska
+         * yields `.mkv` or `.mka` and MP4 yields `.mp4` or `.m4a` without a preset having to
+         * enumerate both.
+         */
+        fun outputNameFor(inputName: String, spec: OutputSpec): String =
             inputName.substringBeforeLast('.', inputName) +
-                "_converted.${format.extension}"
+                "_converted.${spec.extension}"
 
         fun request(
             inputUri: Uri,
             displayName: String,
             sizeBytes: Long,
-            format: OutputFormat = OutputFormat.MP4_H265,
+            spec: OutputSpec = OutputFormat.MP4_H265.spec,
             quality: QualityTier = QualityTier.FAST,
             enginePreference: EnginePreference = EnginePreference.AUTO,
         ) = OneTimeWorkRequestBuilder<ConversionWorker>()
@@ -235,7 +280,9 @@ class ConversionWorker(
                     .putString(KEY_INPUT_URI, inputUri.toString())
                     .putString(KEY_DISPLAY_NAME, displayName)
                     .putLong(KEY_SIZE_BYTES, sizeBytes)
-                    .putString(KEY_FORMAT, format.name)
+                    .putString(KEY_CONTAINER, spec.container.name)
+                    .putString(KEY_VIDEO_CODEC, spec.videoCodec.name)
+                    .putString(KEY_AUDIO_CODEC, spec.audioCodec.name)
                     .putString(KEY_QUALITY, quality.name)
                     .putString(KEY_ENGINE_PREFERENCE, enginePreference.name)
                     .build()

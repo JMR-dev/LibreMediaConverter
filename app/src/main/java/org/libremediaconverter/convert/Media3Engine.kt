@@ -9,6 +9,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
@@ -16,8 +17,12 @@ import androidx.media3.transformer.Transformer
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.libremediaconverter.model.AudioCodec
-import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.AudioPlan
+import org.libremediaconverter.model.ConversionPlan
+import org.libremediaconverter.model.ConversionRequest
+import org.libremediaconverter.model.CopyPlanner
 import org.libremediaconverter.model.VideoCodec
+import org.libremediaconverter.model.VideoPlan
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -58,18 +63,27 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
     override suspend fun transcode(
         input: Uri,
         output: File,
-        format: OutputFormat,
+        request: ConversionRequest,
         onProgress: (Int) -> Unit,
     ): Unit = suspendCancellableCoroutine { cont ->
+        val plan = CopyPlanner.plan(request.spec, request.probe)
         handler.post {
-            val transformer = runCatching { buildTransformer(format, cont) }
+            val transformer = runCatching { buildTransformer(plan, cont) }
                 .getOrElse { cont.resumeWithException(it); return@post }
-            // Dropping the tracks the target format does not have is what stops an audio-only
-            // export from carrying a re-encoded video track. Without setRemoveVideo, asking for
-            // M4A produced an HEVC stream in a file named .m4a.
+
+            // Dropping the tracks the target does not have is what stops an audio-only export
+            // from carrying a re-encoded video track. Without setRemoveVideo, asking for M4A
+            // produced an HEVC stream in a file named .m4a.
             val item = EditedMediaItem.Builder(MediaItem.fromUri(input))
-                .setRemoveVideo(format.videoCodec == VideoCodec.NONE)
-                .setRemoveAudio(format.audioCodec == AudioCodec.NONE)
+                .setRemoveVideo(plan.video == VideoPlan.Drop)
+                .setRemoveAudio(plan.audio == AudioPlan.Drop)
+                .build()
+
+            // A Composition is the only way to ask for transmuxing; the plain
+            // start(EditedMediaItem, path) overload always re-encodes. This is the remux path.
+            val composition = Composition.Builder(EditedMediaItemSequence.Builder(item).build())
+                .setTransmuxVideo(plan.video == VideoPlan.Copy)
+                .setTransmuxAudio(plan.audio == AudioPlan.Copy)
                 .build()
 
             cont.invokeOnCancellation {
@@ -77,7 +91,7 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
                 handler.post { runCatching { transformer.cancel() } }
             }
 
-            runCatching { transformer.start(item, output.absolutePath) }
+            runCatching { transformer.start(composition, output.absolutePath) }
                 .onFailure { cont.resumeWithException(it); return@post }
 
             pollProgress(transformer, cont, onProgress)
@@ -85,27 +99,28 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
     }
 
     /**
-     * @throws IllegalArgumentException if [format] names a container Media3 cannot mux. That is a
+     * @throws IllegalArgumentException if [plan] names a container Media3 cannot mux. That is a
      *   routing bug rather than a runtime condition — [org.libremediaconverter.model.ConversionRouter]
      *   is supposed to have sent such a job to FFmpeg — so it fails loudly instead of quietly
      *   writing MP4, which is what the old code did.
      */
     private fun buildTransformer(
-        format: OutputFormat,
+        plan: ConversionPlan,
         cont: CancellableContinuation<Unit>,
     ): Transformer {
-        val muxerFactory = requireNotNull(Media3Muxers.factoryFor(format.container)) {
-            "Media3 cannot mux ${format.container}; this job should have routed to FFmpeg."
+        val muxerFactory = requireNotNull(Media3Muxers.factoryFor(plan.container)) {
+            "Media3 cannot mux ${plan.container}; this job should have routed to FFmpeg."
         }
 
         val builder = Transformer.Builder(context)
             .setLooper(thread.looper)
             .setMuxerFactory(muxerFactory)
 
-        // Only name a MIME type for a track the output actually keeps. Naming one for a removed
+        // Name a MIME type only for a track that is actually being encoded. Setting one for a
+        // transmuxed track contradicts setTransmuxVideo/Audio, and setting one for a removed
         // track makes Transformer build an encoder for samples that will never arrive.
-        videoMimeTypeFor(format.videoCodec)?.let(builder::setVideoMimeType)
-        audioMimeTypeFor(format.audioCodec)?.let(builder::setAudioMimeType)
+        (plan.video as? VideoPlan.Encode)?.let { videoMimeTypeFor(it.codec)?.let(builder::setVideoMimeType) }
+        (plan.audio as? AudioPlan.Encode)?.let { audioMimeTypeFor(it.codec)?.let(builder::setAudioMimeType) }
 
         return builder
             .addListener(object : Transformer.Listener {
@@ -134,7 +149,8 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
     private fun videoMimeTypeFor(codec: VideoCodec): String? = when (codec) {
         VideoCodec.H264 -> MimeTypes.VIDEO_H264
         VideoCodec.H265 -> MimeTypes.VIDEO_H265
-        VideoCodec.NONE -> null
+        // Never reached: only an Encode plan consults this, and COPY/NONE are not Encode.
+        VideoCodec.COPY, VideoCodec.NONE -> null
         VideoCodec.VP8, VideoCodec.VP9, VideoCodec.AV1 -> null
     }
 
@@ -143,7 +159,7 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
         AudioCodec.OPUS -> MimeTypes.AUDIO_OPUS
         AudioCodec.VORBIS -> MimeTypes.AUDIO_VORBIS
         AudioCodec.PCM -> MimeTypes.AUDIO_RAW
-        AudioCodec.NONE -> null
+        AudioCodec.COPY, AudioCodec.NONE -> null
         // MP3 and FLAC have no Android encoder; the router routes them to FFmpeg.
         AudioCodec.MP3, AudioCodec.FLAC -> null
     }

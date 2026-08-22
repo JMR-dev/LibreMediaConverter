@@ -53,7 +53,7 @@ class FFmpegEngineTest {
         val out = outputFor("out_${format.name.lowercase()}.${format.extension}")
         runBlocking {
             engine.run(
-                request = ConversionRequest(format = format, quality = quality),
+                request = ConversionRequest(spec = format.spec, quality = quality),
                 inputPath = input.absolutePath,
                 output = out,
                 durationMs = 3_000,
@@ -155,7 +155,7 @@ class FFmpegEngineTest {
         val failure = runCatching {
             runBlocking {
                 engine.run(
-                    request = ConversionRequest(format = OutputFormat.MP4_H264),
+                    request = ConversionRequest(spec = OutputFormat.MP4_H264.spec),
                     inputPath = "/does/not/exist.mp4",
                     output = out,
                     durationMs = 1_000,

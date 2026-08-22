@@ -23,20 +23,26 @@ Two conversion engines behind an explicit router, because neither one covers the
 
 ### AndroidX Media3 Transformer — the hardware path
 
-Handles the common cases: MP4/MOV in and out, H.264/HEVC, resolution and frame-rate
-changes, rotation, overlays, audio to AAC, and stream-copy transmuxing. Fully hardware
-accelerated end to end — MediaCodec decodes to a GL surface and MediaCodec re-encodes,
-so frames never round-trip through the CPU. Roughly 7–8× realtime on 720p.
+Handles the common cases: H.264/HEVC, resolution and frame-rate changes, rotation,
+overlays, and audio to AAC. Fully hardware accelerated end to end — MediaCodec decodes to
+a GL surface and MediaCodec re-encodes, so frames never round-trip through the CPU.
+Roughly 7–8× realtime on 720p.
+
+It writes MP4, WebM, Ogg, WAV and raw AAC — the five containers `media3-muxer` provides a
+muxer for. It *reads* far more than it writes, Matroska included, which is what makes
+MKV → MP4 a hardware remux.
 
 ### FFmpeg — the long tail
 
 Everything Media3 structurally cannot do:
 
-- Containers outside MP4/WebM/Ogg/WAV/AAC — MKV, AVI, FLV, MPEG-TS
+- Containers outside MP4/WebM/Ogg/WAV/AAC — MKV, MOV, AVI, FLV, MPEG-TS, WMV/ASF
 - **MP3 output** — Android has no MP3 encoder at any version; this is a platform gap
 - GIF and image sequences
 - Input codecs with no platform decoder on the device
 - CRF and 2-pass rate control, for the quality tier
+- Codecs Media3's muxers decline even on a stream copy — its MP4 muxer carries AAC, Opus,
+  Vorbis and PCM, but neither MP3 nor FLAC
 
 ### Quality tiers
 
@@ -66,14 +72,35 @@ extension appears in any Android Vulkan Profile tier.
 So this app is hardware accelerated via MediaCodec, and GPU accelerated for effects via
 GL shaders. Both are real; neither is "the GPU decoding video."
 
+## Remuxing
+
+Changing the container without touching the streams. Copying an H.264 track from MKV into
+MP4 moves the same samples into a different wrapper: it finishes in seconds instead of
+minutes, costs no quality, and needs no encoder — which is why it stays on the hardware
+path even on a device that cannot encode the codec in question.
+
+`Copy` is a codec choice like any other, so it can be mixed: copy the video and re-encode
+only the audio, or the reverse. Picking a codec the source already uses is upgraded to a
+copy automatically **when the container is changing** — if container and codec both already
+match, the only reason to run the job is to re-encode it, so it does.
+
+A copy is never attempted on a stream whose codec could not be identified. A needless
+re-encode costs time; a wrong stream copy costs a file that will not play.
+
 ## Features
 
 | | Formats |
 |---|---|
-| Video out | MP4 (H.264/H.265), MKV (H.264/H.265), WebM (VP9) |
-| Audio out | MP3, AAC/M4A, FLAC, Opus, WAV |
+| Video out | MP4, MOV, MKV, WebM, MPEG-TS, AVI, FLV, WMV/ASF |
+| Video codecs | H.264, H.265, VP9, or copy the source stream |
+| Audio out | MP3, AAC/M4A, FLAC, Opus, WAV, MKA |
+| Audio codecs | AAC, Opus, MP3, FLAC, PCM, or copy the source stream |
 | Images | GIF, PNG frame sequences |
-| Other | Join several files into one |
+| Other | Remux without re-encoding; join several files into one |
+
+Presets cover the common combinations in one tap. The Advanced picker exposes the full
+container × codec matrix — including combinations that cannot work, which it explains and
+offers alternatives for rather than hiding.
 
 Conversions run as durable background work, so they survive leaving the app and are
 restored after a restart.
@@ -101,14 +128,17 @@ obligation.
 
 ## Testing
 
-Unit tests cover the parts that decide correctness without needing hardware: the
-routing matrix, the FFmpeg argument builder, and the stream-copy-versus-re-encode
-planner. They run against fabricated device profiles, so branches like "this device
-cannot encode HEVC" are reachable regardless of what the test machine is.
+Unit tests cover the parts that decide correctness without needing hardware: the routing
+matrix, the container × codec capability matrix, the FFmpeg argument builder, and both
+stream-copy-versus-re-encode planners. They run against fabricated device profiles, so
+branches like "this device cannot encode HEVC" are reachable regardless of what the test
+machine is.
 
 Instrumented tests cover the parts that only a device can prove: real hardware
-transcoding, the foreground service type, and each FFmpeg output format asserted
-against the produced file rather than the exit code.
+transcoding, the foreground service type, and each FFmpeg output format asserted against
+the produced file rather than the exit code. The remux tests additionally assert which
+*engine* ran — a stream copy produces an identical file either way, so an output-only
+assertion cannot tell a hardware transmux from FFmpeg's `-c copy`.
 
 ## Privacy
 

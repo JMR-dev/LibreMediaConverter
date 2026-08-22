@@ -25,7 +25,7 @@ object FakeFailures {
         override suspend fun transcode(
             input: Uri,
             output: File,
-            format: OutputFormat,
+            request: ConversionRequest,
             onProgress: (Int) -> Unit,
         ) {
             called = true

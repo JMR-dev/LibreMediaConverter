@@ -10,9 +10,12 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import org.libremediaconverter.codec.AndroidDeviceCodecs
 import org.libremediaconverter.model.Engine
+import org.libremediaconverter.model.AudioCodec
+import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.model.OutputSpec
 import org.libremediaconverter.model.VideoCodec
+import org.libremediaconverter.model.QualityTier
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -78,7 +81,7 @@ class ConversionWorkerTest {
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",
             sizeBytes = input.length(),
-            format = OutputFormat.MP4_H264,
+            spec = OutputFormat.MP4_H264.spec,
         )
         workManager.enqueue(request).result.get()
 
@@ -114,7 +117,7 @@ class ConversionWorkerTest {
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",
             sizeBytes = input.length(),
-            format = OutputFormat.MP3,
+            spec = OutputFormat.MP3.spec,
         )
         workManager.enqueue(request).result.get()
 
@@ -152,7 +155,7 @@ class ConversionWorkerTest {
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",
             sizeBytes = input.length(),
-            format = OutputFormat.MP4_H265,
+            spec = OutputFormat.MP4_H265.spec,
             quality = QualityTier.FAST,
         )
         workManager.enqueue(request).result.get()
@@ -181,7 +184,7 @@ class ConversionWorkerTest {
             inputUri = Uri.fromFile(input),
             displayName = "worker_sample.mp4",
             sizeBytes = input.length(),
-            format = OutputFormat.MP4_H264,
+            spec = OutputFormat.MP4_H264.spec,
             quality = QualityTier.BEST,
         )
         workManager.enqueue(request).result.get()
@@ -199,9 +202,50 @@ class ConversionWorkerTest {
 
     @Test
     fun outputNameTakesTheExtensionOfTheChosenFormat() {
-        assertEquals("clip_converted.mp3", ConversionWorker.outputNameFor("clip.mp4", OutputFormat.MP3))
-        assertEquals("clip_converted.gif", ConversionWorker.outputNameFor("clip.mov", OutputFormat.GIF))
-        assertEquals("clip_converted.mkv", ConversionWorker.outputNameFor("clip", OutputFormat.MKV_H264))
+        assertEquals(
+            "clip_converted.mp3",
+            ConversionWorker.outputNameFor("clip.mp4", OutputFormat.MP3.spec),
+        )
+        assertEquals(
+            "clip_converted.gif",
+            ConversionWorker.outputNameFor("clip.mov", OutputFormat.GIF.spec),
+        )
+        assertEquals(
+            "clip_converted.mkv",
+            ConversionWorker.outputNameFor("clip", OutputFormat.MKV_H264.spec),
+        )
+    }
+
+    /**
+     * The extension follows the container and whether a video track survives.
+     *
+     * It used to be a literal on each preset, so the only names reachable were the ones somebody
+     * had enumerated. Matroska without video is `.mka` and MP4 without video is `.m4a` — neither
+     * had a preset before, and both are now one tap away in the Advanced picker.
+     */
+    @Test
+    fun outputNameDistinguishesAudioOnlyVariantsOfAContainer() {
+        assertEquals(
+            "clip_converted.mka",
+            ConversionWorker.outputNameFor(
+                "clip.mkv",
+                OutputSpec(Container.MKV, VideoCodec.NONE, AudioCodec.FLAC),
+            ),
+        )
+        assertEquals(
+            "clip_converted.m4a",
+            ConversionWorker.outputNameFor(
+                "clip.mp4",
+                OutputSpec(Container.MP4, VideoCodec.NONE, AudioCodec.AAC),
+            ),
+        )
+        assertEquals(
+            "clip_converted.mkv",
+            ConversionWorker.outputNameFor(
+                "clip.mp4",
+                OutputSpec(Container.MKV, VideoCodec.COPY, AudioCodec.COPY),
+            ),
+        )
     }
 
     private companion object {

@@ -49,9 +49,16 @@ object Media3Muxers {
         Container.OGG -> OggFactory
         Container.WAV -> WavFactory
         Container.AAC_ADTS -> AacFactory
-        // Matroska, MP3 and the image outputs have no Media3 muxer. FFmpeg owns them.
+        // Everything else has no Media3 muxer. Matroska and the legacy containers are FFmpeg's,
+        // and `Mp4Muxer` exposes no QuickTime file format, so MOV is too.
         Container.MKV,
+        Container.MOV,
+        Container.MPEG_TS,
+        Container.AVI,
+        Container.FLV,
+        Container.ASF,
         Container.MP3,
+        Container.FLAC,
         Container.GIF,
         Container.IMAGE_SEQUENCE,
         -> null
