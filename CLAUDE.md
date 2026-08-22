@@ -9,8 +9,12 @@ this file covers only what is not obvious from the code.
 
 ## Build, test, lint
 
-Use a **JDK 17–21** for the Gradle daemon. AGP 9 will not run on anything older than 17, and does
-not support 25+ — if `JAVA_HOME` points at 25, builds fail.
+**Do not pick a JDK for the daemon — the repo does.** `gradle/gradle-daemon-jvm.properties` pins
+`toolchainVersion=25` and carries foojay download URLs per platform, so Gradle provisions and runs
+the daemon on **Java 25** regardless of what `JAVA_HOME` points at (that only sets the launcher).
+`./gradlew --version` prints both if you need to confirm which is which. This is why CI's
+`java-version: '17'` is not the version that compiles anything, and why the daemon JVM is identical
+on a laptop and on a runner. Change it with `./gradlew updateDaemonJvm`, not by hand.
 
 ```bash
 ./gradlew :app:assembleDebug          # build debug APK
