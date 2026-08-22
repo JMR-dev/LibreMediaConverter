@@ -9,24 +9,34 @@ this file covers only what is not obvious from the code.
 
 ## Build, test, lint
 
-**Everything is on Java 24** — daemon, CI, IDE, and the app's own bytecode. Four places say so and
+**Everything is on Java 25** — daemon, CI, IDE, and the app's own bytecode. Four places say so and
 they must not drift apart:
 
 | Where | What sets it |
 |---|---|
-| Gradle daemon | `gradle/gradle-daemon-jvm.properties` → `toolchainVersion=24` |
-| CI | `java-version: '24'` in both workflows |
+| Gradle daemon | `gradle/gradle-daemon-jvm.properties` → `toolchainVersion=25` |
+| CI | `java-version: '25'` in both workflows |
 | IDE | `.idea/misc.xml` |
 | App bytecode | `compileOptions` in `app/build.gradle.kts` |
 
 **Do not pick a JDK for the daemon — the repo does.** `gradle-daemon-jvm.properties` carries foojay
-download URLs per platform, so Gradle provisions and runs the daemon on Java 24 regardless of what
+download URLs per platform, so Gradle provisions and runs the daemon on Java 25 regardless of what
 `JAVA_HOME` says (that only sets the *launcher* — `./gradlew --version` prints both). Change it with
 `./gradlew updateDaemonJvm --jvm-version=NN`, never by hand.
 
-**24, not 25, is deliberate.** Kotlin 2.2.10 refuses `jvmTarget` 25 outright — its available targets
-stop at 24 — so the app's bytecode cannot join a 25 toolchain, and 24 is the highest number all four
-rows can actually hold. D8 dexes Java 24 class files and R8 minifies them, both verified.
+**Reaching 25 in the bytecode row took a deliberate build change.** AGP 9's built-in Kotlin compiles
+with the KGP it bundles — 2.2.10 for AGP 9.3.1 — and that caps `jvmTarget` at 24. The root
+`build.gradle.kts` puts KGP (and the lockstep Compose compiler plugin) on the buildscript classpath
+so AGP picks up 2.4.10 instead, which supports up to 26. That is why the module applies
+`com.android.application` and the Compose plugin by `id()` rather than from the catalog. Verified end
+to end, not assumed: compiled classes report major version 69, D8 dexes them, and R8 minifies them.
+
+Consequences worth knowing before touching any of it:
+
+- Raising `kotlin` requires a matching `compose-compiler-gradle-plugin`; they are one version.
+- Still **do not** apply `org.jetbrains.kotlin.android` — incompatible with AGP 9's DSL.
+- Java 24 is *not* an option even though Kotlin allows it: Adoptium dropped the EOL non-LTS, so
+  there is no installable temurin-24. 25 is LTS and in the repo.
 
 The Gradle wrapper does **not** float and cannot: `distributionUrl` names one archive and
 `distributionSha256Sum` is that file's checksum. Bump it with `./gradlew wrapper --gradle-version X

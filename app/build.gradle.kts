@@ -1,9 +1,11 @@
 import org.gradle.testing.jacoco.tasks.JacocoReport
 
 plugins {
-    alias(libs.plugins.android.application)
+    // Applied by id: these two come from the root buildscript classpath, which is what
+    // overrides AGP's bundled Kotlin. See the comment in the root build file.
+    id("com.android.application")
     // Required even under AGP 9: the Compose compiler plugin is NOT built in.
-    alias(libs.plugins.kotlin.compose)
+    id("org.jetbrains.kotlin.plugin.compose")
 
     // Lint/format. Resolved from the Gradle Plugin Portal, not AGP's buildscript
     // classpath -- neither is an Android plugin.
@@ -69,8 +71,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_24
-        targetCompatibility = JavaVersion.VERSION_24
+        sourceCompatibility = JavaVersion.VERSION_25
+        targetCompatibility = JavaVersion.VERSION_25
     }
 
     lint {

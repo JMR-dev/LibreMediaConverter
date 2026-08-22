@@ -1,14 +1,22 @@
 [versions]
-# Build tooling.
-# NOTE: AGP 9 has BUILT-IN Kotlin support. Applying org.jetbrains.kotlin.android
-# FAILS the build. AGP 9.3.1 brings kotlin-gradle-plugin 2.2.10 transitively, so the
-# Compose compiler plugin below must match that version, not the newest Kotlin release.
-# Verified against the AGP 9.3.1 POM, which declares kotlin-gradle-plugin 2.2.10 at
-# runtime scope. Kotlin 2.4.10 exists and Android lint will suggest it -- taking that
-# suggestion breaks the build unless KGP is ALSO forced onto the root buildscript
-# classpath. These three move together or not at all; none of them may float.
+# Build tooling. Pinned, never floating. agp and kotlin are coupled (below); ksp is
+# staged for a later phase and unapplied today -- KSP2 versions independently of Kotlin.
+#
+# AGP 9 has BUILT-IN Kotlin: it compiles Kotlin itself rather than delegating to the
+# org.jetbrains.kotlin.android plugin, which is incompatible with its DSL and fails the
+# build if applied. DO NOT add it.
+#
+# By default AGP compiles with the KGP it bundles -- 2.2.10 for AGP 9.3.1, per its POM --
+# and that version caps jvmTarget at 24, which would cap the app's bytecode below the JDK
+# everything else runs on. The root build.gradle.kts therefore puts KGP on the buildscript
+# classpath explicitly, which AGP's built-in Kotlin picks up instead. That is the only
+# reason `kotlin` here can be ahead of what AGP ships.
+#
+# The Compose compiler plugin is versioned in lockstep with Kotlin and is read from this
+# same `kotlin` entry, so the two cannot drift. Raising `kotlin` means checking that a
+# matching compose-compiler-gradle-plugin exists.
 agp = "9.3.1"
-kotlin = "2.2.10"
+kotlin = "2.4.10"
 ksp = "2.3.11"
 
 # AndroidX / Compose -- floating on minor + patch. The prerelease guard in
@@ -108,8 +116,12 @@ androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "a
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 
 [plugins]
-android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+# com.android.application and org.jetbrains.kotlin.plugin.compose are deliberately absent.
+# They come from the root buildscript classpath (see build.gradle.kts) so that a newer KGP
+# can override AGP's bundled one, and the module applies them by id(). An alias here would
+# be dead weight that reads like the source of truth.
+#
+# ktlint and detekt are ordinary plugin-portal resolutions and stay aliases.
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }
