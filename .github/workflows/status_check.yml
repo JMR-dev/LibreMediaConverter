@@ -103,9 +103,12 @@ jobs:
   # ---------------------------------------------------------------------------
   # One runner per API level, across the whole supported range.
   #
-  # The range is the point: minSdk is 33 and targetSdk is 37, and the foreground
-  # service type differs across it -- none below 34, dataSync at 34, mediaProcessing
-  # from 35. Testing a single level would leave two thirds of that branch unexercised.
+  # The range is the point: minSdk is 33, and the foreground service type differs
+  # across it -- none below 34, dataSync at 34, mediaProcessing from 35. Testing a
+  # single level would leave two thirds of that branch unexercised.
+  #
+  # It stops at 36 rather than targetSdk 37 because the android-37.0 emulator image
+  # is broken, not because 37 does not matter. See docs/api-37-emulator-crash.md.
   #
   # FFmpeg is not built here. The AAR is committed under bin/, so a red run means the
   # code is broken rather than that a cross-compile hiccuped.
@@ -130,12 +133,13 @@ jobs:
             api-level: "35"
           - label: "36"
             api-level: "36"
-          # API 37 ships as android-37.0. The emulator action installs
-          # "platforms;android-${api-level}" and there is no platforms;android-37,
-          # so a bare 37 fails during SDK setup before an emulator ever starts.
-          # system-image-api-level alone does not fix it: that only names the image.
-          - label: "37"
-            api-level: "37.0"
+          # No API 37 row. targetSdk is 37, but the android-37.0 emulator image
+          # crash-loops surfaceflinger inside its own gralloc mapper, so every test
+          # fails there no matter what this app does. Ruling that in took four CI
+          # rounds, so the evidence and the ruled-out fixes are written down rather
+          # than left to be rediscovered: docs/api-37-emulator-crash.md. That file
+          # also records what to try first when re-adding it -- note that the row
+          # needs api-level "37.0", since a bare 37 fails during SDK setup.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -172,29 +176,25 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           # The default userdata partition is not big enough for this APK once the
-          # FFmpeg libraries are in it. API 37's system image leaves the least room and
-          # was the level that actually failed, with "Requested internal only, but not
-          # enough space" -- but the margin was thin everywhere, so give them all room.
+          # FFmpeg libraries are in it. One level failed outright with "Requested
+          # internal only, but not enough space", and the margin was thin everywhere
+          # else, so give them all room.
           disk-size: 8G
-          # The emulator raises an undersized guest to 2560M by itself, but only for
-          # API levels it recognises, and it does not recognise "37.0". Every green job
-          # in this matrix was quietly running at 2560M while API 37 ran at the pixel_6
-          # default of 1536M, lost system_server partway through installing the 82 MB
-          # APK, and reported it as "Can't find service: package". 2560M is not a guess
-          # at a sufficient value: it is the value the other four levels already pass
-          # at. Setting it explicitly makes the matrix uniform instead of leaving one
-          # level at the mercy of that heuristic.
+          # Pinned because the emulator's own default is not uniform: it raises an
+          # undersized guest to a floor that varies by API level -- 2048M at 33, 2560M
+          # at 34 through 36 -- and skips levels it does not recognise entirely. 2560M
+          # is the highest of those floors, so no level gets less memory than it
+          # already had, and none of them depend on that heuristic any more.
           ram-size: 2560M
           # Build only the ABI the emulator can execute. FFmpeg's native libraries
           # dominate the APK, so shipping arm64 to an x86_64 emulator doubles the
           # install for code that can never run: 114 MB against 80 MB.
           #
-          # The memory probes exist because this failure cannot be reproduced locally:
-          # API 37 will not boot on a workstation under either GPU mode -- host aborts
-          # surfaceflinger in the goldfish mapper, swiftshader_indirect segfaults the
-          # emulator. CI is the only instrument, so it has to report enough to be
-          # conclusive. The first line proves what the guest actually got regardless of
-          # the result; the rest runs only on failure, so a green run is unchanged.
+          # The probe lines survive from diagnosing the API 37 crash and are kept
+          # because a red instrumented run is otherwise near-impossible to read from a
+          # log alone. The first reports what the guest actually got, so a wrong
+          # emulator configuration is visible on a green run too; the crash dump runs
+          # only on failure, so a green run is unchanged.
           #
           # Each line here is a separate `sh -c` -- the action splits the script on
           # newlines -- so the failure handler has to stay on one line. The action does
@@ -203,7 +203,7 @@ jobs:
           # diagnostic must never be the thing that turns a run red.
           script: |
             adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
-            ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 || { echo "=== guest memory at failure ==="; adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal'; echo "=== kernel OOM kills ==="; adb shell dmesg | grep -iE 'oom|lowmemory|killed process' | tail -20; echo "=== native crashes ==="; adb logcat -d -b crash | tail -40; exit 1; }
+            ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 || { echo "=== guest memory at failure ==="; adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal'; echo "=== native crashes ==="; adb logcat -d -b crash | tail -60; exit 1; }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
