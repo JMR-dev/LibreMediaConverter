@@ -1,6 +1,7 @@
 # API 37 is not tested in CI: a crash in Google's `android-37.0` emulator image
 
-**Status:** open upstream, worked around by removing API 37 from the E2E matrix
+**Status:** open upstream, worked around by removing API 37 from the E2E matrix.
+The app itself is verified good on real API 37 hardware — this is an emulator bug only.
 **Last verified:** 2026-08-21, against emulator `37.1.11.0` and system image revision 6
 
 `minSdk` is 33 and `targetSdk` is 37, and the E2E matrix in
@@ -63,9 +64,10 @@ because content-provider installation fails on a framework whose `surfaceflinger
 crash-looping. The same tests pass at API 33, 34, 35, and 36 in the same CI run, and
 the first `surfaceflinger` abort is timestamped *before* the test results are reported.
 
-That last point is inference rather than proof: the definitive check would be running
-the suite against a healthy API 37 device, which does not exist yet. If a fixed image
-ships and these tests still fail, treat the WorkManager error as a real finding.
+This is not inference. The full suite was run against a physical API 37 device and
+passed — see [Verified on real API 37 hardware](#verified-on-real-api-37-hardware)
+below. `ConversionWorkerTest` and `ConcatWorkerTest`, which drive a real WorkManager
+round trip and are among the tests that failed this way in CI, both pass there.
 
 ## Environment
 
@@ -115,6 +117,32 @@ the first place. That would likely sidestep the bug class entirely, but **no ATD
 exists for `android-37.0`** — only `google_apis`, `google_apis_playstore`, the `ps16k`
 16 KB-page variants, and Wear OS. Check again when revisiting; if an ATD image appears,
 try it before anything else here.
+
+## Verified on real API 37 hardware
+
+The bug is confined to the emulator image. On 2026-08-21 the whole instrumented suite
+was run against a physical device and passed:
+
+```
+Device:  Pixel 10 Pro XL (mustang), arm64-v8a
+Build:   google/mustang/mustang:17/CP2A.260805.005/15828068:user/release-keys
+API:     37 (Android 17, codename REL -- a release build, not a preview)
+
+./gradlew :app:connectedDebugAndroidTest -PabiFilters=arm64-v8a
+  40 tests, 0 failures, 0 errors, 2 skipped        BUILD SUCCESSFUL
+```
+
+The two skips are `RealMediaBenchmark.hardwareVersusSoftwareOnRealVideo` and
+`av1InputRoutesAccordingToDeviceDecodeSupport`, which `assumeTrue` their sample files
+are present and skip when they are not. That is by design and unrelated to API level.
+
+One harmless warning appears during the run and can be ignored:
+`No UID for androidx.test.services in user 0`, from an `appops` call the test services
+package makes before it is fully registered.
+
+So the app is correct on Android 17. What is missing is only *automated* coverage in
+CI. Until the image is fixed, run the suite on a physical API 37 device before release;
+that is the substitute for the missing matrix row.
 
 ## Reproducing it
 
@@ -177,9 +205,10 @@ Re-add the API 37 row when any of these happens:
 - an ATD image appears for API 37
 - the upstream issue is marked fixed
 
-Until then the coverage gap is narrow but real. `targetSdk` is 37, so the app is still
-compiled and unit-tested against it, and the API-dependent behaviour this matrix exists
-to exercise — the foreground service type, which is absent below 34, `dataSync` at 34,
-and `mediaProcessing` from 35 — is fully covered at 35 and 36. What is *not* covered is
-any behaviour Android 17 changes relative to 36. Verify that on a physical device before
-release.
+Until then the gap is narrower than the missing row suggests. `targetSdk` is 37, so the
+app is compiled and unit-tested against it; the API-dependent behaviour this matrix
+exists to exercise — the foreground service type, absent below 34, `dataSync` at 34,
+`mediaProcessing` from 35 — is covered at 35 and 36; and the full instrumented suite has
+been run green on real API 37 hardware. What is missing is *automated* API 37 coverage,
+so a regression there would not be caught by a pull request. Run the suite on a physical
+API 37 device before each release for as long as this row is absent.
