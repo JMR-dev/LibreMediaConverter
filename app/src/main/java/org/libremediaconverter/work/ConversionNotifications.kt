@@ -42,7 +42,7 @@ class ConversionNotifications(private val context: Context) {
             // Progress updates far outpace what the UI can use; alerting once keeps
             // the system UI from being hammered.
             .setOnlyAlertOnce(true)
-            .setProgress(100, percent, indeterminate)
+            .setProgress(PERCENT_MAX, percent, indeterminate)
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 context.getString(R.string.action_cancel),
@@ -64,5 +64,8 @@ class ConversionNotifications(private val context: Context) {
     companion object {
         const val CHANNEL_ID = "conversions"
         private const val TAG = "ConversionNotifications"
+
+        /** `setProgress` takes a max and a current; progress is reported as a percentage. */
+        private const val PERCENT_MAX = 100
     }
 }

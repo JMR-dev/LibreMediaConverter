@@ -261,8 +261,14 @@ object ContainerCapabilities {
             .filter { it != exclude }
             .distinct()
             .filter { validate(it, probe).isValid }
-            .take(3)
+            .take(MAX_SUGGESTIONS)
     }
+
+    /**
+     * How many alternatives an [Validation.Invalid] offers. Enough to show a real choice,
+     * few enough that the error stays readable.
+     */
+    private const val MAX_SUGGESTIONS = 3
 
     /** Best valid spec for this container, preserving as much of the request as possible. */
     private fun repair(spec: OutputSpec, probe: InputProbe): OutputSpec? {

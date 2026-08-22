@@ -16,6 +16,19 @@ complexity:
   CyclomaticComplexMethod:
     # Branchy layout code (when/if inside a UI tree) isn't algorithmic complexity.
     ignoreAnnotated: ['Composable']
+    # A flat `when` used as a lookup table scores one point per entry, so MediaProbe's
+    # demuxer-name -> Container map reads as complexity 21 while having no nesting, no
+    # state and nothing to follow. That is the metric measuring table size. A `when` with
+    # real logic in its branches still counts.
+    ignoreSingleWhenExpression: true
+    ignoreSimpleWhenEntries: true
+    # Same reason the model package is excluded from ReturnCount below: there, one branch
+    # is one documented outcome. ConversionRouter.route scores 17 because the app can give
+    # 17 distinct answers to "which engine, and why", not because it is hard to follow --
+    # it is a flat guard chain with a comment per rule. Only this metric and ReturnCount
+    # are relaxed for that package; LongMethod, NestedBlockDepth, ComplexCondition and the
+    # rest still apply there.
+    excludes: ['**/model/**']
   TooManyFunctions:
     # Screen files group many small @Composable helpers next to their screen, and the codec /
     # container matrix files are intentionally operation-rich cohesive APIs. detekt's default of
@@ -24,6 +37,10 @@ complexity:
     allowedFunctionsPerFile: 40
     allowedFunctionsPerClass: 40
     allowedFunctionsPerInterface: 40
+    # ContainerCapabilities is a single object holding the container x codec matrix and the
+    # queries over it. Splitting it to satisfy a count would scatter one table across files.
+    allowedFunctionsPerObject: 40
+    allowedFunctionsPerEnum: 40
 
 naming:
   FunctionNaming:
@@ -36,9 +53,34 @@ style:
     ignoreAnnotated: ['Composable']
     ignorePropertyDeclaration: true
     ignoreNamedArgument: true
+    # SI thresholds in the byte formatter. Each literal sits on the same line as the unit
+    # string it belongs to -- `bytes >= 1_000_000 -> "%.1f MB"` -- so a BYTES_PER_MB pair
+    # (Long and Double, since the compare and the divide need different types) would add
+    # six names and say nothing the line does not already say. Counts, limits and tuning
+    # values still flag; these are unit boundaries.
+    ignoreNumbers:
+      - '-1'
+      - '0'
+      - '1'
+      - '2'
+      - '1e3'
+      - '1e6'
+      - '1e9'
+      - '1_000'
+      - '1_000_000'
+      - '1_000_000_000'
   ReturnCount:
     # Allow guard-clause-style early returns; detekt's default of 2 is overly strict.
     max: 4
+    excludeGuardClauses: true
+    # The model package IS the decision layer: ConversionRouter picks an engine,
+    # ContainerCapabilities validates a container x codec pair, the planners pick a
+    # strategy. Each `return` there is one specific, user-visible reason, and the count
+    # equals the number of reasons the app can give -- ConversionRouter.route even
+    # documents that their ORDER is what decides which message the user sees. Collapsing
+    # them into one exit would bury that. Everywhere else -- UI, workers, engines -- the
+    # limit still applies.
+    excludes: ['**/model/**']
   LoopWithTooManyJumpStatements:
     # Clear early-continue / early-return loops read fine; the default of 1 is strict.
     maxJumpCount: 3
@@ -47,3 +89,16 @@ style:
     # preconditions.
     excludeGuardClauses: true
     max: 3
+
+exceptions:
+  TooGenericExceptionCaught:
+    # The engine boundaries catch broadly on purpose. MediaProbe drives the platform
+    # extractor and MediaMetadataRetriever over arbitrary user files; ConversionWorker and
+    # ConcatWorker wrap Media3 and FFmpeg. All three sit in front of native code that
+    # reports a malformed file as anything from IllegalArgumentException to
+    # IllegalStateException to a bare RuntimeException, and the list is not documented.
+    # Enumerating it would mean guessing, and a guess that is wrong crashes the app on a
+    # file it could have simply reported as unreadable. Every one of these catches logs
+    # and handles -- falls back to FFmpeg, or fails the job with a reason -- and the
+    # SwallowedException rule stays active to keep it that way.
+    active: false

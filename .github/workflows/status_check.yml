@@ -100,6 +100,69 @@ jobs:
           name: unit-test-report
           path: app/build/reports/tests/
 
+      # Reported, not gated. A coverage floor is only meaningful against a measured
+      # baseline, and this is the thing that measures it -- currently 31% of lines. Once
+      # that number has settled, a jacocoTestCoverageVerification task can hold it.
+      - name: Coverage report
+        run: ./gradlew :app:jacocoTestReport
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: coverage-report
+          path: app/build/reports/jacoco/jacocoTestReport/
+
+  # ---------------------------------------------------------------------------
+  # Three tools, one job, because they answer three different questions and a
+  # developer wants all three answers at once rather than one per push.
+  #
+  #   ktlint  -- formatting. Owns it outright; detekt's formatting ruleset is off,
+  #              so the two can never disagree about the same line.
+  #   detekt  -- static analysis. Its config lives in config/detekt/detekt.yml and
+  #              overrides only the rules this codebase legitimately breaks.
+  #   lint    -- the Android-specific things neither of the others can see: opt-in
+  #              markers, API-level misuse, manifest and resource problems.
+  #
+  # --continue is what makes it one round trip: a ktlint failure still lets detekt
+  # and lint report, so a red run hands over the whole list rather than the first
+  # item on it.
+  #
+  # No emulator and no FFmpeg archive needed, so this is the cheapest gate here and
+  # deliberately does not depend on the ffmpeg job.
+  # ---------------------------------------------------------------------------
+  static-analysis:
+    name: Static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: ktlint, detekt and Android lint
+        run: ./gradlew :app:ktlintCheck :app:detekt :app:lintDebug --continue --stacktrace
+
+      # The XML matters as much as the HTML: it is the one that can be diffed between
+      # runs to see what a change actually moved.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: static-analysis-reports
+          path: |
+            app/build/reports/ktlint/
+            app/build/reports/detekt/
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+
   # ---------------------------------------------------------------------------
   # One runner per API level, across the whole supported range.
   #

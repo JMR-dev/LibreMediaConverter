@@ -115,7 +115,7 @@ object MediaProbe {
                     mime.startsWith("audio/") && audio == null -> audio = shortName(mime)
                 }
             }
-            Extracted(video, audio, durationUs / 1000, width, height)
+            Extracted(video, audio, durationUs / US_PER_MS, width, height)
         } catch (e: Exception) {
             Log.i(TAG, "Platform extractor could not read $uri.", e)
             null
@@ -162,7 +162,7 @@ object MediaProbe {
             container = containerFrom(formatName, video?.getCodec()),
             videoCodec = video?.getCodec(),
             audioCodec = audio?.getCodec(),
-            durationMs = info.getDuration()?.toDoubleOrNull()?.times(1000)?.toLong() ?: 0L,
+            durationMs = info.getDuration()?.toDoubleOrNull()?.times(MS_PER_SECOND)?.toLong() ?: 0L,
             width = video?.getWidth()?.toInt() ?: 0,
             height = video?.getHeight()?.toInt() ?: 0,
             isImage = isImageFormat(formatName),
@@ -284,4 +284,10 @@ object MediaProbe {
     }
 
     private const val TAG = "MediaProbe"
+
+    /** MediaExtractor reports KEY_DURATION in microseconds; InputProbe carries milliseconds. */
+    private const val US_PER_MS = 1000
+
+    /** MediaMetadataRetriever's ffprobe-style duration is in seconds, as a decimal string. */
+    private const val MS_PER_SECOND = 1000
 }

@@ -2,6 +2,7 @@ package org.libremediaconverter.convert
 
 import android.content.Context
 import android.net.Uri
+import androidx.media3.common.util.UnstableApi
 import org.libremediaconverter.codec.AndroidDeviceCodecs
 import org.libremediaconverter.ffmpeg.FFmpegEngine
 import org.libremediaconverter.model.ConversionRequest
@@ -58,6 +59,7 @@ interface SoftwareTranscoder {
  * with a content URI pointing at a provider that does not exist, or by constructing a
  * worker's input Data by hand rather than through its request() helper.
  */
+@UnstableApi
 object ConversionDependencies {
 
     @Volatile

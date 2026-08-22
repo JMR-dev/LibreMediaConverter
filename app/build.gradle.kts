@@ -80,6 +80,24 @@ android {
         warningsAsErrors = true
         // Already the default. Stated so a later edit cannot turn the gate off by accident.
         abortOnError = true
+
+        // Dependency-freshness nags. These do not describe this code: they go red the day
+        // someone else publishes a release, which would turn a PR red for a reason its
+        // author cannot see in their own diff and cannot fix by changing anything they
+        // wrote. They also want the network at lint time. Upgrades are a deliberate act
+        // here -- the Kotlin version in particular is pinned to AGP's bundled KGP and is
+        // NOT free to follow the newest release -- so they are chosen, not nagged for.
+        disable += setOf("AndroidGradlePluginVersion", "NewerVersionAvailable", "GradleDependency")
+
+        // A real suggestion, deliberately not acted on in this commit. hasSpaceFor() reads
+        // File.usableSpace, which under-reports because it ignores cache the system could
+        // reclaim -- so the app can refuse a conversion it actually had room for.
+        // StorageManager.getAllocatableBytes is the better answer, but swapping it in
+        // changes when a job is rejected and can throw IOException, which is a behaviour
+        // change to a safety check and deserves its own commit and its own test rather
+        // than a drive-by in a tooling change. `informational` keeps it visible in every
+        // lint report instead of hiding it, while letting the gate pass until then.
+        informational += "UsableSpace"
     }
 
     packaging {
