@@ -26,6 +26,16 @@ androidxJunit = "1.3.0"
 espressoCore = "3.7.0"
 smartException = "0.2.1"
 
+# Lint/format. ktlint owns formatting; detekt owns static analysis (its formatting
+# ruleset stays off, so the two can never disagree about the same line).
+# detekt 2.0 is the only line with Gradle 9 support -- stable 1.23.x tops out at
+# Gradle 8.12, and this project is on 9.5.
+ktlint = "14.2.0"
+detekt = "2.0.0-alpha.5"
+# JaCoCo coverage agent. Pinned rather than inheriting whatever Gradle 9.5 bundles,
+# so the agent version that reads Kotlin 2.2.10 bytecode is stated, not implied.
+jacoco = "0.8.13"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
@@ -78,4 +88,6 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
 # DO NOT add org.jetbrains.kotlin.android — AGP 9 built-in Kotlin makes it a build failure.

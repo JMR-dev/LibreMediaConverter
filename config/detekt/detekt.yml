@@ -1,0 +1,49 @@
+# Project overrides merged onto detekt's bundled defaults (buildUponDefaultConfig = true in
+# app/build.gradle.kts). Only rules that need tuning for this project appear here.
+#
+# Guiding principle: Compose UI intentionally breaks several OOP-era metrics, and a few default
+# thresholds are stricter than this project's chosen style. Those are relaxed here with a reason.
+# Genuine smells (swallowed exceptions, an over-complex condition, a misnamed file) are fixed in
+# the code, not silenced.
+#
+# Formatting is deliberately absent: ktlint owns it. detekt's formatting ruleset is not enabled,
+# so the two tools can never disagree about the same line.
+
+complexity:
+  LongMethod:
+    # Declarative @Composable functions are read top-to-bottom and are legitimately long.
+    ignoreAnnotated: ['Composable']
+  CyclomaticComplexMethod:
+    # Branchy layout code (when/if inside a UI tree) isn't algorithmic complexity.
+    ignoreAnnotated: ['Composable']
+  TooManyFunctions:
+    # Screen files group many small @Composable helpers next to their screen, and the codec /
+    # container matrix files are intentionally operation-rich cohesive APIs. detekt's default of
+    # 11 is far too low for either. Files past ~40 functions still flag as genuinely bloated.
+    ignoreAnnotated: ['Composable']
+    allowedFunctionsPerFile: 40
+    allowedFunctionsPerClass: 40
+    allowedFunctionsPerInterface: 40
+
+naming:
+  FunctionNaming:
+    # @Composable functions are PascalCase by Compose convention.
+    ignoreAnnotated: ['Composable']
+
+style:
+  MagicNumber:
+    # dp / sp / duration literals are idiomatic inline in Compose.
+    ignoreAnnotated: ['Composable']
+    ignorePropertyDeclaration: true
+    ignoreNamedArgument: true
+  ReturnCount:
+    # Allow guard-clause-style early returns; detekt's default of 2 is overly strict.
+    max: 4
+  LoopWithTooManyJumpStatements:
+    # Clear early-continue / early-return loops read fine; the default of 1 is strict.
+    maxJumpCount: 3
+  ThrowsCount:
+    # Guard-clause throws don't count; allow a few more for functions validating several
+    # preconditions.
+    excludeGuardClauses: true
+    max: 3

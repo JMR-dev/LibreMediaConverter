@@ -1,0 +1,7 @@
+root = true
+
+[*.{kt,kts}]
+ktlint_code_style = intellij_idea
+max_line_length = 120
+# @Composable functions are PascalCase by convention — don't flag them as bad function names.
+ktlint_function_naming_ignore_when_annotated_with = Composable

@@ -1,7 +1,18 @@
+import org.gradle.testing.jacoco.tasks.JacocoReport
+
 plugins {
     alias(libs.plugins.android.application)
     // Required even under AGP 9: the Compose compiler plugin is NOT built in.
     alias(libs.plugins.kotlin.compose)
+
+    // Lint/format. Resolved from the Gradle Plugin Portal, not AGP's buildscript
+    // classpath -- neither is an Android plugin.
+    alias(libs.plugins.ktlint)
+    alias(libs.plugins.detekt)
+
+    // JaCoCo (Gradle built-in) instruments the JVM testDebugUnitTest task. Report only:
+    // there is deliberately no coverage gate, see the jacocoTestReport block below.
+    jacoco
 }
 
 android {
@@ -62,6 +73,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    lint {
+        // ktlint and detekt both fail the build on any finding. Android lint by default
+        // aborts on errors only, so warnings would land in the report while the gate stayed
+        // green -- a gate that passes while the report has content is not a gate.
+        warningsAsErrors = true
+        // Already the default. Stated so a later edit cannot turn the gate off by accident.
+        abortOnError = true
+    }
+
     packaging {
         jniLibs {
             // Uncompressed .so, so the APK zip-aligns them on 16 KB boundaries.
@@ -74,6 +94,68 @@ android {
 // jvmTarget is inherited from compileOptions.targetCompatibility.
 kotlin {
     compilerOptions {}
+}
+
+detekt {
+    // Merge the project overrides in config/detekt onto detekt's bundled defaults, so this
+    // repo's file only has to carry the rules it actually changes.
+    buildUponDefaultConfig = true
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+}
+
+// Pin the coverage agent rather than inheriting whatever Gradle bundles.
+jacoco {
+    toolVersion = libs.versions.jacoco.get()
+}
+
+// --- Unit-test coverage -------------------------------------------------------------------
+// Report only. There is deliberately no coverage gate: a floor is only meaningful against a
+// measured baseline, and the JVM test stack here is still junit-only. This task produces the
+// number a floor would need; add `jacocoTestCoverageVerification` once it is known.
+
+// Generated code, stripped from the denominator so the percentage reflects hand-written Kotlin.
+// No DI framework is in use, so there are no Hilt/Dagger patterns to exclude.
+val jacocoGeneratedExcludes = listOf(
+    "**/R.class",
+    "**/R\$*.class",
+    "**/BuildConfig.*",
+    "**/Manifest*.*",
+    // Room lands in a later phase; its KSP output comes out the same door as hand-written code.
+    "**/*_Impl*",
+    // One per file with @Composable lambdas -- Compose compiler output, not written by anyone.
+    "**/ComposableSingletons*",
+)
+
+// AGP 9 compiles Kotlin through its built-in compiler, which writes here rather than to the
+// classic `tmp/kotlin-classes/debug`. All hand-written code in this module is Kotlin, so the
+// javac output (BuildConfig and R only) is not read at all.
+val jacocoDebugKotlinClasses = layout.buildDirectory.dir(
+    "intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes",
+)
+
+// Accept both the base `jacoco` plugin's default exec location and AGP's
+// enableUnitTestCoverage one, so the wiring survives either being the source of truth.
+val jacocoExecutionData = fileTree(layout.buildDirectory) {
+    include(
+        "jacoco/testDebugUnitTest.exec",
+        "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec",
+    )
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    // The exec data does not exist until the tests have run.
+    dependsOn("testDebugUnitTest")
+    group = "verification"
+    description = "Generates JaCoCo XML + HTML coverage for the debug JVM unit tests."
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+
+    classDirectories.setFrom(fileTree(jacocoDebugKotlinClasses) { exclude(jacocoGeneratedExcludes) })
+    sourceDirectories.setFrom(files("src/main/java"))
+    executionData.setFrom(jacocoExecutionData)
 }
 
 dependencies {
