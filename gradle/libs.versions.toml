@@ -3,6 +3,10 @@
 # NOTE: AGP 9 has BUILT-IN Kotlin support. Applying org.jetbrains.kotlin.android
 # FAILS the build. AGP 9.3.1 brings kotlin-gradle-plugin 2.2.10 transitively, so the
 # Compose compiler plugin below must match that version, not the newest Kotlin release.
+# Verified against the AGP 9.3.1 POM, which declares kotlin-gradle-plugin 2.2.10 at
+# runtime scope. Kotlin 2.4.10 exists and Android lint will suggest it -- taking that
+# suggestion breaks the build unless KGP is ALSO forced onto the root buildscript
+# classpath. These three move together or not at all; none of them may float.
 agp = "9.3.1"
 kotlin = "2.2.10"
 ksp = "2.3.11"
@@ -31,10 +35,10 @@ smartException = "0.2.1"
 # detekt 2.0 is the only line with Gradle 9 support -- stable 1.23.x tops out at
 # Gradle 8.12, and this project is on 9.5.
 ktlint = "14.2.0"
-detekt = "2.0.0-alpha.5"
+detekt = "2.0.0-alpha.6"
 # JaCoCo coverage agent. Pinned rather than inheriting whatever Gradle 9.5 bundles,
 # so the agent version that reads Kotlin 2.2.10 bytecode is stated, not implied.
-jacoco = "0.8.13"
+jacoco = "0.8.15"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
