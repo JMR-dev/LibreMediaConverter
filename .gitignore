@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# The FFmpeg AAR is committed under bin/ so test runs do not depend on a rebuild.
+# Build outputs from tools/ffmpeg are not.
+tools/ffmpeg/out/

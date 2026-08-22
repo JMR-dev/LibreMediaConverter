@@ -1,0 +1,18 @@
+A media converter that runs entirely on your device. Nothing is uploaded anywhere.
+
+Convert video between MP4, MKV and WebM. Extract and convert audio to MP3, AAC,
+FLAC, Opus or WAV. Export GIFs and PNG frame sequences. Join several clips into one
+file.
+
+Two conversion engines work together. Common video jobs run on your device's video
+hardware, which is several times faster than software encoding and much easier on the
+battery. Everything the hardware cannot do — Matroska, MP3, GIF, frame export, and the
+highest quality settings — runs through a bundled FFmpeg build. The app tells you which
+one it used and why, and lets you force software encoding if you prefer.
+
+Quality settings:
+
+* Fast — hardware accelerated, ideal for sharing and batches
+* Best quality — software encoding with CRF rate control, for archiving
+
+Free and open source. No advertising, no analytics, no network access.

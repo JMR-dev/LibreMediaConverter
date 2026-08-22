@@ -1,0 +1,7 @@
+First release.
+
+* Video conversion between MP4, MKV and WebM
+* Audio extraction to MP3, AAC, FLAC, Opus and WAV
+* GIF and PNG frame export
+* Joining several files into one
+* Hardware acceleration where the device supports it, with a visible fallback

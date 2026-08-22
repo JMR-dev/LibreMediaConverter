@@ -1,0 +1,214 @@
+name: Status check
+
+on:
+  pull_request:
+    branches: [main]
+
+# A newer push to the same PR makes the in-flight run obsolete. An emulator matrix is
+# expensive, so cancel rather than let runs pile up.
+concurrency:
+  group: status-check-${{ github.ref }}
+  cancel-in-progress: true
+
+# Third-party actions are pinned to a commit rather than a tag. A tag is mutable: the
+# owner can repoint v4 at new code, so a tag reference is an open invitation to run
+# whatever that repository contains tomorrow. The trailing comment records which
+# release each hash corresponds to, since a bare hash is unreadable.
+env:
+  GRADLE_CACHE_PATHS: |
+    ~/.gradle/caches
+    ~/.gradle/wrapper
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validates the committed FFmpeg archive. It does not build anything: the whole
+  # point of checking the binary in is that a red run means broken code rather than
+  # a cross-compile that hiccuped.
+  #
+  # Its own job so a bad archive reports once, clearly, instead of surfacing as five
+  # confusing emulator failures. It takes seconds, so gating the matrix on it costs
+  # almost nothing.
+  # ---------------------------------------------------------------------------
+  ffmpeg:
+    name: FFmpeg binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify the committed archive
+        run: |
+          AAR=bin/ffmpeg-kit-next-8.1.1.aar
+          test -f "$AAR" || { echo "::error::$AAR is missing"; exit 1; }
+
+          # A truncated file, or a Git LFS pointer checked out without LFS, would pass
+          # a file-exists check and then surface much later as a confusing linker
+          # error. Assert the archive actually carries native libraries for both ABIs.
+          for abi in arm64-v8a x86_64; do
+            n=$(unzip -l "$AAR" | grep -c "jni/$abi/.*\.so$" || true)
+            echo "  $abi: $n shared libraries"
+            test "$n" -gt 0 || { echo "::error::AAR has no $abi libraries"; exit 1; }
+          done
+
+          # 16 KB alignment is a Play requirement and is easy to lose in a rebuild,
+          # so it is checked here rather than discovered at submission.
+          unzip -q -o "$AAR" 'jni/*' -d /tmp/aarcheck
+          bad=0
+          for f in /tmp/aarcheck/jni/*/*.so; do
+            align=$(readelf -lW "$f" | awk '$1=="LOAD"{print $NF}' | sort -u)
+            if [ "$align" != "0x4000" ]; then
+              echo "::error::$(basename "$f") is $align, not 16 KB aligned"; bad=1
+            fi
+          done
+          test "$bad" -eq 0 || exit 1
+          echo "  all libraries are 16 KB aligned"
+
+          # Record what shipped, so a failing run elsewhere can be tied to a version.
+          echo "  sha256: $(sha256sum "$AAR" | cut -d' ' -f1)"
+
+  # ---------------------------------------------------------------------------
+  # JVM tests: the routing matrix, the FFmpeg argument builder, the concat planner
+  # and the retry rule. No device needed, so this is the fastest signal on a PR.
+  # ---------------------------------------------------------------------------
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'   # AGP 9 will not run on anything older
+
+      # Gradle is invoked through the committed wrapper rather than a setup action.
+      # The wrapper verifies its own distribution against distributionSha256Sum, and
+      # caching is a handful of lines, so the action earned little here.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/
+
+  # ---------------------------------------------------------------------------
+  # One runner per API level, across the whole supported range.
+  #
+  # The range is the point: minSdk is 33, and the foreground service type differs
+  # across it -- none below 34, dataSync at 34, mediaProcessing from 35. Testing a
+  # single level would leave two thirds of that branch unexercised.
+  #
+  # It stops at 36 rather than targetSdk 37 because the android-37.0 emulator image
+  # is broken, not because 37 does not matter. See docs/api-37-emulator-crash.md.
+  #
+  # FFmpeg is not built here. The AAR is committed under bin/, so a red run means the
+  # code is broken rather than that a cross-compile hiccuped.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E API ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    needs: ffmpeg
+    timeout-minutes: 60
+    strategy:
+      # Report every API level rather than stopping at the first red one. Knowing
+      # whether a failure is universal or specific to one level is most of the
+      # diagnosis.
+      fail-fast: false
+      matrix:
+        include:
+          - label: "33"
+            api-level: "33"
+          - label: "34"
+            api-level: "34"
+          - label: "35"
+            api-level: "35"
+          - label: "36"
+            api-level: "36"
+          # No API 37 row. targetSdk is 37, but the android-37.0 emulator image
+          # crash-loops surfaceflinger inside its own gralloc mapper, so every test
+          # fails there no matter what this app does. Ruling that in took four CI
+          # rounds, so the evidence and the ruled-out fixes are written down rather
+          # than left to be rediscovered: docs/api-37-emulator-crash.md. That file
+          # also records what to try first when re-adding it -- note that the row
+          # needs api-level "37.0", since a bare 37 fails during SDK setup.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Without this the emulator falls back to software rendering and takes minutes
+      # longer to boot, when it boots at all.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Instrumented tests
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          # swiftshader_indirect is correct here only because runners have no GPU to
+          # pass through. On a workstation the same setting routes through
+          # SwiftShader's JIT, which is a known crash source.
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          # The default userdata partition is not big enough for this APK once the
+          # FFmpeg libraries are in it. One level failed outright with "Requested
+          # internal only, but not enough space", and the margin was thin everywhere
+          # else, so give them all room.
+          disk-size: 8G
+          # Pinned because the emulator's own default is not uniform: it raises an
+          # undersized guest to a floor that varies by API level -- 2048M at 33, 2560M
+          # at 34 through 36 -- and skips levels it does not recognise entirely. 2560M
+          # is the highest of those floors, so no level gets less memory than it
+          # already had, and none of them depend on that heuristic any more.
+          ram-size: 2560M
+          # Build only the ABI the emulator can execute. FFmpeg's native libraries
+          # dominate the APK, so shipping arm64 to an x86_64 emulator doubles the
+          # install for code that can never run: 114 MB against 80 MB.
+          #
+          # The probe lines survive from diagnosing the API 37 crash and are kept
+          # because a red instrumented run is otherwise near-impossible to read from a
+          # log alone. The first reports what the guest actually got, so a wrong
+          # emulator configuration is visible on a green run too; the crash dump runs
+          # only on failure, so a green run is unchanged.
+          #
+          # Each line here is a separate `sh -c` -- the action splits the script on
+          # newlines -- so the failure handler has to stay on one line. The action does
+          # not pass ignoreReturnCode, so a non-zero line fails the job outright: the
+          # probe ends in `|| true` because a grep that matches nothing exits 1, and a
+          # diagnostic must never be the thing that turns a run red.
+          script: |
+            adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
+            ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 || { echo "=== guest memory at failure ==="; adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal'; echo "=== native crashes ==="; adb logcat -d -b crash | tail -60; exit 1; }
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-report-api${{ matrix.label }}
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/

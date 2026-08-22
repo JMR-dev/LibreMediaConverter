@@ -1,0 +1,33 @@
+# Reproducible FFmpeg build environment for ffmpeg-kit-next.
+#
+# ffmpeg-kit-next is Nix-only: the repository ships nix-android.sh and a flake, and
+# there is no plain android.sh. Rather than install Nix on a developer machine, the
+# whole toolchain lives in this image. It also serves as the reproducibility artifact
+# F-Droid expects.
+#
+# The flake pins Android NDK 27.3.13750724 (r27d) itself and applies
+# -Wl,-z,max-page-size=16384 for arm64-v8a and x86_64 in android/jni/Android.mk, so
+# the output is 16 KB page-size compliant without needing NDK r28+ on the host.
+#
+# The base image already provides git, bash, curl and tar. Compilers and build tools
+# (make, cmake, autotools, pkg-config) are supplied by the flake's devShell at build
+# time, so nothing further is installed here — `nix profile install` would in fact
+# collide with the base image's existing profile entries.
+
+FROM docker.io/nixos/nix:2.35.2
+
+# nix-android.sh points NIX_USER_CONF_FILES at the repo's own nix.conf, which enables
+# the flakes and nix-command experimental features. Set them here too so that plain
+# `nix` invocations behave the same way.
+RUN mkdir -p /etc/nix && \
+    printf 'experimental-features = nix-command flakes\naccept-flake-config = true\nwarn-dirty = false\nmax-jobs = auto\n' \
+        >> /etc/nix/nix.conf
+
+# Upstream's scripts/*.sh use `#!/bin/bash`, but this image provides only /bin/sh.
+RUN ln -sf /bin/sh /bin/bash
+
+WORKDIR /work
+COPY build-ffmpeg.sh /usr/local/bin/build-ffmpeg.sh
+RUN chmod +x /usr/local/bin/build-ffmpeg.sh
+
+ENTRYPOINT ["/usr/local/bin/build-ffmpeg.sh"]
