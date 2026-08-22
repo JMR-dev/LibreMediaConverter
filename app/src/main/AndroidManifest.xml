@@ -20,7 +20,13 @@
          off by default on new installs. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      The application class exists only to sweep abandoned staging files once per process.
+      See LibreMediaConverterApp for why process start is where that has to happen, and why
+      the sweep cannot take a file out from under a running worker.
+    -->
     <application
+        android:name=".LibreMediaConverterApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

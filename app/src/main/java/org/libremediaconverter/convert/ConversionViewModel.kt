@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,16 +80,45 @@ sealed interface ConversionState {
 }
 
 @UnstableApi
-class ConversionViewModel(app: Application) : AndroidViewModel(app) {
+class ConversionViewModel @JvmOverloads constructor(
+    app: Application,
+    /**
+     * Where [reset] runs its delete.
+     *
+     * A parameter so a test can make the cleanup run inline and assert on the result. It
+     * also makes the ordering an explicit choice rather than an accident: the state flips
+     * to `Idle` synchronously while the delete is dispatched, and naming the dispatcher is
+     * what says that was decided rather than inherited.
+     *
+     * `@JvmOverloads` keeps the single-argument constructor that `viewModel()`'s default
+     * `AndroidViewModelFactory` looks up reflectively; without it the app would crash on
+     * the first screen.
+     */
+    private val cleanupDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : AndroidViewModel(app) {
 
     private val workManager = WorkManager.getInstance(app)
-    private val publisher = OutputPublisher(app)
+
+    // Through ConversionDependencies, like the workers, rather than `OutputPublisher(app)`
+    // direct: the ViewModels were the only place bypassing the seam, which left the
+    // cleanup wiring impossible to substitute in a test.
+    private val publisher = ConversionDependencies.publisher(app)
 
     private val _state = MutableStateFlow<ConversionState>(ConversionState.Idle)
     val state: StateFlow<ConversionState> = _state.asStateFlow()
 
     private var observer: Job? = null
     private var activeWorkId: UUID? = null
+
+    /**
+     * The staged output this ViewModel is responsible for deleting.
+     *
+     * A field rather than something read back out of [_state], because the state machine
+     * cannot answer the question on the path that needs it most: a failed [save] lands on
+     * [ConversionState.Failed], which carries a message and no file at all. By then the
+     * only remaining reference would have been lost.
+     */
+    private var pendingStaged: File? = null
 
     /** Conversion settings, kept separate from the job state machine. */
     private val _settings = MutableStateFlow(ConversionSettings())
@@ -190,7 +220,7 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
             // would read as the app having ignored the tap.
             _state.value = ConversionState.Ready(file)
 
-            val probe = withContext(Dispatchers.IO) { MediaProbe.probe(getApplication(), uri) }
+            val probe = withContext(Dispatchers.IO) { ConversionDependencies.probe(getApplication(), uri) }
             // Only fill in the probe if the user has not moved on in the meantime.
             _state.update { current ->
                 if (current is ConversionState.Ready && current.input.uri == uri) {
@@ -258,9 +288,13 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
                         if (path == null) {
                             ConversionState.Failed("Conversion reported success but produced no file.")
                         } else {
+                            val staged = File(path)
+                            // Take responsibility for the file at the same moment the state
+                            // starts referring to it, so the two cannot disagree.
+                            pendingStaged = staged
                             ConversionState.Converted(
                                 input = input,
-                                staged = File(path),
+                                staged = staged,
                                 engineUsed = info.outputData
                                     .getString(ConversionWorker.KEY_ENGINE_USED).orEmpty(),
                                 routeReason = info.outputData
@@ -299,6 +333,8 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
                     converted.staged.delete()
                 }
             }.onSuccess {
+                // publish() already deleted it; nothing left to clean up.
+                pendingStaged = null
                 _state.value = ConversionState.Saved(
                     ConversionWorker.outputNameFor(
                         converted.input.displayName,
@@ -306,15 +342,35 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
                     ),
                 )
             }.onFailure { e ->
+                // Deliberately NOT cleared. A failed save may mean the staged file is the
+                // only copy of an hour of transcoding, and the user's destination did not
+                // receive it -- deleting here would destroy the work to tidy up a cache
+                // directory. It stays collectable: by a later reset(), or by the sweep once
+                // it is old enough to be certain nobody is coming back for it.
                 _state.value = ConversionState.Failed(e.message ?: "Could not save the file.")
             }
         }
     }
 
+    /**
+     * Returns to [ConversionState.Idle], deleting anything staged on the way out.
+     *
+     * "Start over" on a finished conversion is an ordinary path through the UI, and it used
+     * to drop the only reference to a full-size file in cache. The delete runs on
+     * [Dispatchers.IO] because it touches the filesystem, and is fire-and-forget: it is
+     * cancelled with [viewModelScope] if the Activity finishes first, so it is a best
+     * effort rather than a guarantee. `OutputPublisher.sweepStaging` is the backstop for
+     * the times it does not run.
+     */
     fun reset() {
         observer?.cancel()
         observer = null
         activeWorkId = null
+        val staged = pendingStaged
+        pendingStaged = null
+        if (staged != null) {
+            viewModelScope.launch(cleanupDispatcher) { publisher.discardStaged(staged) }
+        }
         _state.value = ConversionState.Idle
     }
 

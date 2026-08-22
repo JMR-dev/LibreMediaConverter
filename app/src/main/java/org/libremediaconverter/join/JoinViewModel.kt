@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,8 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.InputFile
-import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.work.ConcatWorker
 import org.libremediaconverter.work.JobTags
@@ -36,16 +37,33 @@ sealed interface JoinState {
 }
 
 @UnstableApi
-class JoinViewModel(app: Application) : AndroidViewModel(app) {
+class JoinViewModel @JvmOverloads constructor(
+    app: Application,
+    /** Where [reset] runs its delete. See the same parameter on `ConversionViewModel`. */
+    private val cleanupDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : AndroidViewModel(app) {
 
     private val workManager = WorkManager.getInstance(app)
-    private val publisher = OutputPublisher(app)
+
+    // Through ConversionDependencies, like the workers, rather than `OutputPublisher(app)`
+    // direct -- see the same line in ConversionViewModel.
+    private val publisher = ConversionDependencies.publisher(app)
 
     private val _state = MutableStateFlow<JoinState>(JoinState.Idle)
     val state: StateFlow<JoinState> = _state.asStateFlow()
 
     private var observer: Job? = null
     private var activeWorkId: UUID? = null
+
+    /**
+     * The staged output this ViewModel is responsible for deleting.
+     *
+     * Held here rather than read back out of [_state] for the same reason as in
+     * `ConversionViewModel`: a failed [save] lands on [JoinState.Failed], which carries a
+     * message and no file, so the state machine cannot answer this on the one path that
+     * most needs it.
+     */
+    private var pendingStaged: File? = null
 
     init {
         reattach()
@@ -147,7 +165,11 @@ class JoinViewModel(app: Application) : AndroidViewModel(app) {
                         if (path == null) {
                             JoinState.Failed("Joining reported success but produced no file.")
                         } else {
-                            JoinState.Joined(File(path), strategy)
+                            val staged = File(path)
+                            // Take responsibility for the file at the same moment the state
+                            // starts referring to it, so the two cannot disagree.
+                            pendingStaged = staged
+                            JoinState.Joined(staged, strategy)
                         }
                     }
 
@@ -179,17 +201,34 @@ class JoinViewModel(app: Application) : AndroidViewModel(app) {
                     joined.staged.delete()
                 }
             }.onSuccess {
+                // publish() already deleted it; nothing left to clean up.
+                pendingStaged = null
                 _state.value = JoinState.Saved("joined.mp4")
             }.onFailure { e ->
+                // Deliberately NOT cleared -- see the same branch in ConversionViewModel.
+                // A failed save can leave the staged file as the only copy of the work, so
+                // it is left for a later reset() or for the sweep to collect once its age
+                // makes it certain nobody is coming back for it.
                 _state.value = JoinState.Failed(e.message ?: "Could not save the file.")
             }
         }
     }
 
+    /**
+     * Returns to [JoinState.Idle], deleting anything staged on the way out.
+     *
+     * Best effort, not a guarantee: the delete is cancelled with [viewModelScope] if the
+     * Activity finishes first. `OutputPublisher.sweepStaging` is the backstop.
+     */
     fun reset() {
         observer?.cancel()
         observer = null
         activeWorkId = null
+        val staged = pendingStaged
+        pendingStaged = null
+        if (staged != null) {
+            viewModelScope.launch(cleanupDispatcher) { publisher.discardStaged(staged) }
+        }
         _state.value = JoinState.Idle
     }
 

@@ -41,9 +41,60 @@ open class OutputPublisher(private val context: Context) {
         } ?: error("Could not open destination for writing: $destination")
     }
 
-    fun clearStaging() {
-        stagingDir.listFiles()?.forEach { it.delete() }
+    /**
+     * Deletes one staged file, if it really is one of ours.
+     *
+     * This is what a ViewModel's `reset()` calls when the user taps "Start over" on a
+     * finished-but-unsaved conversion, which is otherwise a full-size copy left in cache
+     * for the OS to reclaim whenever it feels like it.
+     *
+     * The guard is not decoration. The handle reaches the ViewModel as a path string in
+     * `WorkInfo.outputData` and is turned straight into a `File`, so this is the one place
+     * that checks where it points before deleting. Comparing the *canonical* parent rather
+     * than the path as written is what makes `conversions/../something` fail: the naive
+     * string comparison accepts it.
+     *
+     * @return true if a file was deleted. False covers both "not in staging" and "already
+     *   gone", which the caller has no reason to tell apart — a `reset()` after a
+     *   successful save is an ordinary second call.
+     */
+    open fun discardStaged(staged: File): Boolean {
+        val parent = staged.parentFile?.canonicalOrAbsolute() ?: return false
+        if (parent != stagingDir.canonicalOrAbsolute()) return false
+        return staged.delete()
     }
+
+    /**
+     * Deletes staged files old enough to have been abandoned.
+     *
+     * The backstop for everything `discardStaged` cannot reach: a process killed between
+     * finishing a conversion and saving it, a worker that failed before its output ever
+     * became a `Converted` state, or a `reset()` whose delete was cancelled with the
+     * Activity. [StagingSweep] owns the rule and its reasoning.
+     *
+     * Deliberately not the `clearStaging()` this replaces. That deleted the directory's
+     * whole contents, and the convert tab, the join tab and `ConcatEngine`'s
+     * `concat_list.txt` all share this directory with no per-job namespacing, so a blanket
+     * delete could destroy a live job's file.
+     *
+     * [nowMs] is a parameter so the clock is the caller's, not a hidden global.
+     */
+    open fun sweepStaging(nowMs: Long = System.currentTimeMillis()) {
+        val dir = stagingDir
+        val listing = dir.listFiles() ?: return
+        val entries = listing.map { StagingSweep.Entry(it.name, it.lastModified()) }
+        StagingSweep.collectable(entries, nowMs).forEach { name ->
+            val file = File(dir, name)
+            // Re-read the timestamp rather than trusting the snapshot above. Between the
+            // listing and here, a worker resumed by WorkManager -- which runs in this same
+            // process -- could have started writing this very file, and unlinking an inode a
+            // running job still holds open would end with the job reporting success for a
+            // path that no longer exists.
+            if (StagingSweep.isCollectable(file.lastModified(), nowMs)) file.delete()
+        }
+    }
+
+    private fun File.canonicalOrAbsolute(): File = runCatching { canonicalFile }.getOrDefault(absoluteFile)
 
     private companion object {
         const val SPACE_HEADROOM_BYTES = 128L * 1024 * 1024
