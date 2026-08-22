@@ -176,10 +176,31 @@ jobs:
           # was the level that actually failed, with "Requested internal only, but not
           # enough space" -- but the margin was thin everywhere, so give them all room.
           disk-size: 8G
+          # The emulator raises an undersized guest to 2560M by itself, but only for
+          # API levels it recognises, and it does not recognise "37.0". Every green job
+          # in this matrix was quietly running at 2560M while API 37 ran at the pixel_6
+          # default of 1536M, lost system_server partway through installing the 82 MB
+          # APK, and reported it as "Can't find service: package". 2560M is not a guess
+          # at a sufficient value: it is the value the other four levels already pass
+          # at. Setting it explicitly makes the matrix uniform instead of leaving one
+          # level at the mercy of that heuristic.
+          ram-size: 2560M
           # Build only the ABI the emulator can execute. FFmpeg's native libraries
           # dominate the APK, so shipping arm64 to an x86_64 emulator doubles the
           # install for code that can never run: 114 MB against 80 MB.
-          script: ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64
+          #
+          # The memory probes exist because this failure cannot be reproduced locally:
+          # API 37 will not boot on a workstation under either GPU mode -- host aborts
+          # surfaceflinger in the goldfish mapper, swiftshader_indirect segfaults the
+          # emulator. CI is the only instrument, so it has to report enough to be
+          # conclusive. The first line proves what the guest actually got regardless of
+          # the result; the rest runs only on failure, so a green run is unchanged.
+          #
+          # Each line here is a separate `sh -c` -- the action splits the script on
+          # newlines -- so the failure handler has to stay on one line.
+          script: |
+            adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal'
+            ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 || { echo "=== guest memory at failure ==="; adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal'; echo "=== kernel OOM kills ==="; adb shell dmesg | grep -iE 'oom|lowmemory|killed process' | tail -20; echo "=== native crashes ==="; adb logcat -d -b crash | tail -40; exit 1; }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
