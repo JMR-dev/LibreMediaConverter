@@ -28,9 +28,10 @@ overlays, and audio to AAC. Fully hardware accelerated end to end — MediaCodec
 a GL surface and MediaCodec re-encodes, so frames never round-trip through the CPU.
 Roughly 7–8× realtime on 720p.
 
-It writes MP4, WebM, Ogg, WAV and raw AAC — the five containers `media3-muxer` provides a
-muxer for. It *reads* far more than it writes, Matroska included, which is what makes
-MKV → MP4 a hardware remux.
+It writes **MP4 and nothing else**. `media3-muxer` ships WebM, Ogg, WAV and AAC muxers too,
+but none can be driven by Transformer — they throw from `addMetadataEntry`, which the muxer
+wrapper calls for every metadata entry a real recording carries. It *reads* far more than it
+writes, Matroska included, which is what makes MKV → MP4 a hardware remux.
 
 ### FFmpeg — the long tail
 

@@ -50,13 +50,16 @@ class ConversionRouterTest {
     }
 
     @Test
-    fun `webm vp9 routes to ffmpeg because media3 cannot encode vp9`() {
-        // Transformer.setVideoMimeType accepts only H.263/H.264/H.265/MP4V. The WebM
-        // muxer exists, but there is no VP9 *encoder* behind it, so producing WebM
-        // video is FFmpeg's job even though the container is nominally supported.
+    fun `webm vp9 routes to ffmpeg`() {
+        // Two independent reasons, either of which is sufficient: Transformer.setVideoMimeType
+        // accepts only H.263/H.264/H.265/MP4V, so there is no VP9 encoder — and Media3 cannot mux
+        // WebM at all, which it was previously credited with. The container check runs first and
+        // is the more fundamental of the two: even given a VP9 encoder, the file could not be
+        // written. This asserted NO_PLATFORM_ENCODER while the container was wrongly believed to
+        // be supported.
         val d = route(OutputFormat.WEBM_VP9)
         assertEquals(Engine.FFMPEG, d.engine)
-        assertEquals(Reason.NO_PLATFORM_ENCODER, d.reason)
+        assertEquals(Reason.CONTAINER_UNSUPPORTED, d.reason)
     }
 
     @Test
@@ -302,6 +305,31 @@ class ConversionRouterTest {
             assertEquals("$container should need FFmpeg", Engine.FFMPEG, d.engine)
             assertEquals(Reason.CONTAINER_UNSUPPORTED, d.reason)
         }
+    }
+
+    // --- containers Media3 cannot write -------------------------------------
+
+    /**
+     * WAV, Opus and raw AAC used to be claimed for Media3 and are not any more.
+     *
+     * `media3-muxer` ships a muxer for each, which is why they were listed — but none can be driven
+     * by Transformer, so the export dies at the muxer. They were never actually produced on the
+     * hardware path: the engine ignored the container and wrote MP4 into a file named `.wav`.
+     * FFmpeg produces all three, and `FFmpegEngineTest` asserts the produced files.
+     */
+    @Test
+    fun `audio containers Media3 cannot mux route to FFmpeg`() {
+        listOf(OutputFormat.WAV, OutputFormat.OPUS).forEach { format ->
+            val d = route(format)
+            assertEquals("$format should need FFmpeg", Engine.FFMPEG, d.engine)
+            assertEquals(Reason.CONTAINER_UNSUPPORTED, d.reason)
+        }
+    }
+
+    /** M4A is the audio format that does stay on hardware, because its container is MP4. */
+    @Test
+    fun `m4a stays on hardware because MP4 is a container Media3 can write`() {
+        assertEquals(Engine.MEDIA3, route(OutputFormat.M4A_AAC).engine)
     }
 
     // --- exhaustiveness ----------------------------------------------------

@@ -25,17 +25,16 @@ object ConversionRouter {
     /**
      * Containers Media3 can mux. Anything else has to go to FFmpeg.
      *
+     * MP4 alone. This set used to name WebM, Ogg, WAV and AAC-ADTS as well, on the strength of
+     * `media3-muxer` shipping a muxer for each — but none of those four can be driven by
+     * Transformer at all, for the reasons `Media3Muxers` records. Nothing caught it because the
+     * engine ignored the container entirely and wrote MP4 regardless, so the set being wrong and
+     * the engine being wrong cancelled out.
+     *
      * Not private: `Media3Muxers` has to supply a `Muxer.Factory` for every entry, and a test
-     * asserts the two agree. They drifted once already — this set was correct while the engine
-     * silently wrote MP4 for all five.
+     * asserts the two agree.
      */
-    internal val MEDIA3_CONTAINERS = setOf(
-        Container.MP4,
-        Container.WEBM,
-        Container.OGG,
-        Container.WAV,
-        Container.AAC_ADTS,
-    )
+    internal val MEDIA3_CONTAINERS = setOf(Container.MP4)
 
     /**
      * What Media3's muxers can *carry*, as distinct from what Media3 can encode.
@@ -45,25 +44,21 @@ object ConversionRouter {
      * — legal, and something FFmpeg does without complaint — has to leave the hardware path. Before
      * remuxing existed nothing could reach that combination, so nothing had to know.
      *
-     * Transcribed from each `Muxer.Factory.getSupportedSampleMimeTypes` in `Media3Muxers`;
+     * One entry, because MP4 is the only container Transformer can write — see `Media3Muxers` for
+     * why the four other muxers in `media3-muxer` cannot be driven by it. Every other container
+     * has already been sent to FFmpeg by the time these are consulted.
+     *
+     * Transcribed from `Muxer.Factory.getSupportedSampleMimeTypes` in `Media3Muxers`;
      * `Media3MuxersTest` asserts the transcription still matches.
      */
     internal val MEDIA3_MUXABLE_VIDEO: Map<Container, Set<VideoCodec>> = mapOf(
         Container.MP4 to setOf(VideoCodec.H264, VideoCodec.H265, VideoCodec.VP9, VideoCodec.AV1),
-        Container.WEBM to setOf(VideoCodec.VP8, VideoCodec.VP9),
-        Container.OGG to emptySet(),
-        Container.WAV to emptySet(),
-        Container.AAC_ADTS to emptySet(),
     )
 
     internal val MEDIA3_MUXABLE_AUDIO: Map<Container, Set<AudioCodec>> = mapOf(
         Container.MP4 to setOf(
             AudioCodec.AAC, AudioCodec.OPUS, AudioCodec.VORBIS, AudioCodec.PCM,
         ),
-        Container.WEBM to setOf(AudioCodec.OPUS, AudioCodec.VORBIS),
-        Container.OGG to setOf(AudioCodec.OPUS, AudioCodec.VORBIS),
-        Container.WAV to setOf(AudioCodec.PCM),
-        Container.AAC_ADTS to setOf(AudioCodec.AAC),
     )
 
     /** Video codecs Media3 can encode (`Transformer.setVideoMimeType`). */
@@ -109,15 +104,10 @@ object ConversionRouter {
 
         // The container is supported but its muxer is codec-restricted. What matters is what ends
         // up in the file, so a copied track is judged by its source codec rather than the request.
+        // Only MP4 reaches here now — WebM is rejected by the container check above — so the
+        // WebM-specific wording no longer applies.
         if (!media3CanMux(plan, request.probe)) {
-            return Decision(
-                Engine.FFMPEG,
-                if (plan.container == Container.WEBM) {
-                    Reason.WEBM_CODEC_UNSUPPORTED
-                } else {
-                    Reason.CONTAINER_CODEC_UNSUPPORTED
-                },
-            )
+            return Decision(Engine.FFMPEG, Reason.CONTAINER_CODEC_UNSUPPORTED)
         }
 
         // A file the platform extractor could not open cannot be read at all, copied or not.
@@ -195,7 +185,6 @@ object ConversionRouter {
         HARDWARE_CAPABLE("Hardware accelerated"),
         REMUX_NO_REENCODE("Remuxed — streams copied, nothing re-encoded"),
         CONTAINER_UNSUPPORTED("This container needs FFmpeg"),
-        WEBM_CODEC_UNSUPPORTED("WebM only supports VP8/VP9 with Opus or Vorbis"),
         CONTAINER_CODEC_UNSUPPORTED("That codec needs FFmpeg for this container"),
         NO_PLATFORM_ENCODER("Android has no encoder for this format"),
         NO_PLATFORM_DECODER("This device cannot decode the input in hardware"),

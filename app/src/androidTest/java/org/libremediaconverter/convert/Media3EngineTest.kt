@@ -110,48 +110,6 @@ class Media3EngineTest {
     }
 
     /**
-     * WAV output, which reaches Media3 for the same reason M4A does.
-     *
-     * `Container.WAV` is in the router's Media3 set, but until the engine passed a muxer factory
-     * the only muxer Transformer ever used was the MP4 one — so asking for WAV produced an MP4.
-     * Asserting the RIFF header proves the container, not merely that a file appeared; this
-     * follows what `FFmpegEngineTest` already does for its formats.
-     */
-    @Test
-    fun wavExportWritesARiffHeader(): Unit = runBlocking {
-        val wav = File(context.cacheDir, "out_audio.wav")
-        wav.delete()
-        try {
-            engine.transcode(Uri.fromFile(input), wav, ConversionRequest(OutputFormat.WAV.spec))
-
-            assertTrue("export produced no file", wav.exists() && wav.length() > 0)
-            assertEquals("RIFF", String(wav.readBytes().copyOfRange(0, 4), Charsets.US_ASCII))
-        } finally {
-            wav.delete()
-        }
-    }
-
-    /**
-     * Ogg/Opus output, the third container the router claims for Media3.
-     *
-     * Asserted by magic bytes rather than `MediaExtractor`: platform extractor support for raw
-     * Ogg is inconsistent across the API levels in the CI matrix, and "OggS" is unambiguous.
-     */
-    @Test
-    fun opusExportWritesAnOggHeader(): Unit = runBlocking {
-        val ogg = File(context.cacheDir, "out_audio.opus")
-        ogg.delete()
-        try {
-            engine.transcode(Uri.fromFile(input), ogg, ConversionRequest(OutputFormat.OPUS.spec))
-
-            assertTrue("export produced no file", ogg.exists() && ogg.length() > 0)
-            assertEquals("OggS", String(ogg.readBytes().copyOfRange(0, 4), Charsets.US_ASCII))
-        } finally {
-            ogg.delete()
-        }
-    }
-
-    /**
      * Regression guard for the Transformer threading trap.
      *
      * Transformer binds to the Looper of the thread that built it, falling back to the

@@ -19,9 +19,10 @@ import org.libremediaconverter.model.VideoCodec
 /**
  * Guards the agreement between the router's container set and the muxers that back it.
  *
- * These two drifted once already, and the failure was invisible: [ConversionRouter] correctly
- * claimed WebM, Ogg, WAV and AAC for Media3 while [Media3Engine] had no way to write any of them
- * and produced MP4 regardless. Nothing failed — the file was simply the wrong container.
+ * These two drifted once already, and the failure was invisible in both directions: the router
+ * claimed WebM, Ogg, WAV and AAC-ADTS for Media3 — none of which Transformer can actually write —
+ * while [Media3Engine] ignored the container and produced MP4 for all of them. Two bugs that
+ * cancelled out, so nothing failed and the file was simply the wrong container.
  *
  * A JVM test rather than an instrumented one: constructing a factory touches no Android APIs, only
  * `create()` does, so the mapping is checkable without a device.
@@ -51,54 +52,18 @@ class Media3MuxersTest {
             }
     }
 
-    @Test
-    fun `WebM advertises only the codecs its muxer accepts`() {
-        val factory = requireNotNull(Media3Muxers.factoryFor(Container.WEBM))
-
-        assertEquals(
-            listOf(MimeTypes.VIDEO_VP8, MimeTypes.VIDEO_VP9),
-            factory.getSupportedSampleMimeTypes(C.TRACK_TYPE_VIDEO),
-        )
-        assertEquals(
-            listOf(MimeTypes.AUDIO_OPUS, MimeTypes.AUDIO_VORBIS),
-            factory.getSupportedSampleMimeTypes(C.TRACK_TYPE_AUDIO),
-        )
-    }
-
     /**
-     * The audio-only containers must not claim a video track.
+     * MP4 is the whole of it.
      *
-     * Transformer reads these lists to decide what it may hand the muxer. Claiming video for a
-     * container that cannot hold it turns a routing mistake into a corrupt file rather than a
-     * clean failure.
+     * Pinned as a value rather than left implicit, because `media3-muxer` shipping a `WebmMuxer`,
+     * `OggMuxer`, `WavMuxer` and `AacMuxer` makes it look like there should be five. Those four
+     * throw `UnsupportedOperationException` from `addMetadataEntry`, which `MuxerWrapper` calls
+     * unconditionally — see [Media3Muxers]. If a future Media3 release fixes that, this test is
+     * where the decision to widen the set gets made deliberately.
      */
     @Test
-    fun `audio-only containers advertise no video codecs`() {
-        listOf(Container.OGG, Container.WAV, Container.AAC_ADTS).forEach { container ->
-            val factory = requireNotNull(Media3Muxers.factoryFor(container))
-            assertTrue(
-                "$container claims video support",
-                factory.getSupportedSampleMimeTypes(C.TRACK_TYPE_VIDEO).isEmpty(),
-            )
-            assertTrue(
-                "$container claims no audio support",
-                factory.getSupportedSampleMimeTypes(C.TRACK_TYPE_AUDIO).isNotEmpty(),
-            )
-        }
-    }
-
-    @Test
-    fun `WAV carries PCM and AAC-ADTS carries AAC`() {
-        assertEquals(
-            listOf(MimeTypes.AUDIO_RAW),
-            requireNotNull(Media3Muxers.factoryFor(Container.WAV))
-                .getSupportedSampleMimeTypes(C.TRACK_TYPE_AUDIO),
-        )
-        assertEquals(
-            listOf(MimeTypes.AUDIO_AAC),
-            requireNotNull(Media3Muxers.factoryFor(Container.AAC_ADTS))
-                .getSupportedSampleMimeTypes(C.TRACK_TYPE_AUDIO),
-        )
+    fun `Media3 can write MP4 and nothing else`() {
+        assertEquals(setOf(Container.MP4), ConversionRouter.MEDIA3_CONTAINERS)
     }
 
     /**
