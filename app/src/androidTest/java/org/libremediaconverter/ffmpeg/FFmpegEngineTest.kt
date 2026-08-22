@@ -4,9 +4,6 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import org.libremediaconverter.model.ConversionRequest
-import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.model.QualityTier
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -14,6 +11,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.model.ConversionRequest
+import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.QualityTier
 import java.io.File
 
 /**
@@ -46,8 +46,10 @@ class FFmpegEngineTest {
         outputs.forEach { it.delete() }
     }
 
-    private fun outputFor(name: String) =
-        File(context.cacheDir, name).also { it.delete(); outputs += it }
+    private fun outputFor(name: String) = File(context.cacheDir, name).also {
+        it.delete()
+        outputs += it
+    }
 
     private fun convert(format: OutputFormat, quality: QualityTier = QualityTier.BEST): File {
         val out = outputFor("out_${format.name.lowercase()}.${format.extension}")

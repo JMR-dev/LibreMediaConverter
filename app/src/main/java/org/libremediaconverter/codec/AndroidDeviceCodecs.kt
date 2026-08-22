@@ -1,6 +1,5 @@
 package org.libremediaconverter.codec
 
-import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.util.Log
@@ -28,8 +27,7 @@ class AndroidDeviceCodecs private constructor(
     private val decodeMimes: Set<String>,
 ) : DeviceCodecs {
 
-    override fun canEncode(codec: VideoCodec): Boolean =
-        mimeFor(codec)?.let { it in hardwareEncodeMimes } ?: true
+    override fun canEncode(codec: VideoCodec): Boolean = mimeFor(codec)?.let { it in hardwareEncodeMimes } ?: true
 
     override fun canDecode(codecName: String): Boolean {
         // The platform already failed to parse this input, so there is nothing to
@@ -46,8 +44,7 @@ class AndroidDeviceCodecs private constructor(
         @Volatile
         private var cached: AndroidDeviceCodecs? = null
 
-        fun get(): AndroidDeviceCodecs =
-            cached ?: synchronized(this) { cached ?: probe().also { cached = it } }
+        fun get(): AndroidDeviceCodecs = cached ?: synchronized(this) { cached ?: probe().also { cached = it } }
 
         private fun probe(): AndroidDeviceCodecs {
             val encoders = mutableSetOf<String>()
@@ -104,7 +101,6 @@ class AndroidDeviceCodecs private constructor(
         }
 
         /** Test seam: lets instrumented tests build a probe from explicit sets. */
-        fun forTesting(encoders: Set<String>, decoders: Set<String>) =
-            AndroidDeviceCodecs(encoders, decoders)
+        fun forTesting(encoders: Set<String>, decoders: Set<String>) = AndroidDeviceCodecs(encoders, decoders)
     }
 }

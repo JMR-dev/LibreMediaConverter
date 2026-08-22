@@ -27,7 +27,11 @@ object ContainerCapabilities {
         // Matroska is the permissive one: it is a general-purpose container and takes essentially
         // any codec. That is what makes it the natural remux target.
         Container.MKV to setOf(
-            VideoCodec.H264, VideoCodec.H265, VideoCodec.VP8, VideoCodec.VP9, VideoCodec.AV1,
+            VideoCodec.H264,
+            VideoCodec.H265,
+            VideoCodec.VP8,
+            VideoCodec.VP9,
+            VideoCodec.AV1,
         ),
         Container.WEBM to setOf(VideoCodec.VP8, VideoCodec.VP9, VideoCodec.AV1),
         Container.MPEG_TS to setOf(VideoCodec.H264, VideoCodec.H265),
@@ -48,8 +52,12 @@ object ContainerCapabilities {
         Container.MP4 to setOf(AudioCodec.AAC, AudioCodec.MP3, AudioCodec.OPUS, AudioCodec.FLAC),
         Container.MOV to setOf(AudioCodec.AAC, AudioCodec.MP3, AudioCodec.PCM),
         Container.MKV to setOf(
-            AudioCodec.AAC, AudioCodec.OPUS, AudioCodec.VORBIS,
-            AudioCodec.MP3, AudioCodec.FLAC, AudioCodec.PCM,
+            AudioCodec.AAC,
+            AudioCodec.OPUS,
+            AudioCodec.VORBIS,
+            AudioCodec.MP3,
+            AudioCodec.FLAC,
+            AudioCodec.PCM,
         ),
         Container.WEBM to setOf(AudioCodec.OPUS, AudioCodec.VORBIS),
         Container.MPEG_TS to setOf(AudioCodec.AAC, AudioCodec.MP3),
@@ -75,7 +83,11 @@ object ContainerCapabilities {
 
     /** Vorbis is absent for the same reason: nothing here emits a Vorbis encoder. */
     private val ENCODABLE_AUDIO = setOf(
-        AudioCodec.AAC, AudioCodec.OPUS, AudioCodec.MP3, AudioCodec.FLAC, AudioCodec.PCM,
+        AudioCodec.AAC,
+        AudioCodec.OPUS,
+        AudioCodec.MP3,
+        AudioCodec.FLAC,
+        AudioCodec.PCM,
     )
 
     fun accepts(container: Container, codec: VideoCodec, mode: CodecMode): Boolean = when (codec) {
@@ -249,8 +261,14 @@ object ContainerCapabilities {
             .filter { it != exclude }
             .distinct()
             .filter { validate(it, probe).isValid }
-            .take(3)
+            .take(MAX_SUGGESTIONS)
     }
+
+    /**
+     * How many alternatives an [Validation.Invalid] offers. Enough to show a real choice,
+     * few enough that the error stays readable.
+     */
+    private const val MAX_SUGGESTIONS = 3
 
     /** Best valid spec for this container, preserving as much of the request as possible. */
     private fun repair(spec: OutputSpec, probe: InputProbe): OutputSpec? {

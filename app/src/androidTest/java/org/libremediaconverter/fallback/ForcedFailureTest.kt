@@ -6,13 +6,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import org.libremediaconverter.convert.ConversionDependencies
-import org.libremediaconverter.model.DeviceCodecs
-import org.libremediaconverter.model.Engine
-import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.model.QualityTier
-import org.libremediaconverter.work.ConcatWorker
-import org.libremediaconverter.work.ConversionWorker
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -22,6 +15,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.convert.ConversionDependencies
+import org.libremediaconverter.model.DeviceCodecs
+import org.libremediaconverter.model.Engine
+import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.work.ConcatWorker
+import org.libremediaconverter.work.ConversionWorker
 import java.io.File
 
 /**
@@ -61,14 +61,13 @@ class ForcedFailureTest {
         }
     }
 
-    private fun convertRequest(format: OutputFormat = OutputFormat.MP4_H265) =
-        ConversionWorker.request(
-            inputUri = Uri.fromFile(input),
-            displayName = SAMPLE,
-            sizeBytes = input.length(),
-            spec = format.spec,
-            quality = QualityTier.FAST,
-        )
+    private fun convertRequest(format: OutputFormat = OutputFormat.MP4_H265) = ConversionWorker.request(
+        inputUri = Uri.fromFile(input),
+        displayName = SAMPLE,
+        sizeBytes = input.length(),
+        spec = format.spec,
+        quality = QualityTier.FAST,
+    )
 
     // --- the dynamic fallback, forced rather than provoked -------------------
 
@@ -179,11 +178,9 @@ class ForcedFailureTest {
         assertEquals(WorkInfo.State.FAILED, terminal?.state)
     }
 
-    private fun assertTrue(message: String, condition: Boolean) =
-        org.junit.Assert.assertTrue(message, condition)
+    private fun assertTrue(message: String, condition: Boolean) = org.junit.Assert.assertTrue(message, condition)
 
-    private fun assertTrue(condition: Boolean, message: String) =
-        org.junit.Assert.assertTrue(message, condition)
+    private fun assertTrue(condition: Boolean, message: String) = org.junit.Assert.assertTrue(message, condition)
 
     private companion object {
         const val SAMPLE = "sample_h264.mp4"

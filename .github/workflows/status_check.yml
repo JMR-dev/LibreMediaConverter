@@ -14,6 +14,14 @@ concurrency:
 # owner can repoint v4 at new code, so a tag reference is an open invitation to run
 # whatever that repository contains tomorrow. The trailing comment records which
 # release each hash corresponds to, since a bare hash is unreadable.
+# Nothing here writes: these jobs read the code, build it and attach reports. Declared
+# explicitly rather than inherited from the repository default, for the same reason the
+# action SHAs above are pinned -- the token's reach should be readable here, and a default
+# that widens later should not silently widen these jobs with it. build.yml's release job
+# makes the opposite declaration for the same reason.
+permissions:
+  contents: read
+
 env:
   GRADLE_CACHE_PATHS: |
     ~/.gradle/caches
@@ -80,7 +88,7 @@ jobs:
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '17'   # AGP 9 will not run on anything older
+          java-version: '25'   # Matches the daemon JVM pinned in gradle/gradle-daemon-jvm.properties
 
       # Gradle is invoked through the committed wrapper rather than a setup action.
       # The wrapper verifies its own distribution against distributionSha256Sum, and
@@ -99,6 +107,69 @@ jobs:
         with:
           name: unit-test-report
           path: app/build/reports/tests/
+
+      # Reported, not gated. A coverage floor is only meaningful against a measured
+      # baseline, and this is the thing that measures it -- currently 31% of lines. Once
+      # that number has settled, a jacocoTestCoverageVerification task can hold it.
+      - name: Coverage report
+        run: ./gradlew :app:jacocoTestReport
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: coverage-report
+          path: app/build/reports/jacoco/jacocoTestReport/
+
+  # ---------------------------------------------------------------------------
+  # Three tools, one job, because they answer three different questions and a
+  # developer wants all three answers at once rather than one per push.
+  #
+  #   ktlint  -- formatting. Owns it outright; detekt's formatting ruleset is off,
+  #              so the two can never disagree about the same line.
+  #   detekt  -- static analysis. Its config lives in config/detekt/detekt.yml and
+  #              overrides only the rules this codebase legitimately breaks.
+  #   lint    -- the Android-specific things neither of the others can see: opt-in
+  #              markers, API-level misuse, manifest and resource problems.
+  #
+  # --continue is what makes it one round trip: a ktlint failure still lets detekt
+  # and lint report, so a red run hands over the whole list rather than the first
+  # item on it.
+  #
+  # No emulator and no FFmpeg archive needed, so this is the cheapest gate here and
+  # deliberately does not depend on the ffmpeg job.
+  # ---------------------------------------------------------------------------
+  static-analysis:
+    name: Static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: ktlint, detekt and Android lint
+        run: ./gradlew :app:ktlintCheck :app:detekt :app:lintDebug --continue --stacktrace
+
+      # The XML matters as much as the HTML: it is the one that can be diffed between
+      # runs to see what a change actually moved.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: static-analysis-reports
+          path: |
+            app/build/reports/ktlint/
+            app/build/reports/detekt/
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
 
   # ---------------------------------------------------------------------------
   # One runner per API level, across the whole supported range.
@@ -146,7 +217,7 @@ jobs:
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -190,20 +261,12 @@ jobs:
           # dominate the APK, so shipping arm64 to an x86_64 emulator doubles the
           # install for code that can never run: 114 MB against 80 MB.
           #
-          # The probe lines survive from diagnosing the API 37 crash and are kept
-          # because a red instrumented run is otherwise near-impossible to read from a
-          # log alone. The first reports what the guest actually got, so a wrong
-          # emulator configuration is visible on a green run too; the crash dump runs
-          # only on failure, so a green run is unchanged.
-          #
-          # Each line here is a separate `sh -c` -- the action splits the script on
-          # newlines -- so the failure handler has to stay on one line. The action does
-          # not pass ignoreReturnCode, so a non-zero line fails the job outright: the
-          # probe ends in `|| true` because a grep that matches nothing exits 1, and a
-          # diagnostic must never be the thing that turns a run red.
-          script: |
-            adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
-            ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 || { echo "=== guest memory at failure ==="; adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal'; echo "=== native crashes ==="; adb logcat -d -b crash | tail -60; exit 1; }
+          # Diagnostics live in .github/scripts/e2e-run.sh, not here. This action splits
+          # `script` on newlines and runs each line as its own `sh -c`, so a handler written
+          # inline has to fit on ONE line -- which is how the previous version ended up as an
+          # unreadable chain of semicolons. One line invokes the script; the script can use
+          # functions, and captures a hang as well as a failure. See its header.
+          script: bash .github/scripts/e2e-run.sh ${{ matrix.label }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -212,3 +275,25 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      # The streamed logcat and the failure dump. Uploaded always, because a leg that goes red
+      # once and green on re-run is exactly the one worth reading afterwards, and by then the
+      # emulator is long gone.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-diagnostics-api${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/logcat-api${{ matrix.label }}.txt
+            ${{ runner.temp }}/diagnostics-api${{ matrix.label }}.txt
+          if-no-files-found: warn
+
+      # Only exists when the wrapper timeout tripped, so `ignore` keeps healthy runs quiet
+      # instead of warning on every green leg.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-wedge-api${{ matrix.label }}
+          path: ${{ runner.temp }}/wedge-diagnostics-api${{ matrix.label }}.txt
+          if-no-files-found: ignore

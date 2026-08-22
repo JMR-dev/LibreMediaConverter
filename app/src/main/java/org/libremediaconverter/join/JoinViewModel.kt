@@ -8,10 +8,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import org.libremediaconverter.convert.InputFile
-import org.libremediaconverter.convert.OutputPublisher
-import org.libremediaconverter.model.ConcatStrategy
-import org.libremediaconverter.work.ConcatWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +15,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.libremediaconverter.convert.InputFile
+import org.libremediaconverter.convert.OutputPublisher
+import org.libremediaconverter.model.ConcatStrategy
+import org.libremediaconverter.work.ConcatWorker
 import java.io.File
 import java.util.UUID
 
@@ -72,8 +72,11 @@ class JoinViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = when (info.state) {
                     WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> JoinState.Joining(inputs)
                     WorkInfo.State.ENQUEUED ->
-                        if (info.runAttemptCount > 0) JoinState.Waiting(inputs)
-                        else JoinState.Joining(inputs)
+                        if (info.runAttemptCount > 0) {
+                            JoinState.Waiting(inputs)
+                        } else {
+                            JoinState.Joining(inputs)
+                        }
 
                     WorkInfo.State.SUCCEEDED -> {
                         val path = info.outputData.getString(ConcatWorker.KEY_OUTPUT_PATH)
@@ -87,7 +90,7 @@ class JoinViewModel(app: Application) : AndroidViewModel(app) {
                     }
 
                     WorkInfo.State.FAILED -> JoinState.Failed(
-                        info.outputData.getString(ConcatWorker.KEY_ERROR) ?: "Joining failed."
+                        info.outputData.getString(ConcatWorker.KEY_ERROR) ?: "Joining failed.",
                     )
 
                     WorkInfo.State.CANCELLED -> JoinState.Ready(inputs)

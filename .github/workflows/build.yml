@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '17'   # AGP 9 requires JDK 17
+          java-version: '25'   # Matches the daemon JVM pinned in gradle/gradle-daemon-jvm.properties
 
       # Gradle runs through the committed wrapper rather than a setup action. The
       # wrapper verifies its own distribution against distributionSha256Sum, and
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

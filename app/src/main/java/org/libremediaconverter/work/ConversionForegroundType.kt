@@ -30,8 +30,15 @@ object ConversionForegroundType {
      * `mediaProcessing` constant does not exist to pass in the first place.
      */
     fun current(): Int = when {
-        Build.VERSION.SDK_INT >= 35 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
-        Build.VERSION.SDK_INT >= 34 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        else -> 0
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+
+        else -> NO_TYPE_REQUIRED
     }
+
+    /** API 33 wants no type at all, and `ForegroundInfo` reads 0 as exactly that. */
+    private const val NO_TYPE_REQUIRED = 0
 }

@@ -33,18 +33,15 @@ import org.libremediaconverter.ui.ScreenPaddingVertical
 
 @UnstableApi
 @Composable
-fun JoinScreen(
-    modifier: Modifier = Modifier,
-    viewModel: JoinViewModel = viewModel(),
-) {
+fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     val pickInputs = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
+        ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris -> if (uris.isNotEmpty()) viewModel.onInputsPicked(uris) }
 
     val chooseDestination = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("video/mp4")
+        ActivityResultContracts.CreateDocument("video/mp4"),
     ) { uri -> uri?.let(viewModel::save) }
 
     Column(

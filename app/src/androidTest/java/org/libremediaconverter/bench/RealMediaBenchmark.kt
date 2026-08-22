@@ -4,10 +4,13 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import android.util.Log
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.runBlocking
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import org.junit.runner.RunWith
 import org.libremediaconverter.codec.AndroidDeviceCodecs
 import org.libremediaconverter.convert.Media3Engine
 import org.libremediaconverter.convert.MediaProbe
@@ -17,10 +20,6 @@ import org.libremediaconverter.model.ConversionRouter
 import org.libremediaconverter.model.OutputFormat
 import org.libremediaconverter.model.QualityTier
 import org.libremediaconverter.model.VideoCodec
-import kotlinx.coroutines.runBlocking
-import org.junit.Assume.assumeTrue
-import org.junit.Test
-import org.junit.runner.RunWith
 import java.io.File
 
 /**
@@ -45,6 +44,7 @@ import java.io.File
 class RealMediaBenchmark {
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
+
     /**
      * Internal storage, not the external files dir.
      *
@@ -55,8 +55,7 @@ class RealMediaBenchmark {
      */
     private val samples: File get() = context.filesDir
 
-    private fun sample(name: String): File? =
-        File(samples, name).takeIf { it.exists() && it.length() > 0 }
+    private fun sample(name: String): File? = File(samples, name).takeIf { it.exists() && it.length() > 0 }
 
     private fun durationMs(file: File): Long {
         val extractor = MediaExtractor()

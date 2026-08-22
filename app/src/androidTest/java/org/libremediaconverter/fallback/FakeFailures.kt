@@ -2,12 +2,12 @@ package org.libremediaconverter.fallback
 
 import android.content.Context
 import android.net.Uri
+import androidx.media3.common.util.UnstableApi
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.HardwareTranscoder
 import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.model.ConversionRequest
-import org.libremediaconverter.model.OutputFormat
 import java.io.File
 
 /**
@@ -18,6 +18,7 @@ import java.io.File
  * test run avoids. Without a way to inject failure, the branches a user meets on a bad
  * day are the ones that were never executed.
  */
+@UnstableApi
 object FakeFailures {
 
     class ExplodingHardware(private val message: String = "hardware exploded") : HardwareTranscoder {

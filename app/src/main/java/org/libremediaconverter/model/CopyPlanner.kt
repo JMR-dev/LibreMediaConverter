@@ -18,14 +18,11 @@ sealed interface AudioPlan {
 /**
  * A resolved conversion: no [VideoCodec.COPY] left to interpret, every track decided.
  */
-data class ConversionPlan(
-    val container: Container,
-    val video: VideoPlan,
-    val audio: AudioPlan,
-) {
+data class ConversionPlan(val container: Container, val video: VideoPlan, val audio: AudioPlan) {
     /** No track is re-encoded and at least one is copied: a container change and nothing more. */
     val isPureRemux: Boolean
-        get() = video !is VideoPlan.Encode && audio !is AudioPlan.Encode &&
+        get() = video !is VideoPlan.Encode &&
+            audio !is AudioPlan.Encode &&
             (video is VideoPlan.Copy || audio is AudioPlan.Copy)
 
     val hasVideo: Boolean get() = video != VideoPlan.Drop

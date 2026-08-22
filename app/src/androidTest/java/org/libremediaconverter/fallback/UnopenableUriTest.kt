@@ -8,10 +8,6 @@ import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import org.libremediaconverter.convert.OutputPublisher
-import org.libremediaconverter.ffmpeg.ConcatEngine
-import org.libremediaconverter.work.ConcatWorker
-import org.libremediaconverter.work.ConversionWorker
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -21,6 +17,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.convert.OutputPublisher
+import org.libremediaconverter.ffmpeg.ConcatEngine
+import org.libremediaconverter.work.ConcatWorker
+import org.libremediaconverter.work.ConversionWorker
 import java.io.File
 
 /**

@@ -1,8 +1,8 @@
 package org.libremediaconverter.model
 
-import org.libremediaconverter.model.ConversionRouter.Reason
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.libremediaconverter.model.ConversionRouter.Reason
 
 /**
  * One test per routing predicate.
@@ -291,8 +291,12 @@ class ConversionRouterTest {
     @Test
     fun `the new containers are all FFmpeg-only`() {
         listOf(
-            Container.MOV, Container.MKV, Container.MPEG_TS,
-            Container.AVI, Container.FLV, Container.ASF,
+            Container.MOV,
+            Container.MKV,
+            Container.MPEG_TS,
+            Container.AVI,
+            Container.FLV,
+            Container.ASF,
         ).forEach { container ->
             val d = route(
                 OutputSpec(container, VideoCodec.COPY, AudioCodec.COPY),

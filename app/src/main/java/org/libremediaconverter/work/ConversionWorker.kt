@@ -8,7 +8,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.arthenica.ffmpegkit.FFmpegKitConfig
@@ -40,12 +39,10 @@ import java.io.File
  * with a short quota, which is the wrong shape for a multi-minute transcode.
  */
 @UnstableApi
-class ConversionWorker(
-    context: Context,
-    params: WorkerParameters,
-) : CoroutineWorker(context, params) {
+class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     private val notifications = ConversionNotifications(applicationContext)
+
     // Resolved through ConversionDependencies so tests can force the failure paths.
     private val publisher = ConversionDependencies.publisher(applicationContext)
 
@@ -56,10 +53,10 @@ class ConversionWorker(
         val sizeBytes = inputData.getLong(KEY_SIZE_BYTES, 0L)
         val spec = readSpec()
         val quality = QualityTier.valueOf(
-            inputData.getString(KEY_QUALITY) ?: QualityTier.FAST.name
+            inputData.getString(KEY_QUALITY) ?: QualityTier.FAST.name,
         )
         val preference = EnginePreference.valueOf(
-            inputData.getString(KEY_ENGINE_PREFERENCE) ?: EnginePreference.AUTO.name
+            inputData.getString(KEY_ENGINE_PREFERENCE) ?: EnginePreference.AUTO.name,
         )
 
         if (!publisher.hasSpaceFor(sizeBytes)) {
@@ -102,7 +99,7 @@ class ConversionWorker(
                     KEY_OUTPUT_PATH to staged.absolutePath,
                     KEY_ENGINE_USED to decision.engine.name,
                     KEY_ROUTE_REASON to decision.reason.explanation,
-                )
+                ),
             )
         } catch (e: Throwable) {
             staged.delete()
@@ -142,12 +139,7 @@ class ConversionWorker(
         runFFmpeg(request, inputUri, staged, displayName)
     }
 
-    private suspend fun runFFmpeg(
-        request: ConversionRequest,
-        inputUri: Uri,
-        staged: File,
-        displayName: String,
-    ) {
+    private suspend fun runFFmpeg(request: ConversionRequest, inputUri: Uri, staged: File, displayName: String) {
         // FFmpeg needs a path. ffkitsaf bridges a content:// URI for reading; the read
         // side is seekable for local providers, which is all the demuxer needs. Output
         // still goes to a real cache path — see OutputPublisher.
@@ -177,8 +169,7 @@ class ConversionWorker(
         }
     }
 
-    private fun isCancellation(e: Throwable): Boolean =
-        e is kotlinx.coroutines.CancellationException || isStopped
+    private fun isCancellation(e: Throwable): Boolean = e is kotlinx.coroutines.CancellationException || isStopped
 
     /**
      * Distinguishes a genuine failure from the foreground-service budget expiring.
@@ -189,17 +180,16 @@ class ConversionWorker(
      * later rather than tell the user the conversion failed — the work is still valid,
      * there is simply no budget right now.
      */
-    private fun handleTimeoutIfNeeded(cause: Throwable): Result =
-        when (FailureOutcome.forStopReason(stopReason)) {
-            FailureOutcome.RETRY -> {
-                Log.w(TAG, "Foreground service budget exhausted; will retry.", cause)
-                Result.retry()
-            }
-            FailureOutcome.FAIL -> {
-                Log.e(TAG, "Conversion failed.", cause)
-                Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
-            }
+    private fun handleTimeoutIfNeeded(cause: Throwable): Result = when (FailureOutcome.forStopReason(stopReason)) {
+        FailureOutcome.RETRY -> {
+            Log.w(TAG, "Foreground service budget exhausted; will retry.", cause)
+            Result.retry()
         }
+        FailureOutcome.FAIL -> {
+            Log.e(TAG, "Conversion failed.", cause)
+            Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
+        }
+    }
 
     /**
      * Reads the output spec out of the worker's input Data.
@@ -223,19 +213,17 @@ class ConversionWorker(
         return OutputSpec(container, video, audio)
     }
 
-    override suspend fun getForegroundInfo(): ForegroundInfo =
-        foregroundInfo(
-            inputData.getString(KEY_DISPLAY_NAME) ?: "input",
-            percent = 0,
-            indeterminate = true,
-        )
+    override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo(
+        inputData.getString(KEY_DISPLAY_NAME) ?: "input",
+        percent = 0,
+        indeterminate = true,
+    )
 
-    private fun foregroundInfo(title: String, percent: Int, indeterminate: Boolean) =
-        ForegroundInfo(
-            NOTIFICATION_ID,
-            notifications.build(id, title, percent, indeterminate),
-            ConversionForegroundType.current(),
-        )
+    private fun foregroundInfo(title: String, percent: Int, indeterminate: Boolean) = ForegroundInfo(
+        NOTIFICATION_ID,
+        notifications.build(id, title, percent, indeterminate),
+        ConversionForegroundType.current(),
+    )
 
     companion object {
         const val KEY_INPUT_URI = "input_uri"
@@ -263,9 +251,8 @@ class ConversionWorker(
          * yields `.mkv` or `.mka` and MP4 yields `.mp4` or `.m4a` without a preset having to
          * enumerate both.
          */
-        fun outputNameFor(inputName: String, spec: OutputSpec): String =
-            inputName.substringBeforeLast('.', inputName) +
-                "_converted.${spec.extension}"
+        fun outputNameFor(inputName: String, spec: OutputSpec): String = inputName.substringBeforeLast('.', inputName) +
+            "_converted.${spec.extension}"
 
         fun request(
             inputUri: Uri,
@@ -285,7 +272,7 @@ class ConversionWorker(
                     .putString(KEY_AUDIO_CODEC, spec.audioCodec.name)
                     .putString(KEY_QUALITY, quality.name)
                     .putString(KEY_ENGINE_PREFERENCE, enginePreference.name)
-                    .build()
+                    .build(),
             )
             .build()
     }

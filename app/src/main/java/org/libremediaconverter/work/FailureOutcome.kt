@@ -16,7 +16,9 @@ enum class FailureOutcome {
     RETRY,
 
     /** A genuine failure; report it to the user. */
-    FAIL;
+    FAIL,
+
+    ;
 
     companion object {
         fun forStopReason(stopReason: Int): FailureOutcome =

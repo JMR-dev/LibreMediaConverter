@@ -1,11 +1,11 @@
 package org.libremediaconverter.ffmpeg
 
-import org.libremediaconverter.model.ConcatStrategy
-import org.libremediaconverter.model.OutputFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.libremediaconverter.model.ConcatStrategy
+import org.libremediaconverter.model.OutputFormat
 import java.io.File
 
 class FFmpegConcatCommandTest {
@@ -31,7 +31,11 @@ class FFmpegConcatCommandTest {
     @Test
     fun `stream copy uses the concat demuxer and copies codecs`() {
         val args = FFmpegConcatCommand.build(
-            ConcatStrategy.STREAM_COPY, inputs, listFile, output, OutputFormat.MP4_H264,
+            ConcatStrategy.STREAM_COPY,
+            inputs,
+            listFile,
+            output,
+            OutputFormat.MP4_H264,
         )
         assertTrue(args.contains("concat"))
         assertEquals("copy", args[args.indexOf("-c") + 1])
@@ -42,7 +46,11 @@ class FFmpegConcatCommandTest {
     @Test
     fun `stream copy allows absolute paths in the list file`() {
         val args = FFmpegConcatCommand.build(
-            ConcatStrategy.STREAM_COPY, inputs, listFile, output, OutputFormat.MP4_H264,
+            ConcatStrategy.STREAM_COPY,
+            inputs,
+            listFile,
+            output,
+            OutputFormat.MP4_H264,
         )
         // Without -safe 0 the demuxer rejects the absolute paths we generate.
         assertEquals("0", args[args.indexOf("-safe") + 1])
@@ -51,7 +59,11 @@ class FFmpegConcatCommandTest {
     @Test
     fun `re-encode passes every input separately and builds a filter graph`() {
         val args = FFmpegConcatCommand.build(
-            ConcatStrategy.REENCODE, inputs, listFile, output, OutputFormat.MP4_H264,
+            ConcatStrategy.REENCODE,
+            inputs,
+            listFile,
+            output,
+            OutputFormat.MP4_H264,
         )
         assertEquals(2, args.count { it == "-i" })
         val filter = args[args.indexOf("-filter_complex") + 1]
@@ -64,7 +76,11 @@ class FFmpegConcatCommandTest {
     @Test
     fun `re-encode maps the filter outputs rather than raw streams`() {
         val args = FFmpegConcatCommand.build(
-            ConcatStrategy.REENCODE, inputs, listFile, output, OutputFormat.MP4_H264,
+            ConcatStrategy.REENCODE,
+            inputs,
+            listFile,
+            output,
+            OutputFormat.MP4_H264,
         )
         assertTrue(args.contains("[v]"))
         assertTrue(args.contains("[a]"))
@@ -81,7 +97,11 @@ class FFmpegConcatCommandTest {
     @Test
     fun `mkv output does not get faststart`() {
         val args = FFmpegConcatCommand.build(
-            ConcatStrategy.STREAM_COPY, inputs, listFile, File("/cache/j.mkv"), OutputFormat.MKV_H264,
+            ConcatStrategy.STREAM_COPY,
+            inputs,
+            listFile,
+            File("/cache/j.mkv"),
+            OutputFormat.MKV_H264,
         )
         assertFalse(args.contains("+faststart"))
     }

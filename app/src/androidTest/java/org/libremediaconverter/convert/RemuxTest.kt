@@ -20,7 +20,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
-import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.Engine
 import org.libremediaconverter.model.InputKind
 import org.libremediaconverter.model.OutputSpec
@@ -84,14 +83,13 @@ class RemuxTest {
         WorkManager.getInstance(context).cancelAllWork()
     }
 
-    private fun asset(name: String): File =
-        File(context.cacheDir, name).also { file ->
-            file.delete()
-            staged += file
-            InstrumentationRegistry.getInstrumentation().context.assets
-                .open(name)
-                .use { asset -> file.outputStream().use { asset.copyTo(it) } }
-        }
+    private fun asset(name: String): File = File(context.cacheDir, name).also { file ->
+        file.delete()
+        staged += file
+        InstrumentationRegistry.getInstrumentation().context.assets
+            .open(name)
+            .use { asset -> file.outputStream().use { asset.copyTo(it) } }
+    }
 
     // --- probing ------------------------------------------------------------
 
@@ -255,8 +253,7 @@ class RemuxTest {
         }
     }
 
-    private fun videoMimeOf(file: File): String? =
-        trackMimesOf(file).firstOrNull { it.startsWith("video/") }
+    private fun videoMimeOf(file: File): String? = trackMimesOf(file).firstOrNull { it.startsWith("video/") }
 
     private fun durationMsOf(file: File): Long {
         val extractor = MediaExtractor()

@@ -8,17 +8,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import org.libremediaconverter.model.AudioCodec
-import org.libremediaconverter.model.Container
-import org.libremediaconverter.model.ContainerCapabilities
-import org.libremediaconverter.model.EnginePreference
-import org.libremediaconverter.model.InputProbe
-import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.model.OutputSpec
-import org.libremediaconverter.model.QualityTier
-import org.libremediaconverter.model.Validation
-import org.libremediaconverter.model.VideoCodec
-import org.libremediaconverter.work.ConversionWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +19,17 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.libremediaconverter.model.AudioCodec
+import org.libremediaconverter.model.Container
+import org.libremediaconverter.model.ContainerCapabilities
+import org.libremediaconverter.model.EnginePreference
+import org.libremediaconverter.model.InputProbe
+import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.OutputSpec
+import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.model.Validation
+import org.libremediaconverter.model.VideoCodec
+import org.libremediaconverter.work.ConversionWorker
 import java.io.File
 import java.util.UUID
 
@@ -62,6 +62,7 @@ sealed interface ConversionState {
     data object Idle : ConversionState
     data class Ready(val input: InputFile) : ConversionState
     data class Converting(val input: InputFile, val percent: Int) : ConversionState
+
     /** Budget for foreground work ran out; WorkManager will retry when it can. */
     data class Waiting(val input: InputFile) : ConversionState
     data class Converted(
@@ -102,20 +103,16 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Validation.Valid)
 
     fun setPreset(format: OutputFormat) = _settings.update { it.copy(spec = format.spec) }
-    fun setContainer(container: Container) =
-        _settings.update { it.copy(spec = it.spec.copy(container = container)) }
+    fun setContainer(container: Container) = _settings.update { it.copy(spec = it.spec.copy(container = container)) }
 
-    fun setVideoCodec(codec: VideoCodec) =
-        _settings.update { it.copy(spec = it.spec.copy(videoCodec = codec)) }
+    fun setVideoCodec(codec: VideoCodec) = _settings.update { it.copy(spec = it.spec.copy(videoCodec = codec)) }
 
-    fun setAudioCodec(codec: AudioCodec) =
-        _settings.update { it.copy(spec = it.spec.copy(audioCodec = codec)) }
+    fun setAudioCodec(codec: AudioCodec) = _settings.update { it.copy(spec = it.spec.copy(audioCodec = codec)) }
 
     fun applySuggestion(spec: OutputSpec) = _settings.update { it.copy(spec = spec) }
 
     fun setQuality(quality: QualityTier) = _settings.update { it.copy(quality = quality) }
-    fun setEnginePreference(preference: EnginePreference) =
-        _settings.update { it.copy(enginePreference = preference) }
+    fun setEnginePreference(preference: EnginePreference) = _settings.update { it.copy(enginePreference = preference) }
 
     fun onInputPicked(uri: Uri) {
         viewModelScope.launch {
@@ -202,7 +199,7 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
 
                     WorkInfo.State.FAILED -> ConversionState.Failed(
                         info.outputData.getString(ConversionWorker.KEY_ERROR)
-                            ?: "Conversion failed."
+                            ?: "Conversion failed.",
                     )
 
                     WorkInfo.State.CANCELLED -> ConversionState.Ready(input)
@@ -229,7 +226,7 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
                     ConversionWorker.outputNameFor(
                         converted.input.displayName,
                         _settings.value.spec,
-                    )
+                    ),
                 )
             }.onFailure { e ->
                 _state.value = ConversionState.Failed(e.message ?: "Could not save the file.")
@@ -244,11 +241,10 @@ class ConversionViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = ConversionState.Idle
     }
 
-    fun suggestedOutputName(): String =
-        ConversionWorker.outputNameFor(
-            currentInput()?.displayName ?: "output",
-            _settings.value.spec,
-        )
+    fun suggestedOutputName(): String = ConversionWorker.outputNameFor(
+        currentInput()?.displayName ?: "output",
+        _settings.value.spec,
+    )
 
     private fun ConversionState.probe(): InputProbe? = when (this) {
         is ConversionState.Ready -> input.probe

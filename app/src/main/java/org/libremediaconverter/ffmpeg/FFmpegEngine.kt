@@ -5,9 +5,9 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
 import com.arthenica.ffmpegkit.ReturnCode
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.model.ConversionRequest
-import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -61,8 +61,8 @@ class FFmpegEngine : SoftwareTranscoder {
                             "FFmpeg failed (${rc?.value}): " +
                                 completed.getFailStackTrace().orEmpty().ifBlank {
                                     completed.getAllLogsAsString(LOG_TAIL_LIMIT).orEmpty()
-                                }
-                        )
+                                },
+                        ),
                     )
                 }
             },

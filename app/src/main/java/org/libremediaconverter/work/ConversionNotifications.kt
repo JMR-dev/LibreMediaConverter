@@ -35,14 +35,14 @@ class ConversionNotifications(private val context: Context) {
                     context.getString(R.string.notification_preparing)
                 } else {
                     context.getString(R.string.notification_progress, percent)
-                }
+                },
             )
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             // Progress updates far outpace what the UI can use; alerting once keeps
             // the system UI from being hammered.
             .setOnlyAlertOnce(true)
-            .setProgress(100, percent, indeterminate)
+            .setProgress(PERCENT_MAX, percent, indeterminate)
             .addAction(
                 android.R.drawable.ic_menu_close_clear_cancel,
                 context.getString(R.string.action_cancel),
@@ -57,13 +57,15 @@ class ConversionNotifications(private val context: Context) {
      * notification appears only in the Task Manager rather than the shade — so
      * progress silently vanishes from the user's point of view.
      */
-    fun areEnabled(): Boolean =
-        context.getSystemService(NotificationManager::class.java)
-            .areNotificationsEnabled()
-            .also { if (!it) Log.i(TAG, "Notifications disabled; progress will not be visible.") }
+    fun areEnabled(): Boolean = context.getSystemService(NotificationManager::class.java)
+        .areNotificationsEnabled()
+        .also { if (!it) Log.i(TAG, "Notifications disabled; progress will not be visible.") }
 
     companion object {
         const val CHANNEL_ID = "conversions"
         private const val TAG = "ConversionNotifications"
+
+        /** `setProgress` takes a max and a current; progress is reported as a percentage. */
+        private const val PERCENT_MAX = 100
     }
 }

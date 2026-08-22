@@ -1,7 +1,20 @@
+import org.gradle.testing.jacoco.tasks.JacocoReport
+
 plugins {
-    alias(libs.plugins.android.application)
+    // Applied by id: these two come from the root buildscript classpath, which is what
+    // overrides AGP's bundled Kotlin. See the comment in the root build file.
+    id("com.android.application")
     // Required even under AGP 9: the Compose compiler plugin is NOT built in.
-    alias(libs.plugins.kotlin.compose)
+    id("org.jetbrains.kotlin.plugin.compose")
+
+    // Lint/format. Resolved from the Gradle Plugin Portal, not AGP's buildscript
+    // classpath -- neither is an Android plugin.
+    alias(libs.plugins.ktlint)
+    alias(libs.plugins.detekt)
+
+    // JaCoCo (Gradle built-in) instruments the JVM testDebugUnitTest task. Report only:
+    // there is deliberately no coverage gate, see the jacocoTestReport block below.
+    jacoco
 }
 
 android {
@@ -58,8 +71,35 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_25
+        targetCompatibility = JavaVersion.VERSION_25
+    }
+
+    lint {
+        // ktlint and detekt both fail the build on any finding. Android lint by default
+        // aborts on errors only, so warnings would land in the report while the gate stayed
+        // green -- a gate that passes while the report has content is not a gate.
+        warningsAsErrors = true
+        // Already the default. Stated so a later edit cannot turn the gate off by accident.
+        abortOnError = true
+
+        // Dependency-freshness nags. These do not describe this code: they go red the day
+        // someone else publishes a release, which would turn a PR red for a reason its
+        // author cannot see in their own diff and cannot fix by changing anything they
+        // wrote. They also want the network at lint time. Upgrades are a deliberate act
+        // here -- the Kotlin version in particular is pinned to AGP's bundled KGP and is
+        // NOT free to follow the newest release -- so they are chosen, not nagged for.
+        disable += setOf("AndroidGradlePluginVersion", "NewerVersionAvailable", "GradleDependency")
+
+        // A real suggestion, deliberately not acted on in this commit. hasSpaceFor() reads
+        // File.usableSpace, which under-reports because it ignores cache the system could
+        // reclaim -- so the app can refuse a conversion it actually had room for.
+        // StorageManager.getAllocatableBytes is the better answer, but swapping it in
+        // changes when a job is rejected and can throw IOException, which is a behaviour
+        // change to a safety check and deserves its own commit and its own test rather
+        // than a drive-by in a tooling change. `informational` keeps it visible in every
+        // lint report instead of hiding it, while letting the gate pass until then.
+        informational += "UsableSpace"
     }
 
     packaging {
@@ -74,6 +114,115 @@ android {
 // jvmTarget is inherited from compileOptions.targetCompatibility.
 kotlin {
     compilerOptions {}
+}
+
+// --- Prerelease guard for the floating dependency versions ------------------------------
+// The library versions in libs.versions.toml float on minor + patch ("1.+"). Gradle resolves
+// `+` to the highest version it finds, and it does NOT skip prereleases -- so without this,
+// androidx would quietly hand the app an alpha. That is not hypothetical here: at the time
+// of writing lifecycle, navigation, work, datastore and annotation ALL publish an alpha or
+// rc numbered above their newest stable, so five of the floats would have moved onto
+// unreleased code on the next build, with nothing in the diff to say so.
+//
+// Rejecting them here means "+" reads as "the newest RELEASED version", which is what
+// floating was meant to buy.
+//
+// Note that this applies to STATIC versions too, not only floating ones: naming
+// "2.12.0-alpha01" in the catalog does not get you that alpha, it fails to resolve. Verified,
+// because the obvious assumption is the opposite. To take an androidx prerelease deliberately,
+// drop the group from the guarded list below for as long as you need it.
+// Groups whose versions this project actually floats. The guard applies to these and to
+// nothing else, which is the whole point.
+//
+// The first version of this was a blanket rule over every group, and it broke every E2E job
+// while every local check stayed green. AGP resolves its OWN tooling through this project's
+// configurations, and the Unified Test Platform that runs connectedAndroidTest depends on
+// com.google.testing.platform artifacts pinned at 0.0.9-alpha04. Rejecting those made
+// :app:connectedDebugAndroidTest unresolvable. Nothing that runs without a device touches
+// that configuration, so it passed here and failed on all four API levels at once.
+//
+// Scoping to the groups we float is also why detekt's alpha needs no exception any more: we
+// do not float dev.detekt, so the guard has no opinion about it. An allowlist of exceptions
+// would have needed a new entry every time AGP pulled in another prerelease tool.
+val floatedGroupPrefixes = listOf("androidx.", "junit", "com.arthenica")
+
+// Matches both spellings androidx and friends use: "-alpha01" and "-alpha.1".
+val prereleaseMarker =
+    Regex("""[-.](alpha|beta|rc|eap|dev|snapshot|pre|m)[-.]?\d*$""", RegexOption.IGNORE_CASE)
+
+configurations.configureEach {
+    resolutionStrategy {
+        componentSelection {
+            all {
+                val floated = floatedGroupPrefixes.any { candidate.group.startsWith(it) }
+                if (floated && prereleaseMarker.containsMatchIn(candidate.version)) {
+                    reject("prerelease; floating versions take released builds only")
+                }
+            }
+        }
+    }
+}
+
+detekt {
+    // Merge the project overrides in config/detekt onto detekt's bundled defaults, so this
+    // repo's file only has to carry the rules it actually changes.
+    buildUponDefaultConfig = true
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+}
+
+// Pin the coverage agent rather than inheriting whatever Gradle bundles.
+jacoco {
+    toolVersion = libs.versions.jacoco.get()
+}
+
+// --- Unit-test coverage -------------------------------------------------------------------
+// Report only. There is deliberately no coverage gate: a floor is only meaningful against a
+// measured baseline, and the JVM test stack here is still junit-only. This task produces the
+// number a floor would need; add `jacocoTestCoverageVerification` once it is known.
+
+// Generated code, stripped from the denominator so the percentage reflects hand-written Kotlin.
+// No DI framework is in use, so there are no Hilt/Dagger patterns to exclude.
+val jacocoGeneratedExcludes = listOf(
+    "**/R.class",
+    "**/R\$*.class",
+    "**/BuildConfig.*",
+    "**/Manifest*.*",
+    // Room lands in a later phase; its KSP output comes out the same door as hand-written code.
+    "**/*_Impl*",
+    // One per file with @Composable lambdas -- Compose compiler output, not written by anyone.
+    "**/ComposableSingletons*",
+)
+
+// AGP 9 compiles Kotlin through its built-in compiler, which writes here rather than to the
+// classic `tmp/kotlin-classes/debug`. All hand-written code in this module is Kotlin, so the
+// javac output (BuildConfig and R only) is not read at all.
+val jacocoDebugKotlinClasses = layout.buildDirectory.dir(
+    "intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes",
+)
+
+// Accept both the base `jacoco` plugin's default exec location and AGP's
+// enableUnitTestCoverage one, so the wiring survives either being the source of truth.
+val jacocoExecutionData = fileTree(layout.buildDirectory) {
+    include(
+        "jacoco/testDebugUnitTest.exec",
+        "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec",
+    )
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    // The exec data does not exist until the tests have run.
+    dependsOn("testDebugUnitTest")
+    group = "verification"
+    description = "Generates JaCoCo XML + HTML coverage for the debug JVM unit tests."
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+
+    classDirectories.setFrom(fileTree(jacocoDebugKotlinClasses) { exclude(jacocoGeneratedExcludes) })
+    sourceDirectories.setFrom(files("src/main/java"))
+    executionData.setFrom(jacocoExecutionData)
 }
 
 dependencies {

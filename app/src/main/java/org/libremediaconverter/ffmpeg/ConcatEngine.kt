@@ -6,11 +6,11 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.libremediaconverter.convert.MediaProbe
 import org.libremediaconverter.model.ConcatPlanner
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.model.OutputFormat
-import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -27,11 +27,7 @@ class ConcatEngine(private val context: Context) {
 
     data class Result(val strategy: ConcatStrategy, val output: File)
 
-    suspend fun join(
-        inputs: List<Uri>,
-        output: File,
-        format: OutputFormat = OutputFormat.MP4_H264,
-    ): Result {
+    suspend fun join(inputs: List<Uri>, output: File, format: OutputFormat = OutputFormat.MP4_H264): Result {
         require(inputs.size >= 2) { "Joining needs at least two files." }
 
         val paths = inputs.map { uri ->
@@ -70,8 +66,8 @@ class ConcatEngine(private val context: Context) {
                 else -> cont.resumeWithException(
                     FFmpegEngine.FFmpegException(
                         "Joining failed (${rc?.value}): " +
-                            completed.getAllLogsAsString(LOG_TAIL_LIMIT).orEmpty()
-                    )
+                            completed.getAllLogsAsString(LOG_TAIL_LIMIT).orEmpty(),
+                    ),
                 )
             }
         }

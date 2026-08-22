@@ -1,17 +1,17 @@
 package org.libremediaconverter.ffmpeg
 
-import org.libremediaconverter.model.Container
-import org.libremediaconverter.model.ConversionRequest
-import org.libremediaconverter.model.InputProbe
-import org.libremediaconverter.model.OutputFormat
-import org.libremediaconverter.model.AudioCodec
-import org.libremediaconverter.model.OutputSpec
-import org.libremediaconverter.model.VideoCodec
-import org.libremediaconverter.model.QualityTier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.libremediaconverter.model.AudioCodec
+import org.libremediaconverter.model.Container
+import org.libremediaconverter.model.ConversionRequest
+import org.libremediaconverter.model.InputProbe
+import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.OutputSpec
+import org.libremediaconverter.model.QualityTier
+import org.libremediaconverter.model.VideoCodec
 
 class FFmpegCommandBuilderTest {
 
@@ -94,8 +94,10 @@ class FFmpegCommandBuilderTest {
     @Test
     fun `every video encode path forces yuv420p`() {
         val videoFormats = listOf(
-            OutputFormat.MP4_H264, OutputFormat.MP4_H265,
-            OutputFormat.MKV_H264, OutputFormat.MKV_H265,
+            OutputFormat.MP4_H264,
+            OutputFormat.MP4_H265,
+            OutputFormat.MKV_H264,
+            OutputFormat.MKV_H265,
             OutputFormat.WEBM_VP9,
         )
         videoFormats.forEach { format ->

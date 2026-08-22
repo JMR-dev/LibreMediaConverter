@@ -1,0 +1,28 @@
+# Normalize line endings across platforms.
+* text=auto eol=lf
+
+# Windows scripts must keep CRLF.
+*.bat text eol=crlf
+
+# The Gradle wrapper shell script must keep LF (it runs under sh on Unix/macOS).
+gradlew text eol=lf
+
+# Treat these as binary.
+*.jar binary
+*.ttf binary
+*.otf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.apk binary
+*.aab binary
+*.keystore binary
+*.jks binary
+
+# The FFmpeg archive under bin/ and the native libraries inside it. Without these a
+# normalizing checkout would rewrite bytes that happen to look like line endings and
+# corrupt the archive -- which the "FFmpeg binary" CI job exists to catch, but which
+# is far cheaper to prevent here.
+*.aar binary
+*.so binary
