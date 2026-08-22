@@ -123,15 +123,31 @@ kotlin {
 // unreleased code on the next build, with nothing in the diff to say so.
 //
 // Rejecting them here means "+" reads as "the newest RELEASED version", which is what
-// floating was meant to buy. Trying an alpha stays possible -- name the exact version in
-// the catalog, and it is pinned rather than floating, which is the right way round.
-val prereleaseMarker = Regex("""[-.](alpha|beta|rc|eap|dev|snapshot|pre|m)\d*$""", RegexOption.IGNORE_CASE)
+// floating was meant to buy.
+//
+// Note that this applies to STATIC versions too, not only floating ones: naming
+// "2.12.0-alpha01" in the catalog does not get you that alpha, it fails to resolve. Verified,
+// because the obvious assumption is the opposite. The way to take a prerelease is to add its
+// group to prereleasePermitted below.
+// Groups allowed to be prereleases anyway. Membership is a deliberate, reviewable act --
+// which is the point, because the alternative is what was here first: detekt's alpha slipped
+// through only because its version reads "alpha.6" and the pattern below wanted digits
+// straight after the word. "alpha6" would have been rejected and the build would have broken
+// for a reason nobody could see. An accident that happens to work is not an exemption.
+val prereleasePermitted = setOf(
+    // detekt 2.0 has not left alpha, and it is the only line with Gradle 9 support.
+    "dev.detekt",
+)
+
+val prereleaseMarker = Regex("""[-.](alpha|beta|rc|eap|dev|snapshot|pre|m)[-.]?\d*$""", RegexOption.IGNORE_CASE)
 
 configurations.configureEach {
     resolutionStrategy {
         componentSelection {
             all {
-                if (prereleaseMarker.containsMatchIn(candidate.version)) {
+                if (candidate.group !in prereleasePermitted &&
+                    prereleaseMarker.containsMatchIn(candidate.version)
+                ) {
                     reject("prerelease; floating versions take released builds only")
                 }
             }

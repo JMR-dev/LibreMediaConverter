@@ -15,7 +15,10 @@ ksp = "2.3.11"
 # app/build.gradle.kts is what keeps `+` from selecting an alpha: several of these
 # (lifecycle, navigation, work, datastore, annotation) publish alphas and RCs with
 # version numbers ABOVE their newest stable, and Gradle's `+` would take them.
-composeBom = "2026.+"
+# Bare `+`, not "2026.+": the year is the major in this scheme (YYYY.MM.PP), so a
+# 2026-prefixed float would quietly stop finding releases on 1 January and keep
+# building green against a frozen BOM.
+composeBom = "+"
 coreKtx = "1.+"
 activityCompose = "1.+"
 lifecycle = "2.+"
@@ -31,7 +34,12 @@ annotation = "1.+"
 junit = "4.+"
 androidxJunit = "1.+"
 espressoCore = "3.+"
-smartException = "0.+"
+# PINNED, unlike its neighbours. Under semver a 0.x minor is allowed to break, and
+# this library is load-bearing exactly where breakage is hardest to see: the wrapper
+# reaches for smartexception.java.Exceptions only when an FFmpeg call FAILS, so a
+# moved class surfaces as an R8 missing-class error at release time, or as a crash on
+# the error path -- the least-exercised code in the app. Bump it deliberately.
+smartException = "0.2.1"
 
 # Lint/format. PINNED, deliberately, while the libraries above float.
 #
@@ -44,10 +52,10 @@ smartException = "0.+"
 # ktlint owns formatting; detekt owns static analysis (its formatting ruleset stays
 # off, so the two can never disagree about the same line).
 # detekt 2.0 is the only line with Gradle 9 support -- stable 1.23.x tops out at
-# Gradle 8.12, and this project is on 9.5.
+# Gradle 8.12, and this project is on 9.7.1.
 ktlint = "14.2.0"
 detekt = "2.0.0-alpha.6"
-# JaCoCo coverage agent. Pinned rather than inheriting whatever Gradle 9.5 bundles,
+# JaCoCo coverage agent. Pinned rather than inheriting whatever Gradle 9.7.1 bundles,
 # so the agent version that reads Kotlin 2.2.10 bytecode is stated, not implied.
 jacoco = "0.8.15"
 
