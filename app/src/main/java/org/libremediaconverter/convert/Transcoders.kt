@@ -7,6 +7,7 @@ import org.libremediaconverter.codec.AndroidDeviceCodecs
 import org.libremediaconverter.ffmpeg.FFmpegEngine
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.DeviceCodecs
+import org.libremediaconverter.model.InputProbe
 import org.libremediaconverter.model.OutputFormat
 import java.io.File
 
@@ -74,10 +75,34 @@ object ConversionDependencies {
     @Volatile
     var deviceCodecs: () -> DeviceCodecs = { AndroidDeviceCodecs.get() }
 
+    /**
+     * Reading an input's codecs, container and duration.
+     *
+     * Here for a reason the others are not, and the reason is worth recording rather than
+     * just working around. [MediaProbe] spawns FFprobe, and when FFmpegKit's native library
+     * cannot load its initialiser throws a bare `java.lang.Error` — which
+     * `probeWithFFprobe`'s own `catch (e: Exception)` does not catch, and which
+     * `ConversionViewModel.onInputPicked` does not catch either. Picking a file would then
+     * fail with an uncaught error rather than the "could not read this file" the code was
+     * written to give.
+     *
+     * **That is a latent production hazard, found here and deliberately not fixed here.**
+     * It cannot fire on a device that ships the `.so` files, which is every real install,
+     * so making `MediaProbe` catch `Throwable` would be a behaviour change to the pick path
+     * on the strength of a condition no user meets — its own commit, with its own test.
+     * What this seam does is narrower: it keeps the JVM out of that path, which is what
+     * makes the ViewModel reachable from a unit test at all.
+     *
+     * Instrumented tests and the app itself get the real probe, exactly as before.
+     */
+    @Volatile
+    var probe: (Context, Uri) -> InputProbe = { context, uri -> MediaProbe.probe(context, uri) }
+
     fun reset() {
         hardware = { Media3Engine(it) }
         software = { FFmpegEngine() }
         publisher = { OutputPublisher(it) }
         deviceCodecs = { AndroidDeviceCodecs.get() }
+        probe = { context, uri -> MediaProbe.probe(context, uri) }
     }
 }

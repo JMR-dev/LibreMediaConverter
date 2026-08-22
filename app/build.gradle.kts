@@ -102,6 +102,23 @@ android {
         informational += "UsableSpace"
     }
 
+    testOptions {
+        unitTests {
+            // Robolectric needs the merged manifest and the compiled resource table to build
+            // an Android runtime on the JVM. Without this, AGP hands the unit tests a stub
+            // android.jar with no resources and Robolectric cannot start.
+            isIncludeAndroidResources = true
+
+            all {
+                // Robolectric's native runtime calls System.load(), which Java 25 reports as
+                // a restricted method -- four lines of warning on every test run, and a hard
+                // failure in some later JDK. Granting it explicitly says the native access is
+                // known and wanted rather than leaving the JVM to guess.
+                it.jvmArgs("--enable-native-access=ALL-UNNAMED")
+            }
+        }
+    }
+
     packaging {
         jniLibs {
             // Uncompressed .so, so the APK zip-aligns them on 16 KB boundaries.
@@ -263,6 +280,16 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    // An Android runtime on the JVM. Everything else in src/test is a pure function; this is
+    // here for the one thing a pure function cannot assert -- that a staged file is really
+    // gone from a real cacheDir. Instrumented tests do not run on the development host, so
+    // without it that assertion could only be written where nobody can execute it.
+    testImplementation(libs.robolectric)
+    // Already in the catalog for androidTest, and already inside the prerelease guard via its
+    // androidx. group. WorkManagerTestInitHelper + SynchronousExecutor are what let a JVM test
+    // drive a ViewModel through a real WorkManager to SUCCEEDED, which is where the cleanup
+    // handle is set -- the wiring the leak actually lived in.
+    testImplementation(libs.androidx.work.testing)
 
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.androidx.junit)
