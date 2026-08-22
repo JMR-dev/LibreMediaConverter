@@ -261,20 +261,12 @@ jobs:
           # dominate the APK, so shipping arm64 to an x86_64 emulator doubles the
           # install for code that can never run: 114 MB against 80 MB.
           #
-          # The probe lines survive from diagnosing the API 37 crash and are kept
-          # because a red instrumented run is otherwise near-impossible to read from a
-          # log alone. The first reports what the guest actually got, so a wrong
-          # emulator configuration is visible on a green run too; the crash dump runs
-          # only on failure, so a green run is unchanged.
-          #
-          # Each line here is a separate `sh -c` -- the action splits the script on
-          # newlines -- so the failure handler has to stay on one line. The action does
-          # not pass ignoreReturnCode, so a non-zero line fails the job outright: the
-          # probe ends in `|| true` because a grep that matches nothing exits 1, and a
-          # diagnostic must never be the thing that turns a run red.
-          script: |
-            adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
-            ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 || { echo "=== guest memory at failure ==="; adb shell cat /proc/meminfo | grep -E 'MemTotal|MemAvailable|SwapTotal'; echo "=== native crashes ==="; adb logcat -d -b crash | tail -60; exit 1; }
+          # Diagnostics live in .github/scripts/e2e-run.sh, not here. This action splits
+          # `script` on newlines and runs each line as its own `sh -c`, so a handler written
+          # inline has to fit on ONE line -- which is how the previous version ended up as an
+          # unreadable chain of semicolons. One line invokes the script; the script can use
+          # functions, and captures a hang as well as a failure. See its header.
+          script: bash .github/scripts/e2e-run.sh ${{ matrix.label }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
@@ -283,3 +275,25 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      # The streamed logcat and the failure dump. Uploaded always, because a leg that goes red
+      # once and green on re-run is exactly the one worth reading afterwards, and by then the
+      # emulator is long gone.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-diagnostics-api${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/logcat-api${{ matrix.label }}.txt
+            ${{ runner.temp }}/diagnostics-api${{ matrix.label }}.txt
+          if-no-files-found: warn
+
+      # Only exists when the wrapper timeout tripped, so `ignore` keeps healthy runs quiet
+      # instead of warning on every green leg.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-wedge-api${{ matrix.label }}
+          path: ${{ runner.temp }}/wedge-diagnostics-api${{ matrix.label }}.txt
+          if-no-files-found: ignore
