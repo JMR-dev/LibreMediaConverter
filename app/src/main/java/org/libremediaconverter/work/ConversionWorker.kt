@@ -3,7 +3,6 @@ package org.libremediaconverter.work
 import android.content.Context
 import android.net.Uri
 import android.util.Log
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.work.CoroutineWorker
 import androidx.work.Data
@@ -21,7 +20,6 @@ import org.libremediaconverter.model.Engine
 import org.libremediaconverter.model.EnginePreference
 import org.libremediaconverter.model.OutputFormat
 import org.libremediaconverter.model.QualityTier
-import org.libremediaconverter.model.VideoCodec
 import java.io.File
 
 /**
@@ -115,7 +113,7 @@ class ConversionWorker(
     ) {
         val engine = ConversionDependencies.hardware(applicationContext)
         try {
-            engine.transcode(inputUri, staged, media3MimeType(request.format)) { percent ->
+            engine.transcode(inputUri, staged, request.format) { percent ->
                 publishProgress(displayName, percent)
             }
             return
@@ -188,11 +186,6 @@ class ConversionWorker(
                 Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
             }
         }
-
-    private fun media3MimeType(format: OutputFormat): String = when (format.videoCodec) {
-        VideoCodec.H264 -> MimeTypes.VIDEO_H264
-        else -> MimeTypes.VIDEO_H265
-    }
 
     override suspend fun getForegroundInfo(): ForegroundInfo =
         foregroundInfo(

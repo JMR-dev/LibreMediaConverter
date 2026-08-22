@@ -5,15 +5,23 @@ import android.net.Uri
 import org.libremediaconverter.ffmpeg.FFmpegEngine
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.DeviceCodecs
+import org.libremediaconverter.model.OutputFormat
 import org.libremediaconverter.codec.AndroidDeviceCodecs
 import java.io.File
 
 /** The hardware conversion path. Implemented by [Media3Engine]. */
 interface HardwareTranscoder : AutoCloseable {
+    /**
+     * Takes the whole [OutputFormat] rather than just a video MIME type.
+     *
+     * The narrower signature was the reason "extract audio to M4A" produced an HEVC video track:
+     * the container, the audio codec and "this output has no video at all" had nowhere to travel,
+     * so the engine defaulted all three.
+     */
     suspend fun transcode(
         input: Uri,
         output: File,
-        videoMimeType: String = androidx.media3.common.MimeTypes.VIDEO_H265,
+        format: OutputFormat = OutputFormat.MP4_H265,
         onProgress: (Int) -> Unit = {},
     )
 }

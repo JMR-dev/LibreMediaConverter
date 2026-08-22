@@ -13,14 +13,19 @@ package org.libremediaconverter.model
  */
 object ConversionRouter {
 
-    /** Containers Media3 can mux. Anything else has to go to FFmpeg. */
-    private val MEDIA3_CONTAINERS = setOf(
-        Container.MP4,
-        Container.WEBM,
-        Container.OGG,
-        Container.WAV,
-        Container.AAC_ADTS,
-    )
+    /**
+     * Containers Media3 can mux. Anything else has to go to FFmpeg.
+     *
+     * MP4 alone. This set used to name WebM, Ogg, WAV and AAC-ADTS as well, on the strength of
+     * `media3-muxer` shipping a muxer for each — but none of those four can be driven by
+     * Transformer at all, for the reasons `Media3Muxers` records. Nothing caught it because the
+     * engine ignored the container entirely and wrote MP4 regardless, so the set being wrong and
+     * the engine being wrong cancelled out.
+     *
+     * Not private: `Media3Muxers` has to supply a `Muxer.Factory` for every entry, and a test
+     * asserts the two agree.
+     */
+    internal val MEDIA3_CONTAINERS = setOf(Container.MP4)
 
     /** WebM is codec-restricted: Media3's WebmMuxer writes only these. */
     private val WEBM_AUDIO = setOf(AudioCodec.OPUS, AudioCodec.VORBIS)
