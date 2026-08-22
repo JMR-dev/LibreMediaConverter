@@ -129,27 +129,33 @@ kotlin {
 //
 // Note that this applies to STATIC versions too, not only floating ones: naming
 // "2.12.0-alpha01" in the catalog does not get you that alpha, it fails to resolve. Verified,
-// because the obvious assumption is the opposite. The way to take a prerelease is to add its
-// group to prereleasePermitted below.
-// Groups allowed to be prereleases anyway. Membership is a deliberate, reviewable act --
-// which is the point, because the alternative is what was here first: detekt's alpha slipped
-// through only because its version reads "alpha.6" and the pattern below wanted digits
-// straight after the word. "alpha6" would have been rejected and the build would have broken
-// for a reason nobody could see. An accident that happens to work is not an exemption.
-val prereleasePermitted = setOf(
-    // detekt 2.0 has not left alpha, and it is the only line with Gradle 9 support.
-    "dev.detekt",
-)
+// because the obvious assumption is the opposite. To take an androidx prerelease deliberately,
+// drop the group from the guarded list below for as long as you need it.
+// Groups whose versions this project actually floats. The guard applies to these and to
+// nothing else, which is the whole point.
+//
+// The first version of this was a blanket rule over every group, and it broke every E2E job
+// while every local check stayed green. AGP resolves its OWN tooling through this project's
+// configurations, and the Unified Test Platform that runs connectedAndroidTest depends on
+// com.google.testing.platform artifacts pinned at 0.0.9-alpha04. Rejecting those made
+// :app:connectedDebugAndroidTest unresolvable. Nothing that runs without a device touches
+// that configuration, so it passed here and failed on all four API levels at once.
+//
+// Scoping to the groups we float is also why detekt's alpha needs no exception any more: we
+// do not float dev.detekt, so the guard has no opinion about it. An allowlist of exceptions
+// would have needed a new entry every time AGP pulled in another prerelease tool.
+val floatedGroupPrefixes = listOf("androidx.", "junit", "com.arthenica")
 
-val prereleaseMarker = Regex("""[-.](alpha|beta|rc|eap|dev|snapshot|pre|m)[-.]?\d*$""", RegexOption.IGNORE_CASE)
+// Matches both spellings androidx and friends use: "-alpha01" and "-alpha.1".
+val prereleaseMarker =
+    Regex("""[-.](alpha|beta|rc|eap|dev|snapshot|pre|m)[-.]?\d*$""", RegexOption.IGNORE_CASE)
 
 configurations.configureEach {
     resolutionStrategy {
         componentSelection {
             all {
-                if (candidate.group !in prereleasePermitted &&
-                    prereleaseMarker.containsMatchIn(candidate.version)
-                ) {
+                val floated = floatedGroupPrefixes.any { candidate.group.startsWith(it) }
+                if (floated && prereleaseMarker.containsMatchIn(candidate.version)) {
                     reject("prerelease; floating versions take released builds only")
                 }
             }
