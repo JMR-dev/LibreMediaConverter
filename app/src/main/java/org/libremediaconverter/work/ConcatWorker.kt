@@ -46,9 +46,12 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val declaredTotal = inputData
             .takeIf { it.hasKeyWithValueOfType<Long>(KEY_TOTAL_BYTES) }
             ?.getLong(KEY_TOTAL_BYTES, 0L)
-        val format = OutputFormat.valueOf(
-            inputData.getString(KEY_FORMAT) ?: DEFAULT_FORMAT.name,
-        )
+        // Looked up rather than `valueOf` -- see the same three reads in ConversionWorker. This one
+        // is above the try as well, so a format name this build does not define used to throw past
+        // the catch: FAILED with no error in the output Data, and no staged.delete().
+        val format = inputData.getString(KEY_FORMAT)
+            ?.let { name -> OutputFormat.entries.firstOrNull { it.name == name } }
+            ?: DEFAULT_FORMAT
 
         if (!hasRoomFor(declaredTotal, uris)) {
             return Result.failure(workDataOf(KEY_ERROR to "Not enough free space to join these files."))
