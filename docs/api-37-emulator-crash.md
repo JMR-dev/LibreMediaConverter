@@ -339,22 +339,129 @@ Caused by: android.media.MediaCodec$CodecException:
 ```
 
 Three measurements say this is the emulator image and not this app, and not the software
-renderer:
+renderer. A fourth bullet offers a mechanism, and is inference rather than measurement:
 
 - **Control at API 35 under the identical renderer.** `GPU_MODE=swangle_indirect
   tools/local-emulator/run-e2e.sh 35` → **49 / 0 / 0 / 2** at `22c7914`, green.
   `c2.goldfish.h264.decoder` is perfectly happy under ANGLE one API level down, so the renderer is
   not what breaks it.
 - **Real API 37 hardware passes**, see below. There is no `c2.goldfish.*` codec on a Pixel.
+- **API 36 against API 37 on CI, back to back, everything else held.** Same two tests, same
+  `-gpu swiftshader_indirect`, same SystemUI-disable path — `pm disable-user`, `stop`, wait for
+  `system_server` to actually be gone, `start`, then verify against `pm list packages -d`. Both
+  runs were narrowed to the two failing tests:
+
+  ```
+  -Pandroid.testInstrumentationRunnerArguments.class=\
+    org.libremediaconverter.convert.Media3EngineTest#transcodesH264ToH265AndReportsProgress,\
+    org.libremediaconverter.convert.Media3EngineTest#runsFromAThreadWithNoLooper
+  ```
+
+  and the filter is confirmed three independent ways: `tests="2"` in the XML, `Expected 2 tests`
+  in the abort message, and `run started: 2 tests` in the guest logcat.
+
+  | run | api | result XML |
+  |---|---|---|
+  | [32660148155](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660148155) | 37.0 | `tests="2" failures="2" errors="0" skipped="0"` |
+  | [32660152961](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660152961) | 36 | `tests="2" failures="0" errors="0" skipped="0" time="4.603"` |
+
+  API 37 fails with the signature above — `name=c2.goldfish.h264.decoder`,
+  `MediaCodec$CodecException` at `dequeueOutputBuffer(MediaCodec.java:4274)`. API 36 passes both in
+  4.603 s, and `c2.goldfish.h264.decoder` is in *its* logcat too (44 mentions), so the two runs are
+  not being served by different decoder names. **What this falsifies is "the stripped
+  configuration is what breaks these tests"** — a reading none of the other measurements
+  addresses, because they all compare against a device that still had SystemUI. Here SystemUI is
+  absent and the framework has been restarted on both sides, and the healthy image is green anyway.
+
+  Two things it does **not** control, which is why it narrows the claim rather than closing it:
+
+  - **The restarts were not performed under equal conditions.** API 36 did its `stop`/`start` with
+    `dma_aborts=0`; API 37's did the same restart with two aborts already logged. "A framework
+    restart performed while the abort loop is running" therefore remains uncontrolled.
+  - **The images differ on the encoder side.** These tests transcode H.264 → H.265. The API 37
+    logcat carries `c2.goldfish.hevc.decoder` (16 mentions in the control run) where API 36 carries
+    `c2.android.hevc.encoder` (32). The pipeline is not identical end to end, which is a second
+    reason "the image ships a broken h264 decoder" is the wrong *shape* of claim: what is measured
+    is that these two tests fail on the API 37 image, pass at API 36 under the same renderer *and*
+    the same disable path, and pass at 33–36 without needing that path at all — because nothing
+    below 37 has the bug it works around.
 - The failing call is `dequeueOutputBuffer` on the *goldfish* decoder — the emulator's own codec,
   which like `RegionSamplingThread` gets its frames out of a host-side colour buffer. Same
   readback machinery, one layer down. This is inference rather than a measurement, and is flagged
-  as such; what is measured is the first two bullets.
+  as such; what is measured is the first three bullets.
 
 **Do not try `-feature -HardwareDecoder`.** It is the obvious next idea and it is much worse:
 forcing the guest onto software decoders took the run from 2 failures to **46**, across
 `RemuxTest`, `ForcedFailureTest`, `HardwareFallbackTest` and `UnopenableUriTest` as well. The
 suite depends on those decoders existing.
+
+### The intact-SystemUI counterfactual cannot be measured on CI
+
+The control the block above still lacks is the obvious one: run those same two tests at API 37
+with SystemUI **left running**. Passing would put the failure on the disable rather than on the
+image; failing on the decoder would make the decoder attribution direct instead of inferred.
+
+**Seven dispatches of `api37-debug.yml`, zero verdicts.** Not bad luck — a mechanism, which is why
+this is written down rather than left as a gap for the next person to spend seven runs on:
+
+| arm | run | result XML | what actually happened |
+|---|---|---|---|
+| E1 | [32660528355](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660528355) | `tests="1" failures="1"`, `<failure>` body empty | `Expected 2 tests, received 0. INSTRUMENTATION_ABORTED: System has crashed.` |
+| E2 | [32660533845](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660533845) | `tests="0"` | never installed: `Failed to commit install session ... Failure calling service package: Broken pipe (32)` |
+| E3 | [32660539259](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660539259) | `tests="0"` | `Test run failed to complete. No test results.` |
+| E4 | [32661117237](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661117237) | `tests="2" failures="2"` | both failed in `@Before`, never reached MediaCodec |
+| E5 | [32661121972](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661121972) | `tests="2" failures="2"` | same |
+| S1 | [32661127224](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661127224) | `tests="1" failures="1"` | same, single-test arm |
+| S2 | [32661132024](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661132024) | `tests="1" failures="1"` | same |
+
+While the framework is crash-looping, the guest cannot reliably create per-user private
+directories. An app installed during the loop has no cache directory — and `Media3EngineTest`
+copies its H.264 fixture into `context.cacheDir` in `@Before`, so it dies there, **before any
+MediaCodec exists**:
+
+```
+W/ContextImpl( 8216): Failed to ensure /data/user/0/org.libremediaconverter/cache
+I/TestRunner( 8216): run started: 1 tests
+E/TestRunner( 8216): failed: transcodesH264ToH265AndReportsProgress(...)
+E/TestRunner( 8216): java.io.FileNotFoundException:
+  /data/user/0/org.libremediaconverter/cache/sample_h264.mp4: open failed: ENOENT
+  at org.libremediaconverter.convert.Media3EngineTest.setUp(Media3EngineTest.kt:47)
+```
+
+Not app-specific: `com.google.android.googlesdksetup` and `com.google.android.apps.nexuslauncher`
+hit the same `Failed to ensure /data/user/0/<pkg>/cache` in the same logcats.
+
+**The result XML masks this, and reading only the report gets you the wrong bug.** What E4, E5, S1
+and S2 report is
+
+```
+<failure>kotlin.UninitializedPropertyAccessException: lateinit property output has not been initialized
+at org.libremediaconverter.convert.Media3EngineTest.tearDown(Media3EngineTest.kt:56)
+```
+
+— `tearDown` failing because `setUp` threw before it assigned `output`. That looks like a
+teardown defect in this repository and is not one; the cause is only in the guest logcat.
+
+So the obstacle is structural: install, data-directory creation and instrumentation start-up do
+not fit between framework kills, and four of the seven runs show the directory creation itself is
+broken during the loop. More dispatches of this shape would repeat these outcomes. The
+counterfactual is still open on the **Pixel 10 Pro XL**, the one API 37 device here that is not an
+emulator — but a Pixel has no `c2.goldfish.*` codec at all, so it answers "does the app work at
+API 37", not "is that codec broken".
+
+#### Abort cadence, corrected
+
+`.github/workflows/api37-debug.yml` carried "roughly every 20 s" for the kill cycle in its own
+comments. That number was the watchdog's **sampling** interval, not the cadence, and the two got
+conflated. Measured across the seven runs above, gaps between successive `hasReadColorBufferDma`
+aborts run **20 s to 90 s, median 60–70 s — three to five aborts in a four-minute window**.
+Slower than assumed, and still not slow enough: install, data-directory creation and
+instrumentation start-up do not fit inside one gap.
+
+`sys.boot_completed` held at `1` throughout every one of those test windows. The device reports
+itself booted while zygote is being killed under it, which is why no boot-state check catches
+this and why `stop`/`start` waits must poll `pidof system_server` and `service check` instead
+(see `disable_region_sampling` in `tools/local-emulator/run-e2e.sh`).
 
 ### So should CI take API 37?
 
