@@ -3,6 +3,7 @@ package org.libremediaconverter.convert
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.libremediaconverter.ffmpeg.isNativeLoadFailure
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.ContainerCapabilities
@@ -220,7 +222,7 @@ class ConversionViewModel @JvmOverloads constructor(
             // would read as the app having ignored the tap.
             _state.value = ConversionState.Ready(file)
 
-            val probe = withContext(Dispatchers.IO) { ConversionDependencies.probe(getApplication(), uri) }
+            val probe = withContext(Dispatchers.IO) { probeOrUnreadable(uri) }
             // Only fill in the probe if the user has not moved on in the meantime.
             _state.update { current ->
                 if (current is ConversionState.Ready && current.input.uri == uri) {
@@ -230,6 +232,34 @@ class ConversionViewModel @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Probing, with the one failure the pick must survive rather than propagate.
+     *
+     * This runs inside `viewModelScope.launch`, which has no exception handler, so anything
+     * that escapes here abandons the launch — the file card never fills in — and reaches the
+     * thread's default handler, which on a device takes the process down. Picking a file is
+     * not a place to crash from.
+     *
+     * The one condition that reaches this is FFmpegKit's native library failing to load,
+     * which arrives as an `Error` rather than an `Exception`; [MediaProbe] handles its own
+     * FFprobe call now, and this covers the seam and the platform extractor beside it. The
+     * answer is [MediaProbe.UNREADABLE] — the same value [MediaProbe.probe] returns when
+     * neither of its probes could read the file, because that is what has happened.
+     *
+     * Anything else is rethrown deliberately. An [OutOfMemoryError] here is about this
+     * process, not about this file, and reporting it as an unreadable video would let the app
+     * carry on in a state it cannot honour. See
+     * [org.libremediaconverter.ffmpeg.isNativeLoadFailure] for which is which and why the
+     * distinction is drawn by a predicate rather than by the catch clause.
+     */
+    private fun probeOrUnreadable(uri: Uri): InputProbe = try {
+        ConversionDependencies.probe(getApplication(), uri)
+    } catch (e: Error) {
+        if (!isNativeLoadFailure(e)) throw e
+        Log.w(TAG, "Could not probe $uri; reporting it as unreadable.", e)
+        MediaProbe.UNREADABLE
     }
 
     /**
@@ -420,5 +450,7 @@ class ConversionViewModel @JvmOverloads constructor(
          * it "unknown" would read as an error rather than as a gap in what survived.
          */
         const val UNKNOWN_INPUT_NAME = "Media file"
+
+        const val TAG = "ConversionViewModel"
     }
 }

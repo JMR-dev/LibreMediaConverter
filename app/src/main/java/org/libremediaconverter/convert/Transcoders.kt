@@ -80,18 +80,20 @@ object ConversionDependencies {
      *
      * Here for a reason the others are not, and the reason is worth recording rather than
      * just working around. [MediaProbe] spawns FFprobe, and when FFmpegKit's native library
-     * cannot load its initialiser throws a bare `java.lang.Error` — which
-     * `probeWithFFprobe`'s own `catch (e: Exception)` does not catch, and which
-     * `ConversionViewModel.onInputPicked` does not catch either. Picking a file would then
-     * fail with an uncaught error rather than the "could not read this file" the code was
-     * written to give.
+     * cannot load, the failure arrives as a `java.lang.Error` rather than an `Exception` —
+     * which is why `probeWithFFprobe`'s `catch (e: Exception)` did not see it, and why
+     * `ConversionViewModel.onInputPicked` used to abandon its `viewModelScope.launch`
+     * instead of reporting a file it could not read.
      *
-     * **That is a latent production hazard, found here and deliberately not fixed here.**
-     * It cannot fire on a device that ships the `.so` files, which is every real install,
-     * so making `MediaProbe` catch `Throwable` would be a behaviour change to the pick path
-     * on the strength of a condition no user meets — its own commit, with its own test.
-     * What this seam does is narrower: it keeps the JVM out of that path, which is what
-     * makes the ViewModel reachable from a unit test at all.
+     * **Both of those are guarded now**, by
+     * [org.libremediaconverter.ffmpeg.isNativeLoadFailure] — which also documents what the
+     * boundary actually throws, since all three of the obvious guesses turn out to be
+     * wrong. This seam is no longer what stands between a JVM test and an uncaught error.
+     *
+     * It still earns its place: injecting a probe is how a test reaches a *chosen* outcome
+     * for a file rather than the unreadable verdict the JVM has no libraries to improve on,
+     * and how the error path itself is forced — see `ConversionViewModelProbeFailureTest`,
+     * which drives an `OutOfMemoryError` through here to pin that the guard stays narrow.
      *
      * Instrumented tests and the app itself get the real probe, exactly as before.
      */
