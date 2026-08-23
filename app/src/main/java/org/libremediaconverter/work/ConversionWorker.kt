@@ -12,6 +12,7 @@ import androidx.work.WorkerParameters
 import androidx.work.hasKeyWithValueOfType
 import androidx.work.workDataOf
 import com.arthenica.ffmpegkit.FFmpegKitConfig
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.InputQuery
@@ -231,16 +232,58 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
 
     private var lastNotified = 0L
 
+    /**
+     * Reports how far along the conversion is, through WorkManager rather than around it.
+     *
+     * This used to call `NotificationManager.notify(NOTIFICATION_ID, …)` directly — on the very id
+     * WorkManager owns through [setForeground], with a notification built `setOngoing(true)`. Two
+     * owners of one id is a race, and on a Pixel 10 Pro XL it was lost on attempt 3 of 12 while
+     * cancelling a `BEST`-tier job: WorkManager tore the notification down at +300 ms and a tick
+     * still in flight put it back at +700 ms, where it stayed for ten minutes with no app process
+     * left to cancel it. The orphan's record carried `flags=ONGOING_EVENT|ONLY_ALERT_ONCE` and no
+     * `FOREGROUND_SERVICE` — which is what identifies the poster, since WorkManager's own goes out
+     * with that flag.
+     *
+     * Two things stop that, and they are independent on purpose:
+     *
+     *  - **Nothing is published once the worker is stopped.** A tick arriving after the stop has
+     *    nobody left to report to, and posting one is exactly the resurrection above.
+     *  - **What is published goes through [setForegroundAsync].** The foreground notification is
+     *    WorkManager's to post and to withdraw; sharing the id with it was the defect, not merely
+     *    the mechanism of it. `setForegroundAsync` also refuses on its own for work that has
+     *    already finished, which closes the window `isStopped` can only narrow.
+     *
+     * The `~1/sec` throttle is unchanged in effect and unchanged in reason: FFmpeg's statistics
+     * callback and Media3's progress polling both fire several times a second, and pushing every
+     * one of them janks the system UI. Routing them through WorkManager does not make them cheap.
+     *
+     * The future is deliberately not awaited — this is called from an engine callback, which is
+     * not a coroutine — and both of its failure modes are benign, so a refusal is logged rather
+     * than propagated. The initial [setForeground] in [doWork] is a different matter entirely and
+     * stays a suspending call inside the `try`: a denial *there* is what [FailureOutcome] turns
+     * into a retry rather than a terminal failure.
+     */
     private fun publishProgress(displayName: String, percent: Int) {
+        if (isStopped) return
         setProgressAsync(workDataOf(KEY_PROGRESS to percent))
-        // Throttle to ~1/sec: progress arrives several times a second and pushing every
-        // update janks the system UI.
         val now = System.currentTimeMillis()
-        if (now - lastNotified >= NOTIFICATION_INTERVAL_MS) {
-            lastNotified = now
-            applicationContext.getSystemService(android.app.NotificationManager::class.java)
-                .notify(NOTIFICATION_ID, notifications.build(id, displayName, percent))
-        }
+        if (now - lastNotified < NOTIFICATION_INTERVAL_MS) return
+        lastNotified = now
+        val posted = setForegroundAsync(foregroundInfo(displayName, percent, indeterminate = false))
+        posted.addListener({ logIfRefused(posted) }, Runnable::run)
+    }
+
+    /**
+     * Notes a progress update WorkManager would not take, without making it the job's problem.
+     *
+     * The one that actually happens is a job finishing between [publishProgress]'s `isStopped`
+     * check and the update reaching the task thread: `WorkForegroundUpdater` refuses to post for
+     * work whose state is already terminal, which is the behaviour being relied on rather than
+     * worked around. Logged so it is greppable instead of vanishing into an unobserved future.
+     */
+    private fun logIfRefused(posted: ListenableFuture<Void>) {
+        runCatching { posted.get() }
+            .onFailure { Log.d(TAG, "Progress update refused; the job is already finishing.", it) }
     }
 
     private fun isCancellation(e: Throwable): Boolean = e is CancellationException || isStopped
