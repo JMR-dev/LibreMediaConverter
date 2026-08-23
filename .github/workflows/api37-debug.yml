@@ -144,6 +144,25 @@ jobs:
           # emulator down on a boot timeout before any script: line runs. Everything here is
           # `timeout`-wrapped: a wedged adb must not stall the sampler, and no probe may fail.
           SERIAL="emulator-5554"
+
+          # adb is resolved by path, not by name. The emulator action puts platform-tools on
+          # PATH with core.addPath, which only affects LATER steps -- this one already exists
+          # by then, so a bare `adb` here is not the runner's adb and may be nothing at all.
+          # The first version of this file assumed otherwise and every sample came back
+          # boot=? dma_aborts=0 while the action's own adb was working fine two steps away.
+          # Re-resolved every iteration because platform-tools may be installed after this
+          # starts, and echoed to stdout so a repeat of that failure is visible immediately.
+          ADB=""
+          resolve_adb() {
+            for c in "$ADB" "${ANDROID_HOME:-}/platform-tools/adb" "${ANDROID_SDK_ROOT:-}/platform-tools/adb" "$(command -v adb 2> /dev/null)"; do
+              if [ -n "$c" ] && [ -x "$c" ]; then
+                [ "$c" = "$ADB" ] || echo "watchdog: adb resolved to $c"
+                ADB="$c"
+                return 0
+              fi
+            done
+            return 1
+          }
           OUT="$RUNNER_TEMP/watchdog-api$LABEL.txt"
           CRASH="$RUNNER_TEMP/crash-buffer-api$LABEL.txt"
           GUESTLOG="$RUNNER_TEMP/watchdog-logcat-api$LABEL.txt"
@@ -154,8 +173,10 @@ jobs:
           # with it, so a single `adb logcat` would end at the first restart.
           (
             while [ ! -f "$STOP" ]; do
-              timeout 120 adb -s "$SERIAL" wait-for-device > /dev/null 2>&1 \
-                && timeout 3000 adb -s "$SERIAL" logcat -v time >> "$GUESTLOG" 2>&1
+              if resolve_adb; then
+                timeout 120 "$ADB" -s "$SERIAL" wait-for-device > /dev/null 2>&1 \
+                  && timeout 3000 "$ADB" -s "$SERIAL" logcat -v time >> "$GUESTLOG" 2>&1
+              fi
               sleep 3
             done
           ) &
@@ -165,12 +186,17 @@ jobs:
           while [ "$i" -lt 300 ]; do
             i=$((i + 1))
             [ -f "$STOP" ] && break
-            boot="$(timeout 20 adb -s "$SERIAL" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r\n')"
-            sf="$(timeout 20 adb -s "$SERIAL" shell pidof surfaceflinger 2> /dev/null | tr -d '\r\n')"
-            zy="$(timeout 20 adb -s "$SERIAL" shell pidof zygote64 2> /dev/null | tr -d '\r\n')"
+            if ! resolve_adb; then
+              echo "$(date -u +%T) no adb yet" >> "$OUT"
+              sleep 20
+              continue
+            fi
+            boot="$(timeout 20 "$ADB" -s "$SERIAL" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r\n')"
+            sf="$(timeout 20 "$ADB" -s "$SERIAL" shell pidof surfaceflinger 2> /dev/null | tr -d '\r\n')"
+            zy="$(timeout 20 "$ADB" -s "$SERIAL" shell pidof zygote64 2> /dev/null | tr -d '\r\n')"
             # Kept as a file rather than a variable so the last successful read survives the
             # action killing the emulator -- which is when it is most worth having.
-            if timeout 30 adb -s "$SERIAL" logcat -d -b crash > "$CRASH.new" 2> /dev/null; then
+            if timeout 30 "$ADB" -s "$SERIAL" logcat -d -b crash > "$CRASH.new" 2> /dev/null; then
               mv "$CRASH.new" "$CRASH"
             fi
             dma="$(grep -c 'hasReadColorBufferDma' "$CRASH" 2> /dev/null || true)"
@@ -183,9 +209,9 @@ jobs:
             if [ "$boot" = "1" ] && [ ! -f "$RUNNER_TEMP/renderer-api$LABEL.txt" ]; then
               {
                 echo "=== booted at $(date -u +%FT%TZ), watchdog sample $i ==="
-                timeout 30 adb -s "$SERIAL" shell dumpsys SurfaceFlinger 2>&1 | head -40
+                timeout 30 "$ADB" -s "$SERIAL" shell dumpsys SurfaceFlinger 2>&1 | head -40
                 echo "--- getprop ---"
-                timeout 20 adb -s "$SERIAL" shell getprop 2>&1 | grep -Ei 'egl|gles|gpu|ranchu|gfxstream' || true
+                timeout 20 "$ADB" -s "$SERIAL" shell getprop 2>&1 | grep -Ei 'egl|gles|gpu|ranchu|gfxstream' || true
               } > "$RUNNER_TEMP/renderer-api$LABEL.txt" 2>&1
             fi
             sleep 20
@@ -261,6 +287,8 @@ jobs:
         env:
           LABEL: ${{ inputs.api_level }}
         run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}  ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
+          echo "adb on PATH: $(command -v adb || echo '<none -- the watchdog will fall back to ANDROID_HOME>')"
           nohup bash "$RUNNER_TEMP/watchdog.sh" > "$RUNNER_TEMP/watchdog-stdout.txt" 2>&1 < /dev/null &
           disown
           echo "watchdog pid $!"
