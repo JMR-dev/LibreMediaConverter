@@ -6,8 +6,19 @@ compression, audio extraction and conversion, GIF and frame export, and file mer
 Android 13+ (API 33). Built with Jetpack Compose and Material 3.
 
 > **Status: working, unreleased.** Both conversion engines, the router, the background
-> job queue and the join flow are implemented and building. The FFmpeg format tests have
-> been written but not yet executed on a device.
+> job queue and the join flow are implemented and building. The FFmpeg format tests run
+> green on a physical Pixel 10 Pro XL (API 37) and on local emulators at API 33–36, and
+> CI runs the instrumented suite at API 33–36 on every pull request.
+
+*Correction (`R18 / #27`): this line used to say the FFmpeg format tests had "been written but not
+yet executed on a device". That was true when written and stopped being true at the first device
+pass, which nobody came back to update — so the one line a contributor uses to decide whether the
+FFmpeg path is trustworthy understated its own evidence. The nine format tests in
+`FFmpegEngineTest` were in every one of those runs, all of which came back with zero failures;
+they are recorded under "Verified on real API 37 hardware" in
+[`docs/api-37-emulator-crash.md`](docs/api-37-emulator-crash.md) and "The sweep, run" in
+[`docs/local-emulator.md`](docs/local-emulator.md). API 37 has no CI row, because that emulator
+image is broken, so it stays a manual Pixel check before each release.*
 
 ## Licensing at a glance
 
