@@ -95,6 +95,11 @@ RESULTS_DIR="app/build/outputs/androidTest-results"
 LOG_DIR="${TMPDIR:-/tmp}/lmc-local-e2e"
 mkdir -p "$LOG_DIR"
 
+# The two things that outlive a level, declared here rather than where they are first
+# assigned, because the cleanup trap below can fire before either has been reached.
+EMU_PID=""
+CREATED_AVDS=()
+
 # ---------------------------------------------------------------- renderer preflight ---
 if [ -n "$GPU_MODE" ]; then
   case "$GPU_MODE" in
@@ -187,6 +192,27 @@ gpu_for_api() {
 # normalised, so that `run-e2e.sh 37 37.0` does not have both levels fight over one AVD.
 avd_for_api() { echo "lmc_e2e_api${1//./_}"; }
 
+# Where avdmanager actually put the AVD. `$HOME/.android/avd` is only the default:
+# ANDROID_AVD_HOME, ANDROID_USER_HOME and ANDROID_SDK_HOME each move it, and hardcoding the
+# default meant a machine that sets any of them silently ran every level at stock RAM and
+# userdata size. Rather than encode a precedence that cannot be verified from here, look in
+# every location avdmanager honours and let the existence check pick.
+avd_config_path() {
+  local avd="$1" base cfg
+  for base in "${ANDROID_AVD_HOME:-}" \
+    "${ANDROID_USER_HOME:+$ANDROID_USER_HOME/avd}" \
+    "${ANDROID_SDK_HOME:+$ANDROID_SDK_HOME/.android/avd}" \
+    "$HOME/.android/avd"; do
+    [ -n "$base" ] || continue
+    cfg="$base/${avd}.avd/config.ini"
+    if [ -f "$cfg" ]; then
+      echo "$cfg"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_avd() {
   local api="$1" avd="$2"
   local pkg
@@ -213,10 +239,29 @@ ensure_avd() {
   fi
 
   # Written into config.ini rather than passed on the command line, which is how
-  # reactivecircus/android-emulator-runner applies the same two settings in CI.
-  local cfg="$HOME/.android/avd/${avd}.avd/config.ini"
-  sed -i -e '/^disk\.dataPartition\.size=/d' -e '/^hw\.ramSize=/d' "$cfg"
-  printf 'disk.dataPartition.size=%s\nhw.ramSize=%s\n' "$DISK_SIZE_BYTES" "$RAM_SIZE_MB" >> "$cfg"
+  # reactivecircus/android-emulator-runner applies the same two settings in CI. On the reuse
+  # path too, so an AVD left over from an older run gets today's pins.
+  #
+  # A level that cannot be pinned FAILS rather than running at the defaults. Unpinned, it
+  # dies much later with "not enough space", which reads as a device problem -- CI's own
+  # history is where that lesson comes from -- and nothing points back to a `sed` that
+  # edited a path this script guessed wrong.
+  local cfg
+  if ! cfg="$(avd_config_path "$avd")"; then
+    echo "  FAILED: no config.ini for $avd in any directory avdmanager uses"
+    echo "  (ANDROID_AVD_HOME=${ANDROID_AVD_HOME:-unset}, ANDROID_USER_HOME=${ANDROID_USER_HOME:-unset},"
+    echo "   ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-unset}, HOME=$HOME)"
+    return 1
+  fi
+  if ! sed -i -e '/^disk\.dataPartition\.size=/d' -e '/^hw\.ramSize=/d' "$cfg"; then
+    echo "  FAILED to rewrite $cfg"
+    return 1
+  fi
+  if ! printf 'disk.dataPartition.size=%s\nhw.ramSize=%s\n' \
+    "$DISK_SIZE_BYTES" "$RAM_SIZE_MB" >> "$cfg"; then
+    echo "  FAILED to write the RAM/disk pins into $cfg"
+    return 1
+  fi
 }
 
 boot_emulator() {
@@ -281,7 +326,7 @@ boot_emulator() {
 # then died exactly as before with `Starting 0 tests` and four more aborts. `stop; start` cycles
 # zygote deliberately, and the framework that comes back up does not start SystemUI at all.
 disable_region_sampling() {
-  local api="$1" out i before after
+  local api="$1" out i before after ready
   case "$api" in 37 | 37.*) ;; *) return 0 ;; esac
 
   out=""
@@ -305,16 +350,24 @@ disable_region_sampling() {
   echo "  restarting the framework so the region-sampling listener goes with it"
   emu_adb shell stop > /dev/null 2>&1
   emu_adb shell start > /dev/null 2>&1
-  # One blocking wait on the device, then confirm the services the test runner actually calls.
-  emu_adb wait-for-device shell \
-    'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 2; done' > /dev/null 2>&1
+  # There is no property worth waiting on here, and an earlier version of this only looked
+  # like it was waiting on one: `stop` does not clear sys.boot_completed, so it still reads
+  # `1` throughout the restart and any loop over it returns at once. The loop below is the
+  # wait -- and it polls the better thing anyway, since `Can't find service: package` is the
+  # failure it exists to prevent.
+  ready=0
   for i in $(seq 1 30); do
     if emu_adb shell service check package 2> /dev/null | grep -q ': found' \
       && emu_adb shell service check activity 2> /dev/null | grep -q ': found'; then
+      ready=1
       break
     fi
     sleep 5
   done
+  if [ "$ready" -ne 1 ]; then
+    echo "  WARNING: package and activity services still absent 150 s after the restart."
+    echo "  Expect INSTRUMENTATION_ABORTED -- docs/api-37-emulator-crash.md"
+  fi
 
   # Prove it worked rather than assume it. Zero new aborts over this window is what makes the
   # difference between a run that completes and one that reports `Starting 0 tests`.
@@ -336,16 +389,69 @@ disable_animations() {
   done
 }
 
+# `${EMU_PID:-0}` used to guard these three calls, and it guarded the wrong thing: EMU_PID
+# is *empty*, not unset, if the background launch never produced a job, and `kill` reads pid
+# 0 as "the sender's whole process group" -- this script and, on a terminal, everything else
+# in the foreground group with it. The `kill -0` wait loop had the same shape and would have
+# spent its full grace period testing the group. Nothing to stop is now a return, never a
+# guess. (boot_emulator's own `kill -0 "$EMU_PID"` is unguarded and cannot reach that form:
+# it runs only after the assignment.)
+#
+# max_wait is a parameter so the interrupt path need not sit through the full grace period.
 stop_emulator() {
+  local max_wait="${1:-30}" waited=0
+  [ -n "${EMU_PID:-}" ] || return 0
   emu_adb emu kill > /dev/null 2>&1
-  local waited=0
-  while kill -0 "${EMU_PID:-0}" 2> /dev/null && [ "$waited" -lt 30 ]; do
+  while kill -0 "$EMU_PID" 2> /dev/null && [ "$waited" -lt "$max_wait" ]; do
     sleep 2
     waited=$((waited + 2))
   done
-  kill -9 "${EMU_PID:-0}" 2> /dev/null
-  wait "${EMU_PID:-0}" 2> /dev/null
+  kill -9 "$EMU_PID" 2> /dev/null
+  wait "$EMU_PID" 2> /dev/null
+  EMU_PID=""
 }
+
+delete_created_avds() {
+  local avd
+  [ "${KEEP_AVD:-0}" = "1" ] && return 0
+  for avd in ${CREATED_AVDS[@]+"${CREATED_AVDS[@]}"}; do
+    avdmanager delete avd -n "$avd" > /dev/null 2>&1
+  done
+  CREATED_AVDS=()
+}
+
+# What an interrupted sweep used to leave behind: a headless emulator holding console port
+# $EMULATOR_PORT, and an lmc_e2e_apiNN AVD. The next run's `emulator -port` then collides
+# with the orphan, and `emu_adb` can resolve to it -- on a workstation that also has the
+# Pixel plugged in, exactly the ambiguity the ANDROID_SERIAL pinning exists to prevent. A
+# sweep is up to five boots long, so the window for one Ctrl-C is not small.
+#
+# Idempotent, and called explicitly on the normal path so its output cannot land after the
+# summary; the EXIT trap then finds nothing left to do. The emulator logs are deliberately
+# NOT removed -- they live in $LOG_DIR and are the only evidence a failed boot leaves.
+CLEANED=0
+cleanup() {
+  [ "$CLEANED" = "1" ] && return 0
+  CLEANED=1
+  stop_emulator "${1:-30}"
+  delete_created_avds
+}
+
+# 6 s, not 30: Ctrl-C has already reached the emulator through the foreground process group,
+# so this is only waiting for it to finish writing, and `kill -9` follows regardless. The
+# EXIT trap is disarmed before exiting so the status below is the one that survives.
+on_signal() {
+  echo
+  echo "interrupted (SIG$1) -- stopping the emulator and removing the AVDs this run created"
+  echo "  emulator logs kept in $LOG_DIR"
+  cleanup 6
+  trap - EXIT
+  exit "$2"
+}
+
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
+trap cleanup EXIT
 
 # The XML is authoritative. The console counter double-counts skips, so a run that reports
 # "42 tests" on stdout can be 40 in the report.
@@ -383,7 +489,6 @@ PY
 }
 
 # ------------------------------------------------------------------------------ main ---
-CREATED_AVDS=()
 SUMMARY=()
 overall=0
 
@@ -447,11 +552,7 @@ for api in "${APIS[@]}"; do
   stop_emulator
 done
 
-if [ "${KEEP_AVD:-0}" != "1" ]; then
-  for avd in ${CREATED_AVDS[@]+"${CREATED_AVDS[@]}"}; do
-    avdmanager delete avd -n "$avd" > /dev/null 2>&1
-  done
-fi
+cleanup
 
 echo
 echo "===================== LOCAL E2E SUMMARY ======================"
