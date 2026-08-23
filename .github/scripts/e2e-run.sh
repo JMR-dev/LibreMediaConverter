@@ -110,8 +110,16 @@ adb shell cat /proc/meminfo 2>&1 | grep -E 'MemTotal|MemAvailable|SwapTotal' || 
 status=0
 # -k 30s SIGKILLs a gradle client that ignores SIGTERM. The wrapper covers ONLY the foreground
 # gradle client -- never the emulator, which the action owns -- so it cannot hang the leg.
+#
+# E2E_EXTRA_GRADLE_ARGS is unset in CI, so this expands to nothing and the command is exactly
+# what it has always been. It exists for tools/local-emulator/run-e2e.sh, which reuses this
+# script rather than forking it: that runs several API levels back to back against one checkout
+# and passes `--rerun`, so a level cannot be skipped as up-to-date and report the previous
+# level's results as its own. CI gets a fresh runner per level and does not need it.
+# shellcheck disable=SC2086
 timeout -k 30s "$WEDGE_TIMEOUT" \
-  ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 --stacktrace || status=$?
+  ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 --stacktrace \
+  ${E2E_EXTRA_GRADLE_ARGS:-} || status=$?
 echo "::endgroup::"
 
 if [ "$status" -eq 0 ]; then
