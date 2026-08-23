@@ -2,7 +2,6 @@ package org.libremediaconverter.join
 
 import android.app.Application
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
@@ -18,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.InputFile
+import org.libremediaconverter.convert.InputQuery
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.work.ConcatWorker
 import org.libremediaconverter.work.JobTags
@@ -117,7 +117,7 @@ class JoinViewModel @JvmOverloads constructor(
             // render these individually and offer to join them. Anything that starts drawing
             // this list has to carry the names in the tags first.
             val inputs = List(JobTags.inputCountOf(tags) ?: MIN_JOIN_INPUTS) {
-                InputFile(Uri.EMPTY, "", 0L)
+                InputFile(Uri.EMPTY, "", sizeBytes = null)
             }
             activeWorkId = reattachment.job.id
             observe(reattachment.job.id, inputs, cancelled = JoinState.Idle)
@@ -130,7 +130,9 @@ class JoinViewModel @JvmOverloads constructor(
             return
         }
         viewModelScope.launch {
-            val files = withContext(Dispatchers.IO) { uris.map(::queryFile) }
+            val files = withContext(Dispatchers.IO) {
+                uris.map { InputQuery.describe(getApplication(), it) }
+            }
             _state.value = JoinState.Ready(files)
         }
     }
@@ -139,7 +141,10 @@ class JoinViewModel @JvmOverloads constructor(
         val inputs = (_state.value as? JoinState.Ready)?.inputs ?: return
         val request = ConcatWorker.request(
             inputs = inputs.map { it.uri },
-            totalBytes = inputs.sumOf { it.sizeBytes },
+            // Not `sumOf`, which cannot express what is being summed any more. A join's
+            // total is only as good as its least-known part, and adding up the inputs that
+            // did answer would hand the space check a lower bound it would read as a total.
+            totalBytes = InputQuery.total(inputs.map { it.sizeBytes }),
         )
         activeWorkId = request.id
         workManager.enqueue(request)
@@ -254,22 +259,6 @@ class JoinViewModel @JvmOverloads constructor(
             viewModelScope.launch(cleanupDispatcher) { publisher.discardStaged(staged) }
         }
         _state.value = JoinState.Idle
-    }
-
-    private fun queryFile(uri: Uri): InputFile {
-        var name = "input"
-        var size = 0L
-        getApplication<Application>().contentResolver
-            .query(uri, null, null, null, null)
-            ?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }
-                        ?.let { name = cursor.getString(it) ?: name }
-                    cursor.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }
-                        ?.let { size = cursor.getLong(it) }
-                }
-            }
-        return InputFile(uri, name, size)
     }
 
     private companion object {

@@ -100,7 +100,10 @@ class ConversionViewModelProbeFailureTest {
         // on that thread's handler rather than at this call. What must not happen is the card
         // filling in with an "unreadable" verdict the app would then act on.
         val settled = settle(viewModel)
-        assertEquals(ConversionState.Ready(InputFile(INPUT, "input", 0L)), settled)
+        // `sizeBytes = null`, not `0L`: no provider is registered for this authority, so the
+        // metadata query returns nothing and the descriptor cannot be opened either. That is the
+        // unknown, and it stopped being spelled the same way as "empty" -- see [InputQuery].
+        assertEquals(ConversionState.Ready(InputFile(INPUT, "input", sizeBytes = null)), settled)
         assertNull("an OOM must not be reported as a probe result", (settled as ConversionState.Ready).input.probe)
     }
 

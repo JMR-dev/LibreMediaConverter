@@ -2,7 +2,6 @@ package org.libremediaconverter.convert
 
 import android.app.Application
 import android.net.Uri
-import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -53,7 +52,15 @@ data class ConversionSettings(
 data class InputFile(
     val uri: Uri,
     val displayName: String,
-    val sizeBytes: Long,
+    /**
+     * How big the file is, or null when nothing could say.
+     *
+     * Nullable rather than `0L`, and that is the point of it. The two were the same value before,
+     * so an unmeasurable file arrived at the space check claiming to be empty. [InputQuery] owns
+     * how the answer is found and what it means; every reader of this has to decide what an
+     * unknown size does, which is exactly the decision the old default made silently.
+     */
+    val sizeBytes: Long?,
     /**
      * What probing found. Null only while the probe is still running.
      *
@@ -206,7 +213,10 @@ class ConversionViewModel @JvmOverloads constructor(
                 // card its source details, and re-probing is what there is no URI for.
                 uri = Uri.EMPTY,
                 displayName = JobTags.displayNameOf(tags) ?: UNKNOWN_INPUT_NAME,
-                sizeBytes = JobTags.sizeBytesOf(tags) ?: 0L,
+                // No `?: 0L`. A job tagged before sizes were tagged at all, or one enqueued
+                // for a file nothing could measure, has no size -- and answering that with
+                // zero is the same conflation this whole change is about. See [InputQuery].
+                sizeBytes = JobTags.sizeBytesOf(tags),
             )
             activeWorkId = reattachment.job.id
             // No initial state of our own: the flow's first emission carries the job's real
@@ -231,7 +241,7 @@ class ConversionViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             // Both the metadata query and the probe touch disk, and the probe spawns FFprobe.
             // Neither belongs on the main thread.
-            val file = withContext(Dispatchers.IO) { queryFile(uri) }
+            val file = withContext(Dispatchers.IO) { InputQuery.describe(getApplication(), uri) }
             // Show the file as soon as its name and size are known. Probing now runs FFprobe on
             // every pick, which is a native process spawn, and making the whole screen wait on it
             // would read as the app having ignored the tap.
@@ -449,24 +459,6 @@ class ConversionViewModel @JvmOverloads constructor(
         is ConversionState.Waiting -> s.input
         is ConversionState.Converted -> s.input
         else -> null
-    }
-
-    private fun queryFile(uri: Uri): InputFile {
-        var name = "input"
-        var size = 0L
-        getApplication<Application>().contentResolver
-            .query(uri, null, null, null, null)
-            ?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        .takeIf { it >= 0 }
-                        ?.let { name = cursor.getString(it) ?: name }
-                    cursor.getColumnIndex(OpenableColumns.SIZE)
-                        .takeIf { it >= 0 }
-                        ?.let { size = cursor.getLong(it) }
-                }
-            }
-        return InputFile(uri, name, size)
     }
 
     private companion object {

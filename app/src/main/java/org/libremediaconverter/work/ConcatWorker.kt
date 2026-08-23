@@ -9,9 +9,11 @@ import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.hasKeyWithValueOfType
 import androidx.work.workDataOf
 import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
+import org.libremediaconverter.convert.InputQuery
 import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.ffmpeg.ConcatEngine
 import org.libremediaconverter.model.OutputFormat
@@ -39,12 +41,16 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         if (uris.size < 2) {
             return Result.failure(workDataOf(KEY_ERROR to "Pick at least two files to join."))
         }
-        val totalBytes = inputData.getLong(KEY_TOTAL_BYTES, 0L)
+        // Absent, not zero, when the picker could not size every input -- see the same read in
+        // ConversionWorker and InputQuery for why the two are no longer one number.
+        val declaredTotal = inputData
+            .takeIf { it.hasKeyWithValueOfType<Long>(KEY_TOTAL_BYTES) }
+            ?.getLong(KEY_TOTAL_BYTES, 0L)
         val format = OutputFormat.valueOf(
             inputData.getString(KEY_FORMAT) ?: DEFAULT_FORMAT.name,
         )
 
-        if (!publisher.hasSpaceFor(totalBytes)) {
+        if (!hasRoomFor(declaredTotal, uris)) {
             return Result.failure(workDataOf(KEY_ERROR to "Not enough free space to join these files."))
         }
 
@@ -104,6 +110,23 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         }
     }
 
+    /**
+     * Whether staging can take this join, measuring the inputs when nothing else has.
+     *
+     * The same shape as `ConversionWorker.hasRoomFor` and for the same reasons, with one
+     * difference worth naming: a join's total is [InputQuery.total], which is null the moment a
+     * *single* input cannot be sized. Summing the ones that answered would produce a lower bound
+     * indistinguishable from a real total, which is the conflation this change exists to end.
+     */
+    private fun hasRoomFor(declared: Long?, uris: List<Uri>): Boolean {
+        val bytes = declared ?: InputQuery.total(uris.map { InputQuery.sizeOf(applicationContext, it) })
+        if (bytes == null) {
+            Log.i(TAG, "Nothing could size every input; checking headroom only.")
+            return publisher.hasSpaceForUnknownSize()
+        }
+        return publisher.hasSpaceFor(bytes)
+    }
+
     override suspend fun getForegroundInfo(): ForegroundInfo = ForegroundInfo(
         NOTIFICATION_ID,
         notifications.build(id, "Joining files", 0, indeterminate = true),
@@ -150,13 +173,15 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
          * join screen says about a job in flight, and after a restart nothing else can supply
          * it. See [JobTags].
          */
-        fun request(inputs: List<Uri>, totalBytes: Long, format: OutputFormat = DEFAULT_FORMAT) =
+        fun request(inputs: List<Uri>, totalBytes: Long?, format: OutputFormat = DEFAULT_FORMAT) =
             OneTimeWorkRequestBuilder<ConcatWorker>()
                 .addTag(JobTags.inputCount(inputs.size))
                 .setInputData(
                     Data.Builder()
                         .putStringArray(KEY_INPUT_URIS, inputs.map(Uri::toString).toTypedArray())
-                        .putLong(KEY_TOTAL_BYTES, totalBytes)
+                        // Omitted rather than zeroed when a total could not be worked out; a
+                        // `Data` has no null, so the missing key is the unknown.
+                        .apply { totalBytes?.let { putLong(KEY_TOTAL_BYTES, it) } }
                         .putString(KEY_FORMAT, format.name)
                         .build(),
                 )

@@ -422,7 +422,13 @@ private fun FileCard(input: InputFile) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(input.displayName, style = MaterialTheme.typography.titleMedium)
-            Text(formatBytes(input.sizeBytes), style = MaterialTheme.typography.bodySmall)
+            // The null is handled here rather than inside formatBytes, because "no provider would
+            // say" is not a number and a formatter that invented one -- "0 B" -- is the defect
+            // this card would be showing. It degrades in words, like the codec rows below it.
+            Text(
+                input.sizeBytes?.let(::formatBytes) ?: "Size unknown",
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             val probe = input.probe
             if (probe == null) {

@@ -59,28 +59,46 @@ open class RecordingPublisher(context: Context) : OutputPublisher(context) {
  * `SUCCEEDED` `WorkInfo` carrying an output path, and that is exactly what this produces —
  * through a real `WorkManager`, so the ViewModel's own observer, its `SUCCEEDED` branch and
  * its cleanup handle are all the production ones.
+ *
+ * It also keeps every [Data] it was handed, which is the only way back to what a ViewModel
+ * actually enqueued: `WorkInfo` returns a job's tags and its output and never the input `Data`
+ * it was built with, so a test that wants to know what `convert()` or `join()` put in a request
+ * has to catch it here, on its way to the worker.
  */
 class SucceedingWorkerFactory(private val outputData: Data) : WorkerFactory() {
+
+    /** The input `Data` of each request that has reached a worker, in order. */
+    val enqueued = mutableListOf<Data>()
+
     override fun createWorker(
         appContext: Context,
         workerClassName: String,
         workerParameters: WorkerParameters,
-    ): ListenableWorker = object : Worker(appContext, workerParameters) {
-        override fun doWork(): Result = Result.success(outputData)
+    ): ListenableWorker {
+        enqueued += workerParameters.inputData
+        return object : Worker(appContext, workerParameters) {
+            override fun doWork(): Result = Result.success(outputData)
+        }
     }
 }
 
-/** Installs a synchronous test WorkManager whose workers succeed with [outputData]. */
-fun installTestWorkManager(context: Context, outputData: Data) {
+/**
+ * Installs a synchronous test WorkManager whose workers succeed with [outputData].
+ *
+ * @return the factory, so a caller that cares can read back what was enqueued.
+ */
+fun installTestWorkManager(context: Context, outputData: Data): SucceedingWorkerFactory {
+    val factory = SucceedingWorkerFactory(outputData)
     WorkManagerTestInitHelper.initializeTestWorkManager(
         context,
         Configuration.Builder()
             .setMinimumLoggingLevel(Log.ASSERT)
             .setExecutor(SynchronousExecutor())
             .setTaskExecutor(SynchronousExecutor())
-            .setWorkerFactory(SucceedingWorkerFactory(outputData))
+            .setWorkerFactory(factory)
             .build(),
     )
+    return factory
 }
 
 /**

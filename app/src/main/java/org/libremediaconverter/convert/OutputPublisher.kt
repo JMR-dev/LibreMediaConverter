@@ -29,12 +29,50 @@ open class OutputPublisher(private val context: Context) {
     open fun createStagingFile(name: String): File = File(stagingDir, name)
 
     /**
-     * True if there is room for a further [bytes], including headroom.
+     * True if staging can take a further [bytes], with [SPACE_HEADROOM_BYTES] left over.
      *
-     * Staging means peak usage is roughly input + output at once, so a job that would
-     * just barely fit is rejected rather than failing partway through.
+     * **The doc this replaces claimed peak usage was "roughly input + output at once" while the
+     * arithmetic reserved `input + 128 MB`.** The arithmetic is what stays, and this says why
+     * rather than the two continuing to disagree.
+     *
+     * [bytes] is the *input's* size standing in for the output's, because before an engine has
+     * run there is no other number. It is generous for the ordinary conversion, which is asked
+     * for precisely because it shrinks its input, and short for the ones that do not — a re-encode
+     * to a bulkier codec, or a stream copy into a container with more overhead.
+     *
+     * The 128 MB absorbs that error, and one more besides: [publish] copies the staged file to
+     * the user's destination, so while that runs the bytes exist twice on any destination sharing
+     * this volume. Reserving `input + output` outright would have refused jobs that fit, on a
+     * device where the destination is usually removable or remote.
+     *
+     * So this is a pre-flight check that stops a job which obviously cannot fit from spending
+     * minutes discovering it — not a guarantee. A conversion that runs out of space anyway fails
+     * through its engine, with a message of its own.
+     *
+     * Open so a test can force a full disk; see `FakeFailures` in the instrumented source set.
      */
     open fun hasSpaceFor(bytes: Long): Boolean = stagingDir.usableSpace > bytes + SPACE_HEADROOM_BYTES
+
+    /**
+     * The same check for a job whose input size nobody could determine — see [InputQuery].
+     *
+     * **This deliberately produces the same number the defect produced by accident**, which is
+     * worth stating plainly: with no size to reserve for, all that is left to check is the
+     * headroom. What has changed is that it is now the answer to a question that was asked. The
+     * old code could not tell an unmeasurable file from an empty one, so it silently made this
+     * the answer for *both*; now [hasSpaceFor] means "there is room for this many bytes" and
+     * nothing else claims it.
+     *
+     * Refusing instead was considered and rejected. It would turn "no provider answered the
+     * `SIZE` column" into "this file cannot be converted" — a worse defect than the one being
+     * fixed, and one the user could do nothing about.
+     *
+     * The default answers *through* [hasSpaceFor], which is what keeps a publisher that refuses
+     * on space — `FakeFailures.FullDisk`, which overrides `hasSpaceFor` and nothing else —
+     * refusing this too. `SpaceCheckTest` pins that delegation, because an override here that
+     * stopped delegating would quietly stop honouring a full disk.
+     */
+    open fun hasSpaceForUnknownSize(): Boolean = hasSpaceFor(0L)
 
     /**
      * Copies a finished staging file into a user-chosen SAF destination.

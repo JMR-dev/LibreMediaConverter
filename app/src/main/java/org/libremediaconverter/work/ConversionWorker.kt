@@ -9,10 +9,13 @@ import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.hasKeyWithValueOfType
 import androidx.work.workDataOf
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
+import org.libremediaconverter.convert.InputQuery
+import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
@@ -57,7 +60,11 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val inputUri = inputData.getString(KEY_INPUT_URI)?.let(Uri::parse)
             ?: return Result.failure(workDataOf(KEY_ERROR to "No input file."))
         val displayName = inputData.getString(KEY_DISPLAY_NAME) ?: "input"
-        val sizeBytes = inputData.getLong(KEY_SIZE_BYTES, 0L)
+        // Absent, not zero, when nobody could say -- see InputQuery. `getLong(key, 0L)` is what
+        // made those two the same number, and `hasSpaceFor(0)` is only "is there 128 MB free".
+        val declaredSize = inputData
+            .takeIf { it.hasKeyWithValueOfType<Long>(KEY_SIZE_BYTES) }
+            ?.getLong(KEY_SIZE_BYTES, 0L)
         val spec = readSpec()
         val quality = QualityTier.valueOf(
             inputData.getString(KEY_QUALITY) ?: QualityTier.FAST.name,
@@ -66,7 +73,7 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             inputData.getString(KEY_ENGINE_PREFERENCE) ?: EnginePreference.AUTO.name,
         )
 
-        if (!publisher.hasSpaceFor(sizeBytes)) {
+        if (!hasRoomFor(declaredSize, inputUri)) {
             return Result.failure(workDataOf(KEY_ERROR to "Not enough free space to convert."))
         }
 
@@ -149,6 +156,29 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             staged.delete()
             outcomeFor(e)
         }
+    }
+
+    /**
+     * Whether staging can take this job, asking the input itself when nothing else has.
+     *
+     * [declared] is what the picker found, carried in this job's `Data`. It is absent for work
+     * enqueued before the size became optional, for a [request] built by hand, and for a file
+     * whose provider would not answer — so the fallback opens the input and asks the descriptor,
+     * which is one syscall on a file the conversion is about to open anyway. It runs only when
+     * [declared] is null, so an ordinary job pays nothing for it.
+     *
+     * When even that cannot answer, the *question* changes rather than a number being invented:
+     * [OutputPublisher.hasSpaceForUnknownSize] is the documented "all that is left to check is
+     * the headroom", and it is not a refusal. Failing every job whose provider is quiet would be
+     * a worse defect than the vacuous check it replaces.
+     */
+    private fun hasRoomFor(declared: Long?, inputUri: Uri): Boolean {
+        val bytes = declared ?: InputQuery.sizeOf(applicationContext, inputUri)
+        if (bytes == null) {
+            Log.i(TAG, "Nothing could size $inputUri; checking headroom only.")
+            return publisher.hasSpaceForUnknownSize()
+        }
+        return publisher.hasSpaceFor(bytes)
     }
 
     /**
@@ -318,18 +348,22 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         fun request(
             inputUri: Uri,
             displayName: String,
-            sizeBytes: Long,
+            sizeBytes: Long?,
             spec: OutputSpec = OutputFormat.MP4_H265.spec,
             quality: QualityTier = QualityTier.FAST,
             enginePreference: EnginePreference = EnginePreference.AUTO,
         ) = OneTimeWorkRequestBuilder<ConversionWorker>()
             .addTag(JobTags.displayName(displayName))
-            .addTag(JobTags.sizeBytes(sizeBytes))
+            // Neither the tag nor the Data entry is written for a size nobody knows. A `Data` has
+            // no null, so the absence of the key *is* the unknown — and a tag reading
+            // `size-bytes:0` would come back through Reattachment as a confident claim that the
+            // user's file is empty.
+            .apply { sizeBytes?.let { addTag(JobTags.sizeBytes(it)) } }
             .setInputData(
                 Data.Builder()
                     .putString(KEY_INPUT_URI, inputUri.toString())
                     .putString(KEY_DISPLAY_NAME, displayName)
-                    .putLong(KEY_SIZE_BYTES, sizeBytes)
+                    .apply { sizeBytes?.let { putLong(KEY_SIZE_BYTES, it) } }
                     .putString(KEY_CONTAINER, spec.container.name)
                     .putString(KEY_VIDEO_CODEC, spec.videoCodec.name)
                     .putString(KEY_AUDIO_CODEC, spec.audioCodec.name)
