@@ -8,6 +8,7 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.MediaInformation
+import org.libremediaconverter.ffmpeg.isNativeLoadFailure
 import org.libremediaconverter.model.ConcatInput
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.InputKind
@@ -33,6 +34,21 @@ import org.libremediaconverter.model.InputProbe
  */
 object MediaProbe {
 
+    /**
+     * What [probe] reports when nothing could read the input.
+     *
+     * Named rather than inlined because a caller that has to handle [probe] itself failing
+     * needs to land on the same answer — see `ConversionViewModel.onInputPicked`. Two
+     * different spellings of "unreadable" would be two different behaviours downstream, since
+     * the router keys off [InputProbe.UNPARSEABLE] and the source-info card off the kind.
+     */
+    val UNREADABLE = InputProbe(
+        videoCodec = InputProbe.UNPARSEABLE,
+        hasVideo = true,
+        durationMs = 0,
+        kind = InputKind.UNPARSEABLE,
+    )
+
     fun probe(context: Context, uri: Uri): InputProbe {
         val extracted = probeWithExtractor(context, uri)
         val info = probeWithFFprobe(context, uri)
@@ -45,12 +61,7 @@ object MediaProbe {
             // Not a failure: an unparseable input is a strong signal that this job belongs on
             // FFmpeg. Reporting an unknown codec makes the router say so.
             Log.i(TAG, "Neither MediaExtractor nor FFprobe could read $uri; routing to FFmpeg.")
-            return InputProbe(
-                videoCodec = InputProbe.UNPARSEABLE,
-                hasVideo = true,
-                durationMs = 0,
-                kind = InputKind.UNPARSEABLE,
-            )
+            return UNREADABLE
         }
 
         return InputProbe(
@@ -144,6 +155,15 @@ object MediaProbe {
         path?.let { readMediaInformation(it) }
     } catch (e: Exception) {
         Log.i(TAG, "FFprobe could not read $uri.", e)
+        null
+    } catch (e: Error) {
+        // Touching FFmpegKit at all loads its native library, and a failure there arrives as
+        // an Error, which the clause above cannot see -- so an unloadable library used to
+        // take the whole file pick down instead of reporting an unreadable file. Anything
+        // that is not that library failing to load is still this JVM's problem, not this
+        // file's, and is rethrown: see isNativeLoadFailure.
+        if (!isNativeLoadFailure(e)) throw e
+        Log.w(TAG, "FFmpegKit's native library could not be loaded; probing $uri without FFprobe.", e)
         null
     }
 

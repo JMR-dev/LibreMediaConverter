@@ -102,3 +102,14 @@ exceptions:
     # and handles -- falls back to FFmpeg, or fails the job with a reason -- and the
     # SwallowedException rule stays active to keep it that way.
     active: false
+  TooGenericExceptionThrown:
+    # Still on for main source, which throws nothing generic and should not start.
+    #
+    # Relaxed for tests only, and for one reason: a test that reproduces a failed native
+    # load has to throw what the library actually throws, and FFmpegKit throws a *bare*
+    # `java.lang.Error` -- `NativeLoader` catches the UnsatisfiedLinkError from
+    # System.loadLibrary and rethrows `Error(message, cause)`. That is not incidental, it
+    # is the whole finding `ffmpeg/NativeLoadFailure.kt` exists to handle, and the reason
+    # the obvious narrower guards catch nothing. Substituting a tidier subclass here would
+    # leave the test passing against a defect it no longer reproduces.
+    excludes: ['**/test/**', '**/androidTest/**']
