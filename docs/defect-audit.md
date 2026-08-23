@@ -2,13 +2,14 @@
 
 **Status:** twelve fixed and merged, one parked, two open, one no-action. Four numbers, because
 they have to sum to the sixteen entries below and the previous three did not. Fix status is per
-entry in the summary table and
-tracks `main`, re-checked at `18c53a3`; the entry bodies below describe each defect *as found* and
-are deliberately not rewritten as fixes land — this is the record of what was wrong, not a
-changelog.
+entry in the summary table and tracks `main`, re-checked at `18c53a3`; the entry bodies below
+describe each defect *as found* and are deliberately not rewritten as fixes land — this is the
+record of what was wrong, not a changelog.
 **Scope:** the Android-framework edge of the app, which had no JVM unit tests when this was
 written — it has them now; see [On testing these](#on-testing-these).
-**Last verified:** 2026-08-22, against `main` at `903b43c`.
+**Last verified:** as-found evidence 2026-08-22, against `main` at `903b43c`; fix status
+re-checked against `main` at `18c53a3`. The two anchors move independently — the bodies are
+frozen, the status is not.
 **Device pass:** 2026-08-22 on a physical Pixel 10 Pro XL, API 37. Four entries were driven on
 hardware; **D1 did not reproduce and its premise is contradicted** — see its entry. Verdicts are
 marked per entry. Everything unmarked is still inspection only.
@@ -17,7 +18,7 @@ Instrumented baseline taken at the same time: `connectedDebugAndroidTest` on the
 **49 tests, 0 failures, 0 errors, 2 skipped**, no regression against the 40/0/2 recorded in
 `api-37-emulator-crash.md`. The 2 skips are the assumption-guarded `RealMediaBenchmark` tests.
 
-> **Correction — 2026-08-23 (`R3 / #12`, `R12 / #21`, `R13 / #22`).** The status metadata in this
+> **Correction — 2026-08-22 (`R3 / #12`, `R12 / #21`, `R13 / #22`).** The status metadata in this
 > document went stale within hours of being written, and this document is read as the work queue,
 > so the corrections are stated rather than made quietly:
 >
@@ -467,7 +468,7 @@ which is what makes it visibly wrong rather than merely stale.
 new dependency needed. It is an instrumented test, so it runs on CI, not locally.
 
 *Both halves of that last sentence stopped being true, and the fix went the other way (`R14 /
-#23`). `compose-ui-test-junit4` is declared for the JVM source set now, and the
+#23`, 2026-08-22). `compose-ui-test-junit4` is declared for the JVM source set now, and the
 `StateRestorationTester` test this entry asked for is `AppRootRestorationTest`, which runs under
 Robolectric on `:app:testDebugUnitTest` — not an instrumented test at all. Instrumented tests also
 do run on this host now: `tools/local-emulator/run-e2e.sh`, API 33–36.*
@@ -840,9 +841,11 @@ and D14 — are on `main`; there is no integration branch left to check out. *Th
 send the reader to `feat/defect-fixes-base`, which has no ref at all — not local, not remote, only
 a reflog entry — because it was deleted when it merged, and to `fix/space-proxy-and-notification`
 as still "in progress", which is merged too (its branch pointer does survive, at `c2e6344`).* The
-JVM suite gates green on `main` at `18c53a3` — **257 tests, 0 failures, 0 errors, 0 skipped,
-detekt 0, lint clean**, against the 242 this paragraph used to quote and the 180 before the fixes
-began. That total is only as fresh as this commit; the 15 it was short are `UnknownInputSizeTest`,
+JVM suite gates green on `main` at `18c53a3` — **257 tests, 0 failures, 0 errors, 0 skipped**,
+with detekt reporting 0 findings and lint `0 errors, 0 warnings, 1 hint` (the deferred
+`UsableSpace` one, kept informational on purpose), against the 242 this paragraph used to quote
+and the 180 before the fixes began. That total is only as fresh as this commit; the 15 it was
+short are `UnknownInputSizeTest`,
 `SpaceCheckTest` and `ProgressNotificationTest`. Re-derive rather than trust it:
 `./gradlew :app:testDebugUnitTest`, then read `app/build/test-results/`. **D1 is parked unmerged** on
 `fix/allocatable-space`: the code is sound but the device pass contradicted its stated premise, so
@@ -875,7 +878,7 @@ through a PR, never on `main`.
 
 ### On testing these
 
-> **Correction — 2026-08-23 (`R14 / #23`, `R15 / #24`).** This section proposed a plan; the
+> **Correction — 2026-08-22 (`R14 / #23`, `R15 / #24`).** This section proposed a plan; the
 > follow-up work then executed it, so four of its load-bearing statements were true at `903b43c`
 > and false by `18c53a3`. It is re-dated rather than deleted, because the reasoning is *why* the
 > test stack looks the way it does — but nothing below describes `main` today unless a marked note
