@@ -96,8 +96,12 @@ install for code that can never run — and on API 37 the full APK does not fit 
 - The `model` package is excluded from `ReturnCount` and `CyclomaticComplexMethod` only. It is the
   decision layer, where one branch is one documented user-visible outcome and the metric counts
   answers rather than complexity. Every other rule still applies there.
-- **Coverage is reported, not gated** — currently ~31% of lines. A floor needs a baseline that has
-  settled first.
+- **Coverage is reported, not gated** — **29.8% of lines (629/2113), 28.7% of branches**, measured
+  on `main` 2026-08-23 with `./gradlew :app:jacocoTestReport`. A floor needs a baseline that has
+  settled first, and this one has not: the figure **fell** from the ~31% recorded earlier even
+  though the JVM suite went from 11 test files to 43. Main source grew 4,114 -> 5,715 lines over
+  the same period, so the denominator outran the numerator. Re-measure before quoting it; do not
+  assume more tests means a higher percentage here.
 - `kotlin.code.style=official`. Gradle stays Kotlin DSL.
 
 ## Dependency versions
