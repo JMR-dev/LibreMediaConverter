@@ -108,7 +108,13 @@ restored after a restart.
 
 ## Building
 
-Requires JDK 17+ (AGP 9 will not run on older) and the Android SDK with API 37.
+Requires the Android SDK with API 37. **Do not pick a JDK** — the repo does.
+`gradle/gradle-daemon-jvm.properties` pins the daemon to Java 25 and carries foojay
+download URLs per platform, so Gradle finds an installed Java 25 or downloads one on the
+first build, whatever `JAVA_HOME` points at. `JAVA_HOME` only chooses the *launcher*, which
+Gradle 9.7.1 will run on Java 8 or newer. Everything the build actually compiles is Java 25,
+the app's own bytecode included. `./gradlew --version` prints the launcher and the daemon
+separately, and they routinely differ.
 
 FFmpeg is committed as a prebuilt archive under [`bin/`](bin/README.md), so a clone
 builds without a cross-compile. That is deliberate: rebuilding it per CI run made test

@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -30,6 +31,7 @@ import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.ui.PrimaryButtonHeight
 import org.libremediaconverter.ui.ScreenPaddingHorizontal
 import org.libremediaconverter.ui.ScreenPaddingVertical
+import org.libremediaconverter.work.ConcatWorker
 
 @UnstableApi
 @Composable
@@ -40,8 +42,13 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris -> if (uris.isNotEmpty()) viewModel.onInputsPicked(uris) }
 
+    // The contract's MIME type comes from the finished job rather than from a literal: some
+    // providers rewrite a document's extension to match it, so naming MP4 for a join that is not
+    // one can hand the user a file the extension lies about. Remembered against that type so the
+    // launcher re-registers only when it actually changes.
+    val destinationMime = (state as? JoinState.Joined)?.mimeType ?: ConcatWorker.DEFAULT_FORMAT.mimeType
     val chooseDestination = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("video/mp4"),
+        remember(destinationMime) { ActivityResultContracts.CreateDocument(destinationMime) },
     ) { uri -> uri?.let(viewModel::save) }
 
     Column(
@@ -111,9 +118,11 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                     }
 
                     is JoinState.Waiting -> {
+                        // Same two causes as the converter screen's Waiting state, and the same
+                        // wording for them -- see the comment there.
                         Text(
-                            "Paused. The system limits background media processing to " +
-                                "six hours a day, so this will resume automatically.",
+                            "Paused. Android limits background media processing, so this will " +
+                                "resume automatically — keeping the app open helps it along.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(
@@ -136,7 +145,7 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Button(
-                            onClick = { chooseDestination.launch("joined.mp4") },
+                            onClick = { chooseDestination.launch(s.suggestedName) },
                             modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
                         ) { Text("Save file") }
                         OutlinedButton(

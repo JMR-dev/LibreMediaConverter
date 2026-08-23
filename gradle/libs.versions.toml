@@ -67,6 +67,19 @@ detekt = "2.0.0-alpha.6"
 # so the agent version that reads Kotlin 2.2.10 bytecode is stated, not implied.
 jacoco = "0.8.15"
 
+# Robolectric. PINNED, and it belongs with ktlint/detekt/jacoco above rather than with
+# the floating libraries, for two reasons that both point the same way.
+#
+# First, the prerelease guard in app/build.gradle.kts only covers the groups this project
+# floats -- "androidx.", "junit", "com.arthenica" -- so org.robolectric is unguarded, and
+# a "4.+" here would resolve straight to 4.17-beta-3, which is the newest thing published.
+# Second, Robolectric is not a library the app ships: it is the JVM's Android runtime, and
+# a version bump changes which android-all jar the tests execute against. That is the same
+# "a tool moved under a diff that cannot explain it" failure the linters are pinned for.
+#
+# 4.16.1 is the newest RELEASED version; the 4.17 line is beta-only at the time of writing.
+robolectric = "4.16.1"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
@@ -114,6 +127,12 @@ smart-exception-java = { group = "com.arthenica", name = "smart-exception-java",
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+
+# Robolectric — an Android runtime for the JVM test source set, so file-lifecycle behaviour
+# that needs a real Context can be verified without a device. The instrumented suite cannot
+# run on the development host at all (see CLAUDE.md), so an androidTest-only red test is not
+# a TDD loop anyone here can execute.
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
 [plugins]
 # com.android.application and org.jetbrains.kotlin.plugin.compose are deliberately absent.

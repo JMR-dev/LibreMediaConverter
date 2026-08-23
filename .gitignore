@@ -17,3 +17,10 @@ local.properties
 # The FFmpeg AAR is committed under bin/ so test runs do not depend on a rebuild.
 # Build outputs from tools/ffmpeg are not.
 tools/ffmpeg/out/
+
+# Claude Code's per-machine state. Named file by file rather than ignoring .claude/, so that
+# shared project config -- settings.json, agents/, skills/ -- stays committable if this project
+# ever adopts it. worktrees/ holds complete working copies: during a parallel agent run there
+# were six, each a full checkout with its own build output.
+.claude/worktrees/
+.claude/scheduled_tasks.lock
