@@ -67,12 +67,18 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             .takeIf { it.hasKeyWithValueOfType<Long>(KEY_SIZE_BYTES) }
             ?.getLong(KEY_SIZE_BYTES, 0L)
         val spec = readSpec()
-        val quality = QualityTier.valueOf(
-            inputData.getString(KEY_QUALITY) ?: QualityTier.FAST.name,
-        )
-        val preference = EnginePreference.valueOf(
-            inputData.getString(KEY_ENGINE_PREFERENCE) ?: EnginePreference.AUTO.name,
-        )
+        // Looked up rather than `valueOf`, for the reason [readSpec] gives twelve lines below and
+        // for one more: these three reads sit ABOVE the try. A name this build does not define --
+        // which is what a downgrade with work still queued produces, the same previous-version case
+        // JobTags is written for -- threw IllegalArgumentException straight past the catch, taking
+        // the retry, the error message and the staged file's delete with it. That is the escape
+        // shape setForeground was moved inside the try to end.
+        val quality = inputData.getString(KEY_QUALITY)
+            ?.let { name -> QualityTier.entries.firstOrNull { it.name == name } }
+            ?: QualityTier.FAST
+        val preference = inputData.getString(KEY_ENGINE_PREFERENCE)
+            ?.let { name -> EnginePreference.entries.firstOrNull { it.name == name } }
+            ?: EnginePreference.AUTO
 
         if (!hasRoomFor(declaredSize, inputUri)) {
             return Result.failure(workDataOf(KEY_ERROR to "Not enough free space to convert."))

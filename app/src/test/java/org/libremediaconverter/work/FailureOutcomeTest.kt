@@ -2,7 +2,9 @@ package org.libremediaconverter.work
 
 import android.app.ForegroundServiceStartNotAllowedException
 import androidx.work.WorkInfo
+import androidx.work.WorkRequest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -144,8 +146,48 @@ class FailureOutcomeTest {
         )
     }
 
+    @Test
+    fun `the attempt bound outlasts a night rather than being a round number`() {
+        // The KDoc argues the value rather than picking one: ten attempts against WorkManager's
+        // default backoff span about eight and a half hours, which is what turns "the user will
+        // have opened the app before this gives up" into a claim instead of a hope.
+        //
+        // Asserted as that span rather than as the literal 10, so a deliberate re-tune keeping the
+        // property passes while an accidental one fails. The accident is not hypothetical: at 2 the
+        // job gives up about ninety seconds after process death -- losing exactly the long
+        // conversion the retry exists to protect -- and every other test in this file still passes,
+        // because they are all written against the constant rather than against its value.
+        var delay = WorkRequest.DEFAULT_BACKOFF_DELAY_MILLIS
+        var span = 0L
+        repeat(FailureOutcome.MAX_FOREGROUND_START_ATTEMPTS) {
+            span += delay
+            // Doubling per attempt, clamped, exactly as WorkManager schedules it. Coerced each
+            // time round so the arithmetic cannot overflow whatever the bound is set to.
+            delay = (delay * 2).coerceAtMost(WorkRequest.MAX_BACKOFF_MILLIS)
+        }
+
+        assertTrue(
+            "the retry budget must outlast a night; it spans ${span / MILLIS_PER_HOUR.toDouble()} hours",
+            span >= MINIMUM_RETRY_SPAN_MS,
+        )
+    }
+
     private fun denied() = ForegroundServiceStartNotAllowedException(
         "startForegroundService() not allowed: service " +
             "org.libremediaconverter/androidx.work.impl.foreground.SystemForegroundService",
     )
+
+    private companion object {
+        const val MILLIS_PER_HOUR = 60L * 60 * 1000
+
+        /**
+         * How long the denied-start retries have to keep going.
+         *
+         * Eight hours rather than the eight and a half the default backoff actually produces. The
+         * claim is about covering a night between one opening of the app and the next; pinning the
+         * exact arithmetic would instead fail on a WorkManager release that re-tuned its own
+         * constants without anything this app decides having changed.
+         */
+        const val MINIMUM_RETRY_SPAN_MS = 8L * MILLIS_PER_HOUR
+    }
 }
