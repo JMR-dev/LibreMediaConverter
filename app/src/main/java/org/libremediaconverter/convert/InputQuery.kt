@@ -64,9 +64,18 @@ object InputQuery {
      * A join's total is only as good as its worst-known part. Adding up the ones that answered
      * would produce a lower bound that reads exactly like a real total, and the space check has
      * no way to tell the two apart — which is the same conflation this whole file exists to end.
+     *
+     * The sum saturates rather than wrapping. Sizes reach here non-negative — both of the ways one
+     * is found reject a negative answer — but nothing bounds their *sum*, and a total that wrapped
+     * negative would not be harmless nonsense: `OutputPublisher.hasSpaceFor` compares it against
+     * free space, so the largest join representable would come back as the one with the most room.
      */
     fun total(sizes: List<Long?>): Long? = sizes.fold(0L as Long?) { running, size ->
-        if (running == null || size == null) null else running + size
+        when {
+            running == null || size == null -> null
+            size > Long.MAX_VALUE - running -> Long.MAX_VALUE
+            else -> running + size
+        }
     }
 
     /**

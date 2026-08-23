@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.InputFile
 import org.libremediaconverter.convert.InputQuery
+import org.libremediaconverter.convert.STAGED_FILE_GONE_MESSAGE
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.work.ConcatWorker
 import org.libremediaconverter.work.JobTags
@@ -221,8 +222,20 @@ class JoinViewModel @JvmOverloads constructor(
         activeWorkId?.let(workManager::cancelWorkById)
     }
 
+    /**
+     * Copies the staged result out to the destination the user picked.
+     *
+     * The existence check is the same one `ConversionViewModel.save` makes, for the same reason: a
+     * join offered by reattachment was last seen during a tag query that may be hours old, and
+     * `cacheDir` is reclaimed by the OS and swept by this app. Without it the file's absence
+     * reached the screen as a raw ENOENT path.
+     */
     fun save(destination: Uri) {
         val joined = _state.value as? JoinState.Joined ?: return
+        if (!joined.staged.isFile) {
+            _state.value = JoinState.Failed(STAGED_FILE_GONE_MESSAGE)
+            return
+        }
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {

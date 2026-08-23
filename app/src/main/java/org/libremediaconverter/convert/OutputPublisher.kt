@@ -7,6 +7,23 @@ import android.provider.OpenableColumns
 import java.io.File
 
 /**
+ * What a save has to say when the staged file is not there any more.
+ *
+ * Reachable without anything going wrong: staging lives in `cacheDir`, which the OS reclaims
+ * whenever it wants the space, and [sweepStaging] collects anything a day old. A result offered by
+ * reattachment is the likeliest to meet it — the check that decided the file existed ran during a
+ * tag query that can be hours old by the time the Save button is tapped.
+ *
+ * A written sentence rather than the exception's message, which is what used to reach the screen:
+ * `/data/user/0/org.libremediaconverter/cache/conversions/4b4882….mp4: open failed: ENOENT (No such
+ * file or directory)` is a true statement about a path the user has never seen and cannot act on.
+ * Kept next to [OutputPublisher] because both ViewModels need it and staging is what it is about.
+ */
+const val STAGED_FILE_GONE_MESSAGE: String =
+    "The finished file is no longer in the cache, so there is nothing left to save. " +
+        "Start over to make it again."
+
+/**
  * Staging and publication of conversion output.
  *
  * Conversions never write directly to the destination the user picked. FFmpeg and the
@@ -50,8 +67,18 @@ open class OutputPublisher(private val context: Context) {
      * through its engine, with a message of its own.
      *
      * Open so a test can force a full disk; see `FakeFailures` in the instrumented source set.
+     *
+     * Written as `free - headroom > required` rather than the equivalent-looking
+     * `free > required + headroom`. The second overflows: a request within 128 MiB of
+     * [Long.MAX_VALUE] wraps the sum negative, every free-space measurement beats a negative
+     * number, and the check answers "plenty of room" to the largest request it can be given. That
+     * is reachable rather than theoretical — [InputQuery.total] sums a join's inputs, so the number
+     * arriving here is not bounded by any single file. Both operands are clamped at zero first, so
+     * the subtraction cannot underflow and a nonsense negative size decides exactly as zero does
+     * instead of buying slack.
      */
-    open fun hasSpaceFor(bytes: Long): Boolean = stagingDir.usableSpace > bytes + SPACE_HEADROOM_BYTES
+    open fun hasSpaceFor(bytes: Long): Boolean =
+        stagingDir.usableSpace.coerceAtLeast(0L) - SPACE_HEADROOM_BYTES > bytes.coerceAtLeast(0L)
 
     /**
      * The same check for a job whose input size nobody could determine — see [InputQuery].
@@ -111,14 +138,22 @@ open class OutputPublisher(private val context: Context) {
      * which is the right way round, since a flush that failed means the bytes are not
      * durably there to begin with.
      *
-     * A failure from `openOutputStream` itself is deliberately outside the guard. Nothing
-     * has been written at that point, so there is nothing of ours to remove.
+     * `openOutputStream` is inside the guard as well, and the reasoning that used to keep it
+     * out -- "nothing has been written at that point, so there is nothing of ours to remove" --
+     * was wrong about what exists. SAF's `CreateDocument` contract creates the document *before*
+     * this is called, which is why every fixture in `OutputPublisherPublishTest` starts as an
+     * existing empty file. So a provider that hands out no stream at all -- gone between the
+     * picker and the write, or simply returning null -- left a zero-byte file at the name the
+     * user chose while the UI said "Could not save the file". The two bounds above are what make
+     * removing it safe, and they apply to this case exactly as they do to a failed copy. A
+     * provider that will not open its own empty document may well refuse to delete it too, which
+     * is already [deletePartialOutput]'s documented no-op path.
      */
     open fun publish(staged: File, destination: Uri) {
         val destinationWasEmpty = destinationIsKnownEmpty(destination)
-        val out = context.contentResolver.openOutputStream(destination)
-            ?: error("Could not open destination for writing: $destination")
         try {
+            val out = context.contentResolver.openOutputStream(destination)
+                ?: error("Could not open destination for writing: $destination")
             out.use { sink -> staged.inputStream().use { source -> source.copyTo(sink) } }
         } catch (failure: Throwable) {
             if (destinationWasEmpty) deletePartialOutput(destination, failure)

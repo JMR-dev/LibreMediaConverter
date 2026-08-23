@@ -36,6 +36,16 @@ class ReattachmentTest {
     }
 
     @Test
+    fun `a failed job is not reattached to even when it left a file behind`() {
+        // The fixture that matters, and the one every other FAILED case here was missing: a job
+        // killed mid-write leaves a partial in staging -- the 2 MB orphan the device pass found --
+        // so the exclusion has to hold for a FAILED job that really does name a file on disk.
+        // Ranking it like a result would offer the user a truncated file with a Save button.
+        val partial = job(state = WorkInfo.State.FAILED, outputPath = STAGED, outputExists = true)
+        assertNull(Reattachment.choose(listOf(partial)))
+    }
+
+    @Test
     fun `a finished result still on disk is offered`() {
         val result = job(state = WorkInfo.State.SUCCEEDED, outputPath = "/cache/out.mp4", outputExists = true)
         assertEquals(Reattachment.Certain(result), Reattachment.choose(listOf(result)))
