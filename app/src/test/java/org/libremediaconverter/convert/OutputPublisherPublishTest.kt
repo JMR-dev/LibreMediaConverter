@@ -266,9 +266,33 @@ class OutputPublisherPublishTest {
     }
 
     @Test
+    fun `a destination the provider will not open does not stay behind as an empty file`() {
+        // No stream supplier is registered for this URI and the fake provider does not implement
+        // openFile, which is a provider that has gone away between the picker and the write.
+        //
+        // The document exists all the same: SAF's CreateDocument contract created it before
+        // publish() was ever called, so "nothing has been written yet" was never the same claim as
+        // "there is nothing of ours here". Leaving it means a zero-byte file at the name the user
+        // chose, while the screen says the save failed.
+        val destination = FakeSafProvider.backingFile(documentUri)
+        assertEquals("the fixture starts as the empty document SAF hands back", 0L, destination.length())
+
+        val failure = runCatching { publisher.publish(staged, documentUri) }.exceptionOrNull()
+
+        assertTrue("a destination that will not open must not appear to succeed, got $failure", failure != null)
+        assertEquals(listOf(documentUri), FakeSafProvider.deleteRequests)
+        assertFalse(
+            "a zero-byte file must not be left at the name the user picked",
+            destination.exists(),
+        )
+    }
+
+    @Test
     fun `a destination that cannot be opened at all fails without any cleanup`() {
-        // The JVM twin of UnopenableUriTest's unwritable-destination case. Nothing was
-        // written, so there is nothing of ours to remove.
+        // The JVM twin of UnopenableUriTest's unwritable-destination case. The open sits inside
+        // the guarded region now, so what keeps this one untouched is the guard rather than the
+        // placement: nothing answers for that authority, so no size can be read, and "I could not
+        // tell" must never authorise a delete.
         val failure = runCatching { publisher.publish(staged, deadUri) }.exceptionOrNull()
 
         assertTrue("publishing to a dead provider must not appear to succeed, got $failure", failure != null)
