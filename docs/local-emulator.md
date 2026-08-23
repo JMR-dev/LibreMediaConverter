@@ -204,6 +204,16 @@ spelling of `37.0`. Setting `GPU_MODE` forces one renderer on every level, which
 you want when measuring a mode; leaving it unset lets `gpu_for_api` pick, which is what
 you want when running the suite — 33–36 need `host` and 37 must not have it.
 
+**A bare `run-e2e.sh` exits 1, and that is the design.** API 37 is in the default list
+deliberately — leaving it out is what left the level unlooked-at for as long as it was — and
+it is permanently two failures short of green: `Media3EngineTest` cannot drive the emulator's
+`c2.goldfish.h264.decoder` on those images, which
+[`api-37-emulator-crash.md`](api-37-emulator-crash.md) pins on the image and not on this app
+(API 35 under the same renderer is green). The summary row names the two expected failures so
+that a third is visibly new, and the script repeats the point on the way out. Anything that
+treats a non-zero exit as breakage — a wrapper, a hook, a habit — should name the levels it
+wants: `run-e2e.sh 33 34 35 36` is the sweep that can be green.
+
 `swangle_indirect` is the fallback worth knowing about. It is entirely software, so it
 does not depend on reaching the session's GPU — useful over plain SSH, where `-gpu host`
 has not been tested and may not find a device. It is also the closest local analogue to

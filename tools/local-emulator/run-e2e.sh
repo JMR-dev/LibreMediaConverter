@@ -12,6 +12,15 @@
 #   BOOT_TIMEOUT=300       seconds to wait for sys.boot_completed
 #   KEEP_AVD=1             do not delete an AVD this script created
 #
+# EXIT CODE: 0 only if every level was green; 1 if any level failed, wedged or could not be
+# set up; 2 if it refused to start at all. **A bare `run-e2e.sh` therefore exits 1 by design.**
+# API 37 is in the default list on purpose -- leaving it out is what left the level unlooked-at
+# for as long as it was -- and it is permanently two failures short of green, on the emulator's
+# own c2.goldfish.h264.decoder rather than on anything this app does. The summary names the two,
+# so a third is visibly new, and the last line printed says the same thing. Anything that reads a
+# non-zero exit as breakage should name the levels it wants: `run-e2e.sh 33 34 35 36` is the
+# sweep that can be green. docs/api-37-emulator-crash.md has the measurements.
+#
 # WHY THIS EXISTS, AND WHAT IT DELIBERATELY DOES NOT DO
 #
 # It is a *launcher*, not a second test harness. The diagnostics -- the FAILED-vs-WEDGED
@@ -415,7 +424,10 @@ delete_created_avds() {
   local avd
   [ "${KEEP_AVD:-0}" = "1" ] && return 0
   for avd in ${CREATED_AVDS[@]+"${CREATED_AVDS[@]}"}; do
-    avdmanager delete avd -n "$avd" > /dev/null 2>&1
+    # A SIGKILLed emulator does not get to remove its own lock files, and avdmanager can
+    # refuse over them. Staying silent there would leak the very thing this exists to clean.
+    avdmanager delete avd -n "$avd" > /dev/null 2>&1 \
+      || echo "  WARNING: could not delete AVD $avd -- 'avdmanager delete avd -n $avd' by hand"
   done
   CREATED_AVDS=()
 }
@@ -440,6 +452,10 @@ cleanup() {
 # 6 s, not 30: Ctrl-C has already reached the emulator through the foreground process group,
 # so this is only waiting for it to finish writing, and `kill -9` follows regardless. The
 # EXIT trap is disarmed before exiting so the status below is the one that survives.
+#
+# bash runs a trap only between commands, so this starts when whatever was in the foreground
+# returns -- which for Ctrl-C is immediately, because the same interrupt reached that command
+# too. `kill -INT` aimed at this script alone waits for the foreground command to finish.
 on_signal() {
   echo
   echo "interrupted (SIG$1) -- stopping the emulator and removing the AVDs this run created"
@@ -492,6 +508,16 @@ PY
 SUMMARY=()
 overall=0
 
+# Whether the red exit is the expected one depends on which level produced it, and only the
+# loop knows that -- so it is recorded where `overall` is set rather than guessed from the
+# summary afterwards. A note at the end claiming a genuine API 34 failure was "by design"
+# would be the same defect it is there to prevent, one layer up.
+NON37_RED=0
+mark_red() {
+  overall=1
+  case "$1" in 37 | 37.*) ;; *) NON37_RED=1 ;; esac
+}
+
 for api in "${APIS[@]}"; do
   avd="$(avd_for_api "$api")"
   gpu="$(gpu_for_api "$api")"
@@ -503,7 +529,7 @@ for api in "${APIS[@]}"; do
 
   if ! ensure_avd "$api" "$avd"; then
     SUMMARY+=("API $api: AVD SETUP FAILED")
-    overall=1
+    mark_red "$api"
     continue
   fi
 
@@ -511,7 +537,7 @@ for api in "${APIS[@]}"; do
     host_forensics "$started"
     guest_forensics "$api"
     SUMMARY+=("API $api: BOOT FAILED")
-    overall=1
+    mark_red "$api"
     stop_emulator
     continue
   fi
@@ -545,7 +571,7 @@ for api in "${APIS[@]}"; do
   esac
   if [ "$rc" -ne 0 ]; then
     line="$line  [gradle exit $rc]"
-    overall=1
+    mark_red "$api"
     host_forensics "$started"
   fi
   SUMMARY+=("$line")
@@ -558,4 +584,16 @@ echo
 echo "===================== LOCAL E2E SUMMARY ======================"
 printf '%s\n' ${SUMMARY[@]+"${SUMMARY[@]}"}
 echo "=============================================================="
+
+# An unexplained red exit trains people to stop reading exit codes, and this one is expected
+# whenever API 37 is in the sweep -- which the default list makes the common case. Said here
+# rather than only in the docs, because this is where it is actually read. Only when 37.x is
+# the ONLY thing that went red: a note calling a real failure elsewhere "by design" would be
+# worse than no note at all.
+if [ "$overall" -ne 0 ] && [ "$NON37_RED" -eq 0 ]; then
+  echo "note: the only level that went red is API 37, which exits non-zero by design -- it is"
+  echo "      permanently 2 failures short of green. Confirm its row above shows exactly those"
+  echo "      two and nothing else; docs/api-37-emulator-crash.md says why they are the image."
+fi
+
 exit "$overall"

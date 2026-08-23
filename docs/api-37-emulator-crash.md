@@ -101,10 +101,14 @@ host always has, so the assert fires whenever that path is taken.
 
 Two facts pin down what "always" means:
 
-- **The capability is negotiated regardless of renderer.** The abort fires under ANGLE too
-  (r03/r05/r06), just far less often. `ANDROID_EMU_read_color_buffer_dma` lives in
-  `emulator/lib64/libgfxstream_backend.so`, which every `-gpu` mode goes through — it is the
-  only file in the whole SDK that contains the string.
+- **The capability is negotiated regardless of renderer.** The evidence is the aborts
+  themselves: the assertion that fires is `!hasReadColorBufferDma`, and it fires under ANGLE
+  (r03/r05/r06) as well as under the host translator — just far less often. That is a direct
+  observation of the guest having negotiated DMA readback under both, and it stands alone.
+  (Supporting only, and weaker than it first looks: `ANDROID_EMU_read_color_buffer_dma` appears
+  in exactly one file in the SDK, `emulator/lib64/libgfxstream_backend.so`, which every `-gpu`
+  mode goes through. A string search establishes where the extension is implemented, not that
+  it is negotiated on every path.)
 - **It is not gated by any feature flag the emulator exposes.** See the ruled-out list below.
 
 So the renderer does not decide whether the guest *believes* DMA readback exists. It decides how
@@ -285,8 +289,11 @@ Package com.android.systemui new state: disabled-user
   window     Service window: found
 ```
 
-**Zero in 180 s, against 10–11 per 150 s.** That is the confirmation that region sampling is the
-sole trigger, and it is worth recording even by someone who never wants the workaround.
+**Zero in 180 s, against 10–11 per 150 s.** That is the strongest evidence that region sampling
+is the dominant trigger, and it is worth recording even by someone who never wants the workaround.
+It does not establish it as the *only* trigger: the paragraph below has an abort surviving the
+disable, and nothing measured here says whether that residue is a second caller of the readback
+path or a disable that did not fully take.
 
 Do not read that as "the crashes stop", though, because the harness path does not reproduce a
 clean zero. Its own post-disable check on the run recorded below printed
