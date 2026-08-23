@@ -1,7 +1,6 @@
 package org.libremediaconverter.work
 
 import android.app.Application
-import android.content.Context
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import androidx.work.Data
@@ -15,7 +14,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.ConversionDependencies
-import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.convert.installTestWorkManager
@@ -85,7 +83,7 @@ class WorkerEnumFallbackTest {
     fun `an engine preference this build does not define does not end the job`() {
         // Refused on space, which is the first thing below the three reads: it proves the reads
         // were reached and returned, without dragging in a routing decision this test is not about.
-        publisher.refuse = true
+        publisher.refuseSpace = true
 
         val result = runBlocking { conversionWorker(preference = "FORCE_QUANTUM").doWork() }
 
@@ -150,25 +148,6 @@ class WorkerEnumFallbackTest {
         val SPEC = OutputFormat.MP4_H265.spec
         val CONVERSION_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000021")
         val CONCAT_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000022")
-    }
-}
-
-/**
- * A real [OutputPublisher] that records the staging names it is asked for, and can refuse on space.
- *
- * The name is the only place a join's format is legible from outside: the engine that would use it
- * is native, and the worker deletes the staged file on its way out of a failed attempt.
- */
-private class NamingPublisher(context: Context) : OutputPublisher(context) {
-
-    val requestedNames = mutableListOf<String>()
-    var refuse = false
-
-    override fun hasSpaceFor(bytes: Long): Boolean = !refuse
-
-    override fun createStagingFile(name: String): File {
-        requestedNames += name
-        return super.createStagingFile(name)
     }
 }
 

@@ -25,6 +25,31 @@ open class AlwaysRoomPublisher(context: Context) : OutputPublisher(context) {
 }
 
 /**
+ * An [AlwaysRoomPublisher] that records the staging names it is asked for.
+ *
+ * For a conversion the staged file survives the job and a directory listing says everything. For a
+ * join it does not: `ConcatEngine` is native, so no test here gets past it, and the catch on the way
+ * out deletes what was staged. The name the worker *asked* for is then the only place its job id
+ * and its output format are legible at all — the same reason `SpaceCheckTest` records the question
+ * rather than the verdict.
+ */
+open class NamingPublisher(context: Context) : AlwaysRoomPublisher(context) {
+
+    /** Every name passed to [createStagingFile], in order. */
+    val requestedNames = mutableListOf<String>()
+
+    /** Set to refuse every space check, the way `FakeFailures.FullDisk` does. */
+    var refuseSpace = false
+
+    override fun hasSpaceFor(bytes: Long): Boolean = !refuseSpace
+
+    override fun createStagingFile(name: String): File {
+        requestedNames += name
+        return super.createStagingFile(name)
+    }
+}
+
+/**
  * An engine that writes the output file and nothing else.
  *
  * Enough for the tests that ask *where* a conversion put its result and *what it called it*; what

@@ -10,11 +10,11 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.ConversionDependencies
-import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.convert.installTestWorkManager
 import org.libremediaconverter.model.DeviceCodecs
 import org.libremediaconverter.model.EnginePreference
@@ -35,19 +35,24 @@ import java.util.UUID
  *
  * These drive the real worker rather than the naming function, because the naming function was
  * never the part that was wrong. What was wrong is which name the worker asked for.
+ *
+ * Both workers, for the same reason. The join side collided harder — `joined.<ext>` is one string
+ * for every join of a format, where a conversion at least needed two inputs of the same name — and
+ * it was the half with no test at all: reverting `ConcatWorker` to that constant left all 257
+ * tests green.
  */
 @UnstableApi
 @RunWith(RobolectricTestRunner::class)
 class PerJobStagingTest {
 
     private lateinit var app: Application
-    private lateinit var publisher: OutputPublisher
+    private lateinit var publisher: NamingPublisher
     private lateinit var stagingDir: File
 
     @Before
     fun setUp() {
         app = RuntimeEnvironment.getApplication()
-        publisher = AlwaysRoomPublisher(app)
+        publisher = NamingPublisher(app)
         ConversionDependencies.publisher = { publisher }
         ConversionDependencies.probe = { _, _ -> InputProbe() }
         ConversionDependencies.deviceCodecs = { DeviceCodecs.PERMISSIVE }
@@ -56,6 +61,9 @@ class PerJobStagingTest {
 
         stagingDir = publisher.createStagingFile("anything").parentFile!!
         stagingDir.listFiles()?.forEach { it.delete() }
+        // Asking for the directory above is itself a staging request; the tests are about the ones
+        // the workers make.
+        publisher.requestedNames.clear()
     }
 
     @After
@@ -104,7 +112,33 @@ class PerJobStagingTest {
         )
     }
 
+    @Test
+    fun `two joins of the same format stage under names of their own`() {
+        runBlocking { concatWorker(JOB_A).doWork() }
+        runBlocking { concatWorker(JOB_B).doWork() }
+
+        // Read off what the worker asked for rather than off the directory, and not for
+        // convenience: ConcatEngine is native, so neither join gets past it here, and the catch on
+        // the way out deletes whatever was staged. The name is where the collision lived --
+        // "joined.${format.extension}" is one string for every join of a format, so two joins were
+        // one file, exactly as two conversions of a same-named input were.
+        val names = publisher.requestedNames
+        assertEquals("each join must stage under a name of its own, got $names", 2, names.toSet().size)
+        assertTrue("the first join's name must carry its own job id, got ${names[0]}", names[0].contains("$JOB_A"))
+        assertTrue("the second join's name must carry its own job id, got ${names[1]}", names[1].contains("$JOB_B"))
+    }
+
     private fun stagedNames(): List<String> = stagingDir.listFiles().orEmpty().map { it.name }.sorted()
+
+    private fun concatWorker(id: UUID): ConcatWorker = TestListenableWorkerBuilder<ConcatWorker>(
+        context = app,
+        inputData = workDataOf(
+            ConcatWorker.KEY_INPUT_URIS to arrayOf(INPUT.toString(), "file:///tmp/second.mp4"),
+            ConcatWorker.KEY_TOTAL_BYTES to INPUT_BYTES,
+            ConcatWorker.KEY_FORMAT to JOIN_FORMAT.name,
+        ),
+        runAttemptCount = 0,
+    ).setId(id).build()
 
     private fun conversionWorker(
         id: UUID,
@@ -129,6 +163,7 @@ class PerJobStagingTest {
         const val DISPLAY_NAME = "input.mp4"
         const val INPUT_BYTES = 1024L
         val SPEC = OutputFormat.MP4_H265.spec
+        val JOIN_FORMAT = OutputFormat.MP4_H264
         val JOB_A: UUID = UUID.fromString("00000000-0000-4000-8000-00000000000a")
         val JOB_B: UUID = UUID.fromString("00000000-0000-4000-8000-00000000000b")
     }
