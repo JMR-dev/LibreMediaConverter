@@ -13,6 +13,7 @@ import androidx.work.workDataOf
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
+import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.ContainerCapabilities
@@ -73,7 +74,10 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         // This only builds a path -- nothing is written until an engine opens it -- so naming it
         // early costs nothing, and it is what lets the catch collect a partial an earlier attempt
         // left behind under the same name.
-        val staged = publisher.createStagingFile(outputNameFor(displayName, spec))
+        //
+        // Keyed on this job's id rather than on the input's display name: two conversions of files
+        // that happen to share a name are two jobs, and used to be one file. See StagingNames.
+        val staged = publisher.createStagingFile(StagingNames.forJob(id, spec.extension))
 
         return try {
             // Inside the try, and that placement is the whole point. setForeground() throws
@@ -280,11 +284,15 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         private const val TAG = "ConversionWorker"
 
         /**
-         * The staged and suggested filename.
+         * The name to suggest in the save dialog.
          *
          * The extension comes from the container and whether a video track survives, so Matroska
          * yields `.mkv` or `.mka` and MP4 yields `.mp4` or `.m4a` without a preset having to
          * enumerate both.
+         *
+         * No longer the staged name as well. Staging is keyed on the job id -- see [StagingNames]
+         * -- so this is only ever the string offered to the user, which is also what makes it safe
+         * for it to carry a display name the app does not control.
          */
         fun outputNameFor(inputName: String, spec: OutputSpec): String = inputName.substringBeforeLast('.', inputName) +
             "_converted.${spec.extension}"

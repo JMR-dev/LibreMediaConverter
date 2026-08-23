@@ -11,7 +11,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -86,9 +85,10 @@ class WorkerCancellationTest {
 
         runCatching { runBlocking { worker.doWork() } }
 
-        // The engine stub writes before it throws, so this file really existed. Rethrowing without
-        // deleting would trade one defect for another.
-        assertFalse("a cancelled attempt must not leave its partial behind", stagedFile().exists())
+        // The engine stub writes before it throws, so a file really existed. Asserted against the
+        // whole directory rather than one path, so a name this test computes drifting from the
+        // worker's cannot turn it into a question about a file nobody wrote.
+        assertEquals("a cancelled attempt must not leave its partial behind", emptyList<String>(), stagedNames())
     }
 
     @Test
@@ -105,7 +105,7 @@ class WorkerCancellationTest {
             ),
             result,
         )
-        assertFalse("a failed attempt must not leave its partial behind", stagedFile().exists())
+        assertEquals("a failed attempt must not leave its partial behind", emptyList<String>(), stagedNames())
     }
 
     /**
@@ -134,8 +134,8 @@ class WorkerCancellationTest {
         ).setId(JOB_ID).build()
     }
 
-    /** The staging path the worker will compute, asked for rather than spelled out here. */
-    private fun stagedFile(): File = publisher.createStagingFile(ConversionWorker.outputNameFor(DISPLAY_NAME, SPEC))
+    private fun stagedNames(): List<String> =
+        publisher.createStagingFile("anything").parentFile?.listFiles().orEmpty().map { it.name }.sorted()
 
     private companion object {
         val INPUT: Uri = Uri.parse("file:///tmp/holiday.mp4")

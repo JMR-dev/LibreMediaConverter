@@ -15,12 +15,12 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.OutputPublisher
+import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.convert.installTestWorkManager
 import org.libremediaconverter.model.OutputFormat
 import org.robolectric.RobolectricTestRunner
@@ -92,12 +92,20 @@ class DeniedForegroundStartTest {
     fun `a denied foreground start collects the partial file the killed attempt left behind`() {
         // Exactly the 2 MB orphan the device pass found. A process killed mid-transcode leaves a
         // partial in staging, and the attempt WorkManager schedules to recover it stages under the
-        // same name; reaching staged.delete() is what collects it.
-        val staged = stagedFile().apply { writeBytes(ByteArray(PARTIAL_BYTES)) }
+        // same name -- the job id does not move across a retry -- so reaching staged.delete() is
+        // what collects it.
+        stagedFile().writeBytes(ByteArray(PARTIAL_BYTES))
 
         runBlocking { conversionWorker().doWork() }
 
-        assertFalse("a denied restart must not orphan the previous attempt's partial", staged.exists())
+        // Asserted against the whole directory rather than one path. A path this test computes
+        // itself can stop matching the one the worker computes, and then the assertion passes by
+        // asking whether a file nobody wrote is absent.
+        assertEquals(
+            "a denied restart must not orphan the previous attempt's partial",
+            emptyList<String>(),
+            stagedNames(),
+        )
     }
 
     @Test
@@ -146,7 +154,9 @@ class DeniedForegroundStartTest {
         .build()
 
     /** The staging path the worker will compute, asked for rather than spelled out here. */
-    private fun stagedFile(): File = publisher.createStagingFile(ConversionWorker.outputNameFor(DISPLAY_NAME, SPEC))
+    private fun stagedFile(): File = publisher.createStagingFile(StagingNames.forJob(CONVERSION_ID, SPEC.extension))
+
+    private fun stagedNames(): List<String> = stagedFile().parentFile?.listFiles().orEmpty().map { it.name }.sorted()
 
     private companion object {
         val INPUT: Uri = Uri.parse("content://test/holiday.mp4")

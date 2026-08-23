@@ -182,8 +182,8 @@ class ConversionViewModel @JvmOverloads constructor(
             if (_state.value !is ConversionState.Idle || activeWorkId != null) return@launch
 
             // Only a job that is the sole explanation for its staged file gets to name the input.
-            // When several jobs report the same file — which nothing prevents while the staging
-            // name is derived from the input's display name — the file is still the user's, but
+            // When several jobs report the same file — which staging on the job id has stopped for
+            // new work, but not for work already in the queue — the file is still the user's, but
             // saying which of them produced it would be a guess, so the card falls back to a
             // neutral label rather than borrowing the other job's.
             val tags = (reattachment as? Reattachment.Certain)?.job?.tags.orEmpty()

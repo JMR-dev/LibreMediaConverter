@@ -43,7 +43,7 @@ class LibreMediaConverterApp : Application() {
         //
         //  - Conversion and join outputs are written continuously, so a running job keeps
         //    its own mtime fresh and never looks abandoned.
-        //  - concat_list.txt is the one file written once and then only read, so it is the
+        //  - A join's list file is the one written once and then only read, so it is the
         //    one that has to be reasoned about rather than observed. A WorkManager attempt
         //    is capped by the six-hour-per-day foreground-service budget and a retry starts
         //    doWork() again from the top, rewriting the list file -- so no single attempt

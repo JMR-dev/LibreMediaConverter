@@ -12,6 +12,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
+import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.ffmpeg.ConcatEngine
 import org.libremediaconverter.model.OutputFormat
 
@@ -49,7 +50,10 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
         // Named before anything below can throw, so every exit has the handle to clean up with.
         // See the same line in ConversionWorker.
-        val staged = publisher.createStagingFile("joined.${format.extension}")
+        //
+        // Keyed on this job's id. The constant "joined.<ext>" this replaces meant any two joins of
+        // the same format wrote one file, and ConcatEngine's list file collided harder still.
+        val staged = publisher.createStagingFile(StagingNames.forJob(id, format.extension))
 
         return try {
             // Inside the try: a foreground start refused because the app is in the background --

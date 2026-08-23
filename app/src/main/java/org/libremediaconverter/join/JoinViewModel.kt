@@ -93,14 +93,13 @@ class JoinViewModel @JvmOverloads constructor(
             // below, and both run on the main dispatcher, so nothing can interleave.
             if (_state.value !is JoinState.Idle || activeWorkId != null) return@launch
 
-            // Every join stages under the same constant name, so two finished joins always
-            // report the same file and no tag of either can be trusted to describe it. That is
-            // what Ambiguous means here, and the count falls back rather than being borrowed —
-            // which costs nothing in practice, since the count is only rendered while a job is
-            // live and a live job names no file to be aliased on. What it does not cover is the
-            // stream-copy-or-re-encode line on Joined, which comes from the picked job's output
-            // and can therefore belong to the other one. Same cause, same fix: one staging name
-            // per job.
+            // Joins used to stage under one constant name, so two finished joins always reported
+            // the same file and no tag of either could be trusted to describe it. That is what
+            // Ambiguous means here, and the count falls back rather than being borrowed — which
+            // costs nothing in practice, since the count is only rendered while a job is live and
+            // a live job names no file to be aliased on. Staging on the job id has closed that for
+            // new work, including the stream-copy-or-re-encode line on Joined, which comes from
+            // the picked job's output; joins already in the queue keep the old shape.
             val tags = (reattachment as? Reattachment.Certain)?.job?.tags.orEmpty()
             // Placeholders, and safe only because of where they can go. Joining reads nothing
             // but the size of this list, Waiting and Joined read none of it, and a reattached

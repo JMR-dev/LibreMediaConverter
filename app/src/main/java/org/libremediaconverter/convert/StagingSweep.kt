@@ -12,9 +12,13 @@ package org.libremediaconverter.convert
  *
  * The rule replaces an unconditional `clearStaging()` that deleted the directory's whole
  * contents. That was hazardous: `<cacheDir>/conversions/` is shared by the convert tab, the
- * join tab and [org.libremediaconverter.ffmpeg.ConcatEngine]'s `concat_list.txt`, and any
- * two of them can be live at once, so a blanket delete could take a file out from under a
- * running job. Age is the narrowing.
+ * join tab and [org.libremediaconverter.ffmpeg.ConcatEngine]'s list file, and any two of
+ * them can be live at once, so a blanket delete could take a file out from under a running
+ * job. Age is the narrowing.
+ *
+ * Per-job staging names ([StagingNames]) do not change that. They stop two jobs from writing
+ * one file; they do nothing about a sweep deleting a file whose job is still running, which
+ * is what age is for.
  */
 object StagingSweep {
 
@@ -26,7 +30,7 @@ object StagingSweep {
      *
      * Twenty-four hours, chosen against the longest a live file can plausibly go untouched
      * rather than against how quickly cache should be reclaimed. Output files are written
-     * continuously, so a running job refreshes their mtime by itself. `concat_list.txt` is
+     * continuously, so a running job refreshes their mtime by itself. A join's list file is
      * the exception — written once and then only read for the rest of the join — so the
      * period has to exceed a whole join. WorkManager caps a single attempt at the
      * six-hour-per-day foreground-service budget and then stops the worker, and a retry
