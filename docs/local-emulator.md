@@ -1,8 +1,10 @@
 # Emulators do run on this host: the segfault is SwiftShader's JIT against SELinux
 
-**Status:** solved. Local instrumented runs work with `-gpu host`, and the suite is green
-on API 33–36 — 49 tests, 0 failures, 0 errors, 2 skipped on every level. See
-[The sweep, run](#the-sweep-run).
+**Status:** solved. Local instrumented runs work with `-gpu host`, and the whole suite is green
+on API 33–36 — 0 failures, 0 errors and the two by-design skips on every level, measured as
+49 / 0 / 0 / 2 at `22c7914`, where the suite was 49 tests. See [The sweep, run](#the-sweep-run),
+and [Reading these totals](api-37-emulator-crash.md#reading-these-totals) before comparing any
+total with another checkout's.
 **Last verified:** 2026-08-22, emulator `37.1.11.0` (build 15917651), Fedora 44,
 kernel `7.1.8-200.fc44`, `selinux-policy-44.6-1.fc44`
 
@@ -243,8 +245,9 @@ after an AGP upgrade.
 ## The sweep, run
 
 `tools/local-emulator/run-e2e.sh`, one invocation per level so each got a freshly created
-AVD, `-gpu host` throughout, 2026-08-22 19:42–19:56. Every level matches the physical
-Pixel 10 Pro XL (API 37) baseline of 49 / 0 / 0 / 2 exactly:
+AVD, `-gpu host` throughout, 2026-08-22 19:42–19:56, on `22c7914`. All four levels agree exactly,
+and 49 is that checkout's whole suite — every `@Test` in `app/src/androidTest`, two of which skip
+by design everywhere:
 
 | API | Android | AVD | Boot | `connectedDebugAndroidTest` | Tests | Failures | Errors | Skipped |
 |---|---|---|---|---|---|---|---|---|
@@ -252,6 +255,12 @@ Pixel 10 Pro XL (API 37) baseline of 49 / 0 / 0 / 2 exactly:
 | 34 | 14 | `lmc_e2e_api34` | 55 s | 42 s | 49 | 0 | 0 | 2 |
 | 35 | 15 | `lmc_e2e_api35` | 40 s | 3 m 46 s | 49 | 0 | 0 | 2 |
 | 36 | 16 | `lmc_e2e_api36` | 90 s | 2 m 18 s | 49 | 0 | 0 | 2 |
+
+The physical Pixel has never reported 49, and an earlier version of this paragraph said the
+sweep matched it exactly. Its green API 37 run was 40 / 0 / 0 / 2, at `edd6385` — the same suite
+nine tests earlier. What matches is 0 failures, 0 errors and the same two skips; totals only ever
+match between runs of one checkout, which
+[`api-37-emulator-crash.md`](api-37-emulator-crash.md#reading-these-totals) sets out.
 
 Thirteen and a half minutes for the four levels, AVD creation and cold boots included;
 fifteen with the pre-warm build in front of them. Nothing needed a retry, and no level
@@ -449,8 +458,9 @@ Proposed replacement for the section, offered for review rather than applied her
 > - **API 37 needs the opposite renderer, and SystemUI turned off.** Both `android-37.0` and
 >   `android-37.1` abort surfaceflinger inside their own gralloc mapper, and init SIGKILLs
 >   zygote each time. Under `-gpu host` they never boot; under `-gpu swangle_indirect` they
->   boot, and disabling SystemUI removes the trigger. `run-e2e.sh` does all of that per level;
->   the local result is 49 tests / 2 failures / 2 skipped. CI's matrix still stops at 36.
+>   boot, and disabling SystemUI removes the trigger. `run-e2e.sh` does all of that per level,
+>   and the local API 37 result is two failures and the two usual skips, not a clean run. CI's
+>   matrix still stops at 36.
 >   `docs/api-37-emulator-crash.md` has the matrix and the reasoning. **API 37 needs a manual
 >   check on the Pixel 10 Pro XL before each release.**
 

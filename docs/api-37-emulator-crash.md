@@ -3,9 +3,12 @@
 **Status:** the bug is real and still open upstream, but the previous diagnosis in this file was
 wrong about its most important detail. **The renderer decides whether API 37 boots**, and once it
 boots, disabling SystemUI collapses the crash rate far enough to run a suite —
-`tools/local-emulator/run-e2e.sh 37` reports **49 tests, 2 failures, 0 errors, 2 skipped**. The
-crashes do not stop outright, and the two failures are real; both are quantified below. CI's
-matrix should still stop at 36 — see [So should CI take API 37?](#so-should-ci-take-api-37).
+`tools/local-emulator/run-e2e.sh 37` gets through the whole instrumented suite and comes back with
+**2 failures, 0 errors and the two by-design skips** (measured 49 / 2 / 0 / 2 at `22c7914`, where
+the suite was 49 tests — [Reading these totals](#reading-these-totals) before comparing any total
+with another). The crashes do not stop outright, and the two failures are real; both are quantified
+below. CI's matrix should still stop at 36 — see
+[So should CI take API 37?](#so-should-ci-take-api-37).
 **Last verified:** 2026-08-22, emulator `37.1.11.0` (build 15917651), Fedora 44,
 against system images `android-37.0` rev 6 **and** `android-37.1` rev 8.
 
@@ -223,17 +226,25 @@ booted (`emulator_alive=yes`). The host emulator is fine; the guest is not.
 
 ## Can the suite run on it?
 
-**Almost.** `tools/local-emulator/run-e2e.sh 37` now runs the whole suite locally and reports
-**49 tests, 2 failures, 0 errors, 2 skipped**. That is 47 of 49 against the Pixel's 49 of 49, and
-it costs two deviations from how every other level is run. Both are worth understanding before
-trusting the leg.
+**Almost.** `tools/local-emulator/run-e2e.sh 37` now runs the whole suite locally, and all of it
+passes except two tests. Measured at `22c7914`: **49 tests, 2 failures, 0 errors, 2 skipped** — 45
+passed, the two `Media3EngineTest` failures dissected below, and the two `assumeTrue` skips every
+level has. It costs two deviations from how every other level is run, and both are worth
+understanding before trusting the leg.
+
+Two things about that total before it is compared with anything. It is the size of the suite on
+the checkout that ran, not a property of API 37 — `app/src/androidTest` held 49 `@Test` methods at
+`22c7914`, and a newer checkout reports its own count; see
+[Reading these totals](#reading-these-totals). And **the Pixel has never run 49**: its green run
+was 40 / 0 / 0 / 2 at `edd6385`, the same suite nine tests earlier. What compares across the two
+is two failures against none, and the same two skips — not the totals.
 
 The same numbers and the same two test names came back twice, which is real corroboration — but
 by two different routes, and only one of them is the harness. The first was driven by hand
 (`pm disable-user`, then several minutes of incidental framework restarts, then `e2e-run.sh`
 directly); the second went through `disable_region_sampling`'s `stop; start`. **The harness path
-itself has one green measurement.** Treat a second consecutive 49/2/0/2 from
-`run-e2e.sh 37` as the thing that would make this routine.
+itself has one green measurement.** What would make this routine is a second consecutive
+`run-e2e.sh 37` whose only failures are the same two.
 
 ### Booting is not the same as being usable
 
@@ -324,8 +335,9 @@ Three measurements say this is the emulator image and not this app, and not the 
 renderer:
 
 - **Control at API 35 under the identical renderer.** `GPU_MODE=swangle_indirect
-  tools/local-emulator/run-e2e.sh 35` → **49 / 0 / 0 / 2**, green. `c2.goldfish.h264.decoder` is
-  perfectly happy under ANGLE one API level down, so the renderer is not what breaks it.
+  tools/local-emulator/run-e2e.sh 35` → **49 / 0 / 0 / 2** at `22c7914`, green.
+  `c2.goldfish.h264.decoder` is perfectly happy under ANGLE one API level down, so the renderer is
+  not what breaks it.
 - **Real API 37 hardware passes**, see below. There is no `c2.goldfish.*` codec on a Pixel.
 - The failing call is `dequeueOutputBuffer` on the *goldfish* decoder — the emulator's own codec,
   which like `RegionSamplingThread` gets its frames out of a host-side colour buffer. Same
@@ -346,7 +358,7 @@ suite depends on those decoders existing.
 2. The working configuration needs SystemUI disabled and a framework restart mid-job. That is a
    lot of bespoke device surgery to put behind a merge gate, and it silently weakens what the leg
    proves.
-3. Even at its best it is 47 of 49, so the leg would be permanently red or permanently
+3. Even at its best two tests fail, so the leg would be permanently red or permanently
    allow-listed. Neither is a gate worth having.
 
 What has changed is the *local* story: API 37 is no longer a level nobody can look at. A
@@ -367,11 +379,32 @@ API:     37 (Android 17, codename REL -- a release build, not a preview)
   40 tests, 0 failures, 0 errors, 2 skipped        BUILD SUCCESSFUL
 ```
 
-**That "40" is not a baseline to compare against today, and it is not a contradiction of the 49
-in [`docs/local-emulator.md`](local-emulator.md).** It was accurate for the tree it ran on: at
-`edd6385`, the commit that recorded it, `app/src/androidTest` contained exactly 40 `@Test`
-methods. Nine have been added since and the suite is now 49. If you re-run on the Pixel, expect
-49 / 0 / 0 / 2, and if you get 40, you are on an old checkout.
+**That "40" is a measurement of the tree it ran on, not a baseline for today**, and it is not a
+contradiction of the totals in [`docs/local-emulator.md`](local-emulator.md) either.
+
+### Reading these totals
+
+Every total in this file and in [`docs/local-emulator.md`](local-emulator.md) is the size of
+`app/src/androidTest` on the checkout that produced it, and nothing else. The reported total has
+equalled that checkout's `@Test` count everywhere it has been checked:
+
+| checkout | `@Test` methods | total the run reported |
+|---|---|---|
+| `edd6385` | 40 | 40 — the Pixel run above |
+| `22c7914` | 49 | 49 — the four local levels, and API 37 |
+| `18c53a3` | 57 | not run |
+
+So the number to expect is not written down here. It is derived from the checkout in front of
+you, which is the only thing that cannot go stale:
+
+```bash
+grep -rho '@Test' app/src/androidTest | wc -l
+```
+
+**Before each release, run the suite on the Pixel 10 Pro XL and expect that many tests, 0
+failures, 0 errors, 2 skipped.** The failure, error and skip counts are the invariant; the total
+is not. A total that disagrees with your own checkout's count is the signal — an old checkout, a
+stale build, or tests that never ran — and it is worth stopping on either way.
 
 The two skips are `RealMediaBenchmark.hardwareVersusSoftwareOnRealVideo` and
 `av1InputRoutesAccordingToDeviceDecodeSupport`, which `assumeTrue` their sample files are present
