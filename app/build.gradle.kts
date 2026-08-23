@@ -290,6 +290,22 @@ dependencies {
     // drive a ViewModel through a real WorkManager to SUCCEEDED, which is where the cleanup
     // handle is set -- the wiring the leak actually lived in.
     testImplementation(libs.androidx.work.testing)
+    // Compose's own test rules, on the JVM source set as well as androidTest. Already in the
+    // catalog, already inside the prerelease guard via its androidx. group, and versioned by
+    // the BOM, so this adds no new pinning argument.
+    //
+    // Here rather than only in androidTest because ui-test-junit4 runs under Robolectric:
+    // createComposeRule() drives a real composition on the JVM. The defect it was added for
+    // -- the selected tab not surviving recreation -- is caught by StateRestorationTester,
+    // and putting that test where the instrumented suite lives would mean nobody on this
+    // host could ever watch it go red.
+    //
+    // ui-test-manifest is deliberately NOT repeated here. It supplies the ComponentActivity
+    // the rule launches, and the debugImplementation entry below already puts it in the
+    // merged manifest the unit tests build against -- checked by removing it and watching
+    // the tests stay green.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.androidx.junit)
