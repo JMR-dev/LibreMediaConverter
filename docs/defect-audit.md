@@ -6,7 +6,8 @@ entry in the summary table and
 tracks `main`, re-checked at `18c53a3`; the entry bodies below describe each defect *as found* and
 are deliberately not rewritten as fixes land — this is the record of what was wrong, not a
 changelog.
-**Scope:** the Android-framework edge of the app, which has no JVM unit tests.
+**Scope:** the Android-framework edge of the app, which had no JVM unit tests when this was
+written — it has them now; see [On testing these](#on-testing-these).
 **Last verified:** 2026-08-22, against `main` at `903b43c`.
 **Device pass:** 2026-08-22 on a physical Pixel 10 Pro XL, API 37. Four entries were driven on
 hardware; **D1 did not reproduce and its premise is contradicted** — see its entry. Verdicts are
@@ -71,9 +72,16 @@ public properties, which is the opposite of what `config/detekt/detekt.yml` says
 is: *"Genuine smells … are fixed in the code, not silenced."*
 
 So the linters are clean and honest, and the defects are elsewhere — in the code they cannot see
-into. `OutputPublisher`, both ViewModels, both Workers and `MainActivity` have **no JVM unit tests
-at all**: roughly 1,200 of ~4,000 lines of main source, and the direct explanation for the ~31%
-coverage figure recorded in `CLAUDE.md`. Every entry below is in that untested set.
+into. At `903b43c`, `OutputPublisher`, both ViewModels, both Workers and `MainActivity` had **no
+JVM unit tests at all**: roughly 1,200 of ~4,000 lines of main source, and the direct explanation
+for the ~31% coverage figure recorded in `CLAUDE.md`. Every entry below is in that untested set.
+
+*That derivation is why the figure was what it was, and it is kept for exactly that reason — but
+the set it describes is no longer untested (`R15 / #24`). The follow-up added 25 JVM test files
+over precisely those ~1,200 lines, taking the suite from 180 to 257. So the ~31% predates them and
+has not been re-measured; `:app:jacocoTestReport` is the only thing that can say what it is now,
+and until it is re-run the figure should be read as "the number that motivated this work", not as
+current coverage.*
 
 ## How to read the confidence labels
 
@@ -457,6 +465,12 @@ which is what makes it visibly wrong rather than merely stale.
 `rememberSaveable`. A Compose `StateRestorationTester` test covers it, and
 `compose-ui-test-junit4` is **already on the androidTest classpath with zero current users** — no
 new dependency needed. It is an instrumented test, so it runs on CI, not locally.
+
+*Both halves of that last sentence stopped being true, and the fix went the other way (`R14 /
+#23`). `compose-ui-test-junit4` is declared for the JVM source set now, and the
+`StateRestorationTester` test this entry asked for is `AppRootRestorationTest`, which runs under
+Robolectric on `:app:testDebugUnitTest` — not an instrumented test at all. Instrumented tests also
+do run on this host now: `tools/local-emulator/run-e2e.sh`, API 33–36.*
 
 ---
 
@@ -861,11 +875,28 @@ through a PR, never on `main`.
 
 ### On testing these
 
-The JVM test source set has exactly one dependency, `testImplementation(libs.junit)`. That is why
-every well-tested class in this project is pure (`model/`, `FFmpegCommandBuilder`,
+> **Correction — 2026-08-23 (`R14 / #23`, `R15 / #24`).** This section proposed a plan; the
+> follow-up work then executed it, so four of its load-bearing statements were true at `903b43c`
+> and false by `18c53a3`. It is re-dated rather than deleted, because the reasoning is *why* the
+> test stack looks the way it does — but nothing below describes `main` today unless a marked note
+> says so. Read the plain paragraphs as history.
+
+At `903b43c` the JVM test source set had exactly one dependency, `testImplementation(libs.junit)`.
+That is why every well-tested class in this project is pure (`model/`, `FFmpegCommandBuilder`,
 `FailureOutcome`) and every untested one takes a `Context`. Instrumented tests cannot run on the
 development host (`CLAUDE.md`, "Instrumented tests do not run locally"), so an androidTest-only
 red test is not a TDD loop anyone can execute here.
+
+*Neither sentence still holds. There are five `testImplementation` entries now — `junit`,
+`robolectric`, `androidx.work.testing`, the Compose BOM platform and `compose-ui-test-junit4` — so
+the one-dependency constraint that shaped this codebase no longer binds a new test. And
+instrumented tests do run on this host (`R14 / #23`): `22c7914` found the cause of the segfaults,
+and `tools/local-emulator/run-e2e.sh` runs the suite locally on API 33–36, recorded in
+[`local-emulator.md`](local-emulator.md). The pure-seams choice below still stands, but it now
+rests on speed and determinism — a JVM test is seconds against an emulator leg's minutes and a
+cold boot — rather than on impossibility, which is a weaker argument and should be made honestly.
+What does survive unchanged is the API 37 rule: that image is broken, so API 37 is still a
+physical-Pixel check before each release.*
 
 The approach chosen for the follow-up work is **pure seams plus Robolectric**: extract each
 decision into a pure function on the existing JUnit 4 stack — the pattern `work/FailureOutcome.kt`
@@ -875,9 +906,20 @@ prerelease guard in `app/build.gradle.kts` covers only `androidx.`, `junit` and 
 so a new group would float unguarded) and a `testOptions { unitTests.isIncludeAndroidResources = true }`
 block, which this module does not currently have at all.
 
+*Executed, and both build-side predictions held. Robolectric is a pinned entry in
+`libs.versions.toml`, pinned for exactly the reason given — the `componentSelection` guard does not
+cover `org.robolectric`, so a `4.+` would have resolved straight to a beta — and the reasoning is
+written beside it. The `testOptions` block this paragraph said the module "does not currently have
+at all" is in `app/build.gradle.kts` today.*
+
 Worth knowing before adding anything: **`androidx.work:work-testing`, `compose-ui-test-junit4` and
 `espresso-core` are already declared and have zero users.** `TestListenableWorkerBuilder` and
 `createComposeRule` are available on the androidTest classpath today with no build change.
+
+*Two of the three have users now — and on the JVM source set, not the instrumented one:
+`androidx.work.testing` is imported by seven files under `app/src/test`, and
+`androidx.compose.ui.test` by one (`AppRootRestorationTest`). **`espresso-core` is still at zero**,
+so that third of the sentence is the only part still standing.*
 
 ## Not covered here
 
