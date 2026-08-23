@@ -7,6 +7,23 @@ import android.provider.OpenableColumns
 import java.io.File
 
 /**
+ * What a save has to say when the staged file is not there any more.
+ *
+ * Reachable without anything going wrong: staging lives in `cacheDir`, which the OS reclaims
+ * whenever it wants the space, and [sweepStaging] collects anything a day old. A result offered by
+ * reattachment is the likeliest to meet it — the check that decided the file existed ran during a
+ * tag query that can be hours old by the time the Save button is tapped.
+ *
+ * A written sentence rather than the exception's message, which is what used to reach the screen:
+ * `/data/user/0/org.libremediaconverter/cache/conversions/4b4882….mp4: open failed: ENOENT (No such
+ * file or directory)` is a true statement about a path the user has never seen and cannot act on.
+ * Kept next to [OutputPublisher] because both ViewModels need it and staging is what it is about.
+ */
+const val STAGED_FILE_GONE_MESSAGE: String =
+    "The finished file is no longer in the cache, so there is nothing left to save. " +
+        "Start over to make it again."
+
+/**
  * Staging and publication of conversion output.
  *
  * Conversions never write directly to the destination the user picked. FFmpeg and the

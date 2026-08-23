@@ -400,8 +400,21 @@ class ConversionViewModel @JvmOverloads constructor(
         activeWorkId?.let(workManager::cancelWorkById)
     }
 
+    /**
+     * Copies the staged result out to the destination the user picked.
+     *
+     * The existence check is not redundant with the one reattachment already made. That one ran
+     * inside a tag query which, for a result offered on launch, can be hours older than the tap —
+     * and `cacheDir` is exactly the directory the OS empties when it wants space, which is also
+     * what the sweep does to anything a day old. Without it the file's absence arrived as
+     * `staged.inputStream()` throwing, and `e.message` put a raw ENOENT path on screen.
+     */
     fun save(destination: Uri) {
         val converted = _state.value as? ConversionState.Converted ?: return
+        if (!converted.staged.isFile) {
+            _state.value = ConversionState.Failed(STAGED_FILE_GONE_MESSAGE)
+            return
+        }
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {

@@ -104,10 +104,13 @@ sealed interface Reattachment {
          * result still worth offering from one already dealt with, which is why that check
          * carries the weight here.
          *
-         * It is also the seam for a neighbouring defect: a result the user dismissed with "Start
-         * over" currently keeps its staged file, so today it can be offered again on the next
-         * launch. Nothing here changes when that is fixed — the file stops existing and the job
-         * stops qualifying.
+         * It is also the seam a neighbouring fix acts through. "Start over" deletes the staged
+         * file, so a result the user dismissed stops qualifying here without this rule needing to
+         * know that happened — the file stops existing and the job falls out. What survives is the
+         * narrower gap that delete cannot close: `reset()` dispatches it to
+         * [kotlinx.coroutines.Dispatchers.IO] and it is cancelled with the Activity, so a
+         * dismissal on the way out of the app can leave the file behind. That is what
+         * `OutputPublisher.sweepStaging` is for, and its own KDoc names this case.
          *
          * Ranked, when more than one qualifies:
          *
