@@ -85,6 +85,10 @@ on:
         description: 'Passed to e2e-run.sh as E2E_EXTRA_GRADLE_ARGS, its existing hook -- e.g. "--rerun", or -Pandroid.testInstrumentationRunnerArguments.class=... to run one class instead of the suite.'
         type: string
         default: ''
+      measure_baseline:
+        description: 'Measure the abort rate for 45 s BEFORE disabling SystemUI. Answers "how fast is it aborting"; costs 45 s of crash-looping first, which is a worse starting point for the disable.'
+        type: boolean
+        default: true
 
 run-name: >-
   api ${{ inputs.api_level }}/${{ inputs.target }} · gpu ${{ inputs.gpu_mode }} ·
@@ -239,39 +243,84 @@ jobs:
           for s in package activity window; do adb shell service check "$s" 2>&1; done
 
           count_aborts() { adb logcat -d -b crash 2> /dev/null | grep -c 'hasReadColorBufferDma'; }
+          systemui_disabled() { adb shell pm list packages -d 2> /dev/null | grep -q 'com.android.systemui'; }
 
-          before="$(count_aborts)"
-          sleep 45
-          after="$(count_aborts)"
-          echo "--- abort rate, SystemUI running: $((after - before)) new in 45 s (total ${after:-0}) ---"
-
-          if [ "${DISABLE_SYSTEM_UI:-false}" = "true" ]; then
-            echo "--- disabling SystemUI ---"
-            for i in $(seq 1 10); do
-              out="$(adb shell pm disable-user --user 0 com.android.systemui 2>&1 | tr -d '\r')"
-              echo "  attempt $i: $out"
-              case "$out" in *"new state: disabled"*) break ;; esac
-              sleep 5
-            done
-            # pm disable-user does not retract SystemUI's existing region-sampling
-            # registration -- by the time boot completes it has already registered. Only a
-            # framework restart brings back a SystemUI-less SurfaceFlinger. See
-            # disable_region_sampling in tools/local-emulator/run-e2e.sh.
-            echo "--- restarting the framework ---"
-            adb shell stop
-            adb shell start
-            for i in $(seq 1 30); do
-              if adb shell service check package 2> /dev/null | grep -q ': found' \
-                && adb shell service check activity 2> /dev/null | grep -q ': found'; then
-                echo "  services back after $((i * 5)) s"
-                break
-              fi
-              sleep 5
-            done
+          if [ "${MEASURE_BASELINE:-true}" = "true" ]; then
             before="$(count_aborts)"
             sleep 45
             after="$(count_aborts)"
-            echo "--- abort rate, SystemUI disabled: $((after - before)) new in 45 s (total ${after:-0}) ---"
+            echo "--- abort rate, SystemUI running: $((after - before)) new in 45 s (total ${after:-0}) ---"
+          else
+            # Skipped on purpose when the question is reliability rather than rate: every
+            # second spent measuring is a second of crash-looping, and the disable is what
+            # has to land. A real CI leg would disable as early as it can, so measure that.
+            echo "--- baseline window skipped (MEASURE_BASELINE=false) ---"
+          fi
+
+          if [ "${DISABLE_SYSTEM_UI:-false}" = "true" ]; then
+            # Three rounds, because ONE round is not reliable and the failure is silent.
+            # Measured: of four runs of the same configuration, three came back with the
+            # suite running and one (32646029143) had SystemUI restarting throughout --
+            # `ActivityManager: Start proc N:com.android.systemui ... GradientColorWallpaper`
+            # eight more times after a `pm disable-user` that had reported
+            # `new state: disabled-user`, and ten more RegionSampling aborts with it. The
+            # framework is being SIGKILLed every ~20 s while this runs, so a package-state
+            # change can be lost with the system_server that accepted it.
+            #
+            # Nothing here trusts a command's own report. Each round: disable, take the
+            # framework down and confirm it is DOWN before bringing it back (the previous
+            # version asked `service check` 0.3 s after `stop` and got `found` from the
+            # system_server that was still exiting, so its wait was not a wait), then verify
+            # the package is really disabled and that no abort lands in a quiet window.
+            round=1
+            while [ "$round" -le 3 ]; do
+              echo "--- disable round $round ---"
+              for i in $(seq 1 10); do
+                out="$(adb shell pm disable-user --user 0 com.android.systemui 2>&1 | tr -d '\r')"
+                echo "  pm attempt $i: $out"
+                case "$out" in *"new state: disabled"*) break ;; esac
+                sleep 5
+              done
+
+              # pm disable-user does not retract SystemUI's existing region-sampling
+              # registration -- by the time boot completes it has already registered. Only a
+              # framework restart brings back a SystemUI-less SurfaceFlinger. See
+              # disable_region_sampling in tools/local-emulator/run-e2e.sh.
+              echo "  restarting the framework"
+              adb shell stop
+              for i in $(seq 1 20); do
+                [ -z "$(adb shell pidof system_server 2> /dev/null | tr -d '\r\n')" ] && break
+                sleep 2
+              done
+              echo "  system_server down after $((i * 2)) s"
+              adb shell start
+              for i in $(seq 1 30); do
+                if adb shell service check package 2> /dev/null | grep -q ': found' \
+                  && adb shell service check activity 2> /dev/null | grep -q ': found' \
+                  && [ -n "$(adb shell pidof system_server 2> /dev/null | tr -d '\r\n')" ]; then
+                  echo "  services back after $((i * 5)) s"
+                  break
+                fi
+                sleep 5
+              done
+
+              if systemui_disabled; then
+                echo "  verified: com.android.systemui is in pm list packages -d"
+              else
+                echo "  NOT DISABLED after the restart -- the package state did not survive"
+                round=$((round + 1))
+                continue
+              fi
+
+              before="$(count_aborts)"
+              sleep 45
+              after="$(count_aborts)"
+              echo "--- abort rate, SystemUI disabled: $((after - before)) new in 45 s (total ${after:-0}) ---"
+              [ "$((after - before))" -eq 0 ] && break
+              echo "  still aborting after round $round"
+              round=$((round + 1))
+            done
+            systemui_disabled && echo "final state: SystemUI disabled" || echo "final state: SystemUI STILL ENABLED -- expect Starting 0 tests"
           fi
 
           echo "--- crash buffer (tail 60) ---"
@@ -298,6 +347,7 @@ jobs:
         env:
           LABEL: ${{ inputs.api_level }}
           DISABLE_SYSTEM_UI: ${{ inputs.disable_system_ui }}
+          MEASURE_BASELINE: ${{ inputs.measure_baseline }}
           # e2e-run.sh's own hook, unset in CI's real workflow and therefore inert there.
           E2E_EXTRA_GRADLE_ARGS: ${{ inputs.gradle_extra_args }}
         with:
