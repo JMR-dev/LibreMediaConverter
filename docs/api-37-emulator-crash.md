@@ -2,9 +2,10 @@
 
 **Status:** the bug is real and still open upstream, but the previous diagnosis in this file was
 wrong about its most important detail. **The renderer decides whether API 37 boots**, and once it
-boots, disabling SystemUI stops the crashes entirely. `tools/local-emulator/run-e2e.sh 37` now
-runs the suite locally: **49 tests, 2 failures, 0 errors, 2 skipped**. CI's matrix should still
-stop at 36 — see [So should CI take API 37?](#so-should-ci-take-api-37).
+boots, disabling SystemUI collapses the crash rate far enough to run a suite —
+`tools/local-emulator/run-e2e.sh 37` reports **49 tests, 2 failures, 0 errors, 2 skipped**. The
+crashes do not stop outright, and the two failures are real; both are quantified below. CI's
+matrix should still stop at 36 — see [So should CI take API 37?](#so-should-ci-take-api-37).
 **Last verified:** 2026-08-22, emulator `37.1.11.0` (build 15917651), Fedora 44,
 against system images `android-37.0` rev 6 **and** `android-37.1` rev 8.
 
@@ -30,6 +31,15 @@ reached* is not. Re-measured on 2026-08-22, seven runs, one variable at a time:
 
 The discriminator is exact across all seven: **a run boots if and only if the emulator log says
 something other than `gles_mode_selected:host`.**
+
+One caveat about how independent those rows are, because the table flatters itself. `-gpu
+angle_indirect` (r05) and `-gpu swangle_indirect` (r03) both logged `gles_mode_selected:swangle`
+and both reported the same adapter, differing only in the Vulkan backend beneath
+(`vulkan_mode_selected:lavapipe` against `swiftshader`). So they are closer to one GLES path
+reached two ways than to two renderers agreeing — note that at API 33–36
+[`docs/local-emulator.md`](local-emulator.md) records `angle_indirect` resolving to ANGLE on
+*llvmpipe*, a genuinely different adapter, which it did not do here. What is 7-for-7 is the
+host-GLES-versus-not split, not "two independent renderers both work".
 
 ```
 # r01, r02, r04, r07 -- never boots
@@ -131,6 +141,26 @@ system-images;android-37.1;google_apis_ps16k;x86_64    Pkg.Revision=8   ApiLevel
   ro.build.version.codename=REL   (a release image, not a preview)
 ```
 
+**Note the `ps16k` in the second one — it is not optional, and it is why the 37.1 result is
+interpretable.** From API 37.1 onward Google ships *only* 16 KB-page x86_64 images; there is no
+plain `google_apis` variant to pick. `sdkmanager --list` for 37.1 and 37.2-beta* offers nothing
+but `google_apis_ps16k` and `google_apis_playstore_ps16k`. That makes page-size alignment a
+prerequisite rather than a detail: a `.so` that is not 16 KB aligned will not load on such a
+guest, and the resulting failure looks like an app bug. Checked before the first `ps16k` boot,
+using the same test `build.yml` applies to release APKs — all 20 libraries in the committed
+`bin/ffmpeg-kit-next-8.1.1.aar`, both ABIs, report `0x4000`:
+
+```
+$ for f in jni/*/*.so; do readelf -lW "$f" | awk '$1=="LOAD"{print $NF}' | sort -u; done
+0x4000   (x20: libavcodec, libavdevice, libavfilter, libavformat, libavutil,
+          libc++_shared, libffmpegkit, libffmpegkit_abidetect, libswresample, libswscale
+          -- arm64-v8a and x86_64)
+```
+
+So when `android-37.1` reproduced the abort, that was the gralloc bug and not a page-size
+mismatch. `image_pkg_for_api` in `tools/local-emulator/run-e2e.sh` encodes the `ps16k` tag for
+37.1; if this ever fails after an FFmpeg rebuild, re-run the alignment check first.
+
 ## What was ruled out, and how
 
 **A newer system image.** This file's own revisit trigger was "a new `android-37.0` system image
@@ -194,9 +224,16 @@ booted (`emulator_alive=yes`). The host emulator is fine; the guest is not.
 ## Can the suite run on it?
 
 **Almost.** `tools/local-emulator/run-e2e.sh 37` now runs the whole suite locally and reports
-**49 tests, 2 failures, 0 errors, 2 skipped** — reproduced twice, with the same two tests failing
-both times. That is 47 of 49 against the Pixel's 49 of 49, and it costs two deviations from how
-every other level is run. Both are worth understanding before trusting the leg.
+**49 tests, 2 failures, 0 errors, 2 skipped**. That is 47 of 49 against the Pixel's 49 of 49, and
+it costs two deviations from how every other level is run. Both are worth understanding before
+trusting the leg.
+
+The same numbers and the same two test names came back twice, which is real corroboration — but
+by two different routes, and only one of them is the harness. The first was driven by hand
+(`pm disable-user`, then several minutes of incidental framework restarts, then `e2e-run.sh`
+directly); the second went through `disable_region_sampling`'s `stop; start`. **The harness path
+itself has one green measurement.** Treat a second consecutive 49/2/0/2 from
+`run-e2e.sh 37` as the thing that would make this routine.
 
 ### Booting is not the same as being usable
 
@@ -239,6 +276,20 @@ Package com.android.systemui new state: disabled-user
 
 **Zero in 180 s, against 10–11 per 150 s.** That is the confirmation that region sampling is the
 sole trigger, and it is worth recording even by someone who never wants the workaround.
+
+Do not read that as "the crashes stop", though, because the harness path does not reproduce a
+clean zero. Its own post-disable check on the run recorded below printed
+
+```
+  quiet check: 1 new surfaceflinger aborts in 45 s (want 0)
+  surfaceflinger hasReadColorBufferDma aborts: 4     (whole run)
+```
+
+So what is reliably achieved is a **rate collapse** — from roughly one abort every fourteen
+seconds to one every forty-five — which a 47-second Gradle run survives and a five-minute one
+might not. The 180-second zero above is one measurement on a device that had been up for twelve
+minutes and had already cycled its framework several times. The harness prints the quiet-check
+delta on every run precisely so this is visible rather than assumed.
 
 One ordering detail cost a whole run and is now encoded in `disable_region_sampling`: by the time
 `sys.boot_completed` flips, SystemUI has **already registered**, and `pm disable-user` does not
