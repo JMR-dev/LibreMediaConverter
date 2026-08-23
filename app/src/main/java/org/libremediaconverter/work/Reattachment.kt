@@ -80,11 +80,14 @@ sealed interface Reattachment {
          *
          * - **[WorkInfo.State.CANCELLED]** — the user already said no. Reattaching would undo
          *   that.
-         * - **[WorkInfo.State.FAILED]** — nothing to act on, and nothing marks a failure as seen,
-         *   so it would reappear on every launch. That matters more than it looks: a worker
-         *   interrupted by process death can come back FAILED rather than retried, because the
-         *   restart's `setForeground` is refused as a background foreground-service start, so
-         *   failures left behind by earlier sessions are ordinary rather than rare.
+         * - **[WorkInfo.State.FAILED]** — nothing to act on, and nothing marks a failure as
+         *   seen, so it would reappear on every launch. The reason this mattered has since been
+         *   removed: a worker interrupted by process death used to come back FAILED rather than
+         *   retried, because the restart's `setForeground` was refused as a background
+         *   foreground-service start and the throw escaped `doWork()`. It now retries, so such
+         *   failures are rare again rather than ordinary. The exclusion stands on its own —
+         *   there is still nothing a FAILED job offers the user, and a job that exhausts its
+         *   retries is a job whose message this cannot show either.
          * - **[WorkInfo.State.SUCCEEDED] with no output file** — either it was saved, which
          *   deletes the staged copy, or the OS reclaimed the cache. Offering a Save button for a
          *   file that is gone turns a recoverable job into a failed save.

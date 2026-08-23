@@ -163,9 +163,15 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
 
                     is ConversionState.Waiting -> {
                         FileCard(s.input)
+                        // Two different causes land here and the state cannot tell them apart:
+                        // the six-hour-a-day background media budget running out, and the system
+                        // refusing to let a job restart while the app is in the background. The
+                        // old wording named only the first, which is now the less likely of the
+                        // two. "Keeping the app open helps" covers both -- it is literally what
+                        // grants the second one permission to run.
                         Text(
-                            "Paused. The system limits background media processing to " +
-                                "six hours a day, so this will resume automatically.",
+                            "Paused. Android limits background media processing, so this will " +
+                                "resume automatically — keeping the app open helps it along.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(

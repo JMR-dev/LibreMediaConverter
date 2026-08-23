@@ -111,9 +111,11 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                     }
 
                     is JoinState.Waiting -> {
+                        // Same two causes as the converter screen's Waiting state, and the same
+                        // wording for them -- see the comment there.
                         Text(
-                            "Paused. The system limits background media processing to " +
-                                "six hours a day, so this will resume automatically.",
+                            "Paused. Android limits background media processing, so this will " +
+                                "resume automatically — keeping the app open helps it along.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(

@@ -37,6 +37,12 @@ import java.io.File
  *
  * Expedited work is deliberately *not* used. It maps to JobScheduler expedited jobs
  * with a short quota, which is the wrong shape for a multi-minute transcode.
+ *
+ * That durability is not free, and the queue surviving is not the same as the job surviving.
+ * When WorkManager recovers a job after process death the app is by definition in the background,
+ * where the system refuses to start a foreground service — so the recovered attempt's
+ * `setForeground` throws. Handling that inside [doWork] rather than letting it escape is what
+ * turns the recovery into a retry instead of a terminal failure; see [FailureOutcome].
  */
 @UnstableApi
 class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -63,33 +69,43 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             return Result.failure(workDataOf(KEY_ERROR to "Not enough free space to convert."))
         }
 
-        setForeground(foregroundInfo(displayName, percent = 0, indeterminate = true))
-
-        val probe = MediaProbe.probe(applicationContext, inputUri)
-        val devices = ConversionDependencies.deviceCodecs()
-        val request = ConversionRequest(
-            spec = spec,
-            quality = quality,
-            enginePreference = preference,
-            probe = probe,
-            hardwareEncodeAvailable = devices.canEncode(spec.videoCodec),
-        )
-        // The picker refuses an impossible combination before Convert is tappable, but a job can
-        // also arrive from a queued request made before the settings changed, or from a direct
-        // ConversionWorker.request(...) call. Checking here means an invalid spec fails with the
-        // reason rather than being silently coerced into something else.
-        val validation = ContainerCapabilities.validate(spec, probe)
-        if (validation is Validation.Invalid) {
-            Log.w(TAG, "Refusing $spec for $displayName: ${validation.message}")
-            return Result.failure(workDataOf(KEY_ERROR to validation.message))
-        }
-
-        val decision = ConversionRouter.route(request, devices)
-        Log.i(TAG, "Routing $displayName -> $spec via ${decision.engine} (${decision.reason})")
-
+        // Named before anything below can throw, so every exit has the handle to clean up with.
+        // This only builds a path -- nothing is written until an engine opens it -- so naming it
+        // early costs nothing, and it is what lets the catch collect a partial an earlier attempt
+        // left behind under the same name.
         val staged = publisher.createStagingFile(outputNameFor(displayName, spec))
 
         return try {
+            // Inside the try, and that placement is the whole point. setForeground() throws
+            // ForegroundServiceStartNotAllowedException when the system refuses a background
+            // foreground-service start -- which is exactly what a WorkManager restart after
+            // process death is. With it above the try that throw escaped doWork() entirely: no
+            // retry, no error in the output Data, and no staged.delete(). MediaProbe.probe below
+            // was outside for the same reason and had the same problem.
+            setForeground(foregroundInfo(displayName, percent = 0, indeterminate = true))
+
+            val probe = MediaProbe.probe(applicationContext, inputUri)
+            val devices = ConversionDependencies.deviceCodecs()
+            val request = ConversionRequest(
+                spec = spec,
+                quality = quality,
+                enginePreference = preference,
+                probe = probe,
+                hardwareEncodeAvailable = devices.canEncode(spec.videoCodec),
+            )
+            // The picker refuses an impossible combination before Convert is tappable, but a job
+            // can also arrive from a queued request made before the settings changed, or from a
+            // direct ConversionWorker.request(...) call. Checking here means an invalid spec fails
+            // with the reason rather than being silently coerced into something else.
+            val validation = ContainerCapabilities.validate(spec, probe)
+            if (validation is Validation.Invalid) {
+                Log.w(TAG, "Refusing $spec for $displayName: ${validation.message}")
+                return Result.failure(workDataOf(KEY_ERROR to validation.message))
+            }
+
+            val decision = ConversionRouter.route(request, devices)
+            Log.i(TAG, "Routing $displayName -> $spec via ${decision.engine} (${decision.reason})")
+
             when (decision.engine) {
                 Engine.MEDIA3 -> runMedia3OrFallBack(request, inputUri, staged, displayName)
                 Engine.FFMPEG -> runFFmpeg(request, inputUri, staged, displayName)
@@ -103,7 +119,7 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             )
         } catch (e: Throwable) {
             staged.delete()
-            handleTimeoutIfNeeded(e)
+            outcomeFor(e)
         }
     }
 
@@ -172,24 +188,27 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
     private fun isCancellation(e: Throwable): Boolean = e is kotlinx.coroutines.CancellationException || isStopped
 
     /**
-     * Distinguishes a genuine failure from the foreground-service budget expiring.
+     * Turns whatever ended the attempt into a `Result`. [FailureOutcome] owns the rules.
      *
-     * `mediaProcessing` allows six hours out of every twenty-four, shared across the
-     * app. When that runs out WorkManager reports
-     * `STOP_REASON_FOREGROUND_SERVICE_TIMEOUT`, and the right response is to retry
-     * later rather than tell the user the conversion failed — the work is still valid,
-     * there is simply no budget right now.
+     * Three answers, because there are three genuinely different situations: the work is still
+     * valid and should run later, the system will not let it run and the user has to be told how
+     * to unblock it, or the conversion itself failed and the reason belongs on screen.
      */
-    private fun handleTimeoutIfNeeded(cause: Throwable): Result = when (FailureOutcome.forStopReason(stopReason)) {
-        FailureOutcome.RETRY -> {
-            Log.w(TAG, "Foreground service budget exhausted; will retry.", cause)
-            Result.retry()
+    private fun outcomeFor(cause: Throwable): Result =
+        when (FailureOutcome.forFailure(stopReason, cause, runAttemptCount)) {
+            FailureOutcome.RETRY -> {
+                Log.w(TAG, "Conversion interrupted; will retry.", cause)
+                Result.retry()
+            }
+            FailureOutcome.FOREGROUND_DENIED -> {
+                Log.e(TAG, "Foreground start refused $runAttemptCount times; giving up.", cause)
+                Result.failure(workDataOf(KEY_ERROR to FailureOutcome.FOREGROUND_DENIED_MESSAGE))
+            }
+            FailureOutcome.FAIL -> {
+                Log.e(TAG, "Conversion failed.", cause)
+                Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
+            }
         }
-        FailureOutcome.FAIL -> {
-            Log.e(TAG, "Conversion failed.", cause)
-            Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
-        }
-    }
 
     /**
      * Reads the output spec out of the worker's input Data.

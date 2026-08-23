@@ -67,7 +67,14 @@ sealed interface ConversionState {
     data class Ready(val input: InputFile) : ConversionState
     data class Converting(val input: InputFile, val percent: Int) : ConversionState
 
-    /** Budget for foreground work ran out; WorkManager will retry when it can. */
+    /**
+     * Something stopped the job from running for now, and WorkManager will try again.
+     *
+     * Two causes reach here and the state cannot tell them apart, because `ENQUEUED` with an
+     * attempt behind it is all `WorkInfo` says: the six-hour-a-day foreground-service budget
+     * running out mid-job, and the system refusing to let a job restart while the app is in the
+     * background. See [org.libremediaconverter.work.FailureOutcome].
+     */
     data class Waiting(val input: InputFile) : ConversionState
     data class Converted(
         val input: InputFile,
@@ -274,8 +281,11 @@ class ConversionViewModel @JvmOverloads constructor(
                         info.progress.getInt(ConversionWorker.KEY_PROGRESS, 0),
                     )
 
-                    // ENQUEUED after a run means a retry is pending — most likely the
-                    // six-hour foreground budget was exhausted mid-job.
+                    // ENQUEUED after a run means a retry is pending. Either the six-hour
+                    // foreground budget ran out mid-job, or the system refused to let the job
+                    // start again while the app was in the background — the second being the
+                    // likelier of the two, since it needs only a process restart. Nothing here
+                    // can tell them apart, and nothing needs to: the answer is the same.
                     WorkInfo.State.ENQUEUED ->
                         if (info.runAttemptCount > 0) {
                             ConversionState.Waiting(input)

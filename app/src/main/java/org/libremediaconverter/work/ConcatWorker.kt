@@ -46,16 +46,23 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             return Result.failure(workDataOf(KEY_ERROR to "Not enough free space to join these files."))
         }
 
-        setForeground(
-            ForegroundInfo(
-                NOTIFICATION_ID,
-                notifications.build(id, "Joining ${uris.size} files", 0, indeterminate = true),
-                ConversionForegroundType.current(),
-            ),
-        )
-
+        // Named before anything below can throw, so every exit has the handle to clean up with.
+        // See the same line in ConversionWorker.
         val staged = publisher.createStagingFile("joined.${format.extension}")
+
         return try {
+            // Inside the try: a foreground start refused because the app is in the background --
+            // which is where a WorkManager restart after process death always begins -- used to
+            // throw straight past this catch, taking the retry, the error message and the delete
+            // with it. See ConversionWorker.doWork and FailureOutcome.
+            setForeground(
+                ForegroundInfo(
+                    NOTIFICATION_ID,
+                    notifications.build(id, "Joining ${uris.size} files", 0, indeterminate = true),
+                    ConversionForegroundType.current(),
+                ),
+            )
+
             val result = ConcatEngine(applicationContext).join(uris, staged, format)
             Result.success(
                 workDataOf(
@@ -65,10 +72,14 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             )
         } catch (e: Throwable) {
             staged.delete()
-            when (FailureOutcome.forStopReason(stopReason)) {
+            when (FailureOutcome.forFailure(stopReason, e, runAttemptCount)) {
                 FailureOutcome.RETRY -> {
-                    Log.w(TAG, "Foreground budget exhausted while joining; will retry.", e)
+                    Log.w(TAG, "Joining interrupted; will retry.", e)
                     Result.retry()
+                }
+                FailureOutcome.FOREGROUND_DENIED -> {
+                    Log.e(TAG, "Foreground start refused $runAttemptCount times; giving up.", e)
+                    Result.failure(workDataOf(KEY_ERROR to FailureOutcome.FOREGROUND_DENIED_MESSAGE))
                 }
                 FailureOutcome.FAIL -> {
                     Log.e(TAG, "Joining failed.", e)
