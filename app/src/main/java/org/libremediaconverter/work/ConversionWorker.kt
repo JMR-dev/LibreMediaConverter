@@ -11,8 +11,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.arthenica.ffmpegkit.FFmpegKitConfig
+import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
-import org.libremediaconverter.convert.MediaProbe
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.ContainerCapabilities
@@ -84,7 +84,12 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             // was outside for the same reason and had the same problem.
             setForeground(foregroundInfo(displayName, percent = 0, indeterminate = true))
 
-            val probe = MediaProbe.probe(applicationContext, inputUri)
+            // Through the seam rather than MediaProbe directly. The seam already existed for the
+            // ViewModel and the worker was the last caller bypassing it, which is why nothing on
+            // the JVM could reach a line below this one: FFprobe's loader throws a bare
+            // java.lang.Error with no native library present. The app and the instrumented tests
+            // get the real probe, exactly as before.
+            val probe = ConversionDependencies.probe(applicationContext, inputUri)
             val devices = ConversionDependencies.deviceCodecs()
             val request = ConversionRequest(
                 spec = spec,
@@ -117,6 +122,17 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     KEY_ROUTE_REASON to decision.reason.explanation,
                 ),
             )
+        } catch (e: CancellationException) {
+            // Cancellation is not a result, and answering it with one breaks structured
+            // concurrency: this coroutine would report completion inside a scope that has already
+            // been cancelled. Invisible today only because WorkManager marks the work CANCELLED
+            // itself and ignores whatever the worker returned.
+            //
+            // The delete still has to happen, and has to happen here. A cancelled attempt leaves a
+            // partial in staging, the next attempt starts from the top rather than resuming it,
+            // and this is the only code holding the handle.
+            staged.delete()
+            throw e
         } catch (e: Throwable) {
             staged.delete()
             outcomeFor(e)
@@ -185,7 +201,7 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         }
     }
 
-    private fun isCancellation(e: Throwable): Boolean = e is kotlinx.coroutines.CancellationException || isStopped
+    private fun isCancellation(e: Throwable): Boolean = e is CancellationException || isStopped
 
     /**
      * Turns whatever ended the attempt into a `Result`. [FailureOutcome] owns the rules.

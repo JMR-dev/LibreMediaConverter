@@ -10,6 +10,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.ffmpeg.ConcatEngine
 import org.libremediaconverter.model.OutputFormat
@@ -70,6 +71,11 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     KEY_STRATEGY to result.strategy.name,
                 ),
             )
+        } catch (e: CancellationException) {
+            // Rethrown rather than answered with a Result -- see the same branch in
+            // ConversionWorker for why, and for why the delete stays.
+            staged.delete()
+            throw e
         } catch (e: Throwable) {
             staged.delete()
             when (FailureOutcome.forFailure(stopReason, e, runAttemptCount)) {

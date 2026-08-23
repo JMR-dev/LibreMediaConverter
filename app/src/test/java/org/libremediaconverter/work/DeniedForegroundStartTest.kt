@@ -187,14 +187,3 @@ private class FailedFuture(private val failure: Throwable) : ListenableFuture<Vo
     override fun get(): Void = throw ExecutionException(failure)
     override fun get(timeout: Long, unit: TimeUnit): Void = throw ExecutionException(failure)
 }
-
-/**
- * A real publisher that never refuses on space.
- *
- * The space check reads the host's free disk, which has nothing to do with what these tests are
- * about and would make them pass or fail on how full the machine is. Where staging lives, and the
- * delete, are the production implementation.
- */
-private class AlwaysRoomPublisher(context: Context) : OutputPublisher(context) {
-    override fun hasSpaceFor(bytes: Long): Boolean = true
-}
