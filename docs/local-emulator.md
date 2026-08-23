@@ -190,10 +190,17 @@ emulator -avd <name> -no-window -gpu host \
 `.github/scripts/e2e-run.sh` for the run itself. Use it rather than the raw command:
 
 ```bash
-tools/local-emulator/run-e2e.sh          # API 33 34 35 36
+tools/local-emulator/run-e2e.sh          # API 33 34 35 36 37
 tools/local-emulator/run-e2e.sh 35       # one level
+tools/local-emulator/run-e2e.sh 37 37.1  # both API 37 images
 GPU_MODE=swangle_indirect tools/local-emulator/run-e2e.sh 35
 ```
+
+Levels are the labels above, not SDK ints: API 37's SDK directories are dotted
+(`android-37.0`, `android-37.1`) and there is no `android-37`, so `37` is accepted as a
+spelling of `37.0`. Setting `GPU_MODE` forces one renderer on every level, which is what
+you want when measuring a mode; leaving it unset lets `gpu_for_api` pick, which is what
+you want when running the suite — 33–36 need `host` and 37 must not have it.
 
 `swangle_indirect` is the fallback worth knowing about. It is entirely software, so it
 does not depend on reaching the session's GPU — useful over plain SSH, where `-gpu host`
@@ -352,9 +359,11 @@ and the same binaries against the same kernel boot fine under `-gpu host`.
 before `sys.boot_completed` is ever set. Nothing in the guest — system image variant,
 RAM, disk size, ATD versus `google_apis` — can influence a host-side `mprotect` denial,
 so none of those axes was varied. (The API 37 failure in
-[`api-37-emulator-crash.md`](api-37-emulator-crash.md) is genuinely guest-side and
-genuinely unrelated: there the host emulator survives and the guest's `surfaceflinger`
-aborts.)
+[`api-37-emulator-crash.md`](api-37-emulator-crash.md) is genuinely guest-side — there the host
+emulator survives and the guest's `surfaceflinger` aborts — but it is **not** unrelated, as this
+paragraph originally claimed. Both are decided by the renderer, in opposite directions: below 37
+you must avoid SwiftShader GLES and `-gpu host` is the answer; at 37 you must avoid the *host* GL
+translator and `-gpu host` is the thing that never boots.)
 
 **Turning the SELinux boolean on** — deliberately *not* done, though it would almost
 certainly work:
@@ -401,8 +410,13 @@ are easy to forget to look at.
   "SwiftShader 4.0.0.1" as reported by the GLES translator.
 - **If `-gpu host` regresses** after a Mesa or kernel update, fall back to
   `GPU_MODE=swangle_indirect`, which needs no GPU at all.
-- **This changes nothing about API 37.** That image is broken for a different reason and
-  still must be checked on the physical Pixel 10 Pro XL before each release.
+- **API 37 needs the opposite renderer, and this file used to say it needed nothing.** The
+  original bullet here read "This changes nothing about API 37"; that turned out to be wrong.
+  The API 37 images abort `surfaceflinger` under the *host* GL translator and boot under ANGLE —
+  the exact mirror of the rule above — and `run-e2e.sh` therefore picks the renderer per API
+  level. See [`api-37-emulator-crash.md`](api-37-emulator-crash.md), which was rewritten on
+  2026-08-22 with the seven-run matrix. API 37 still must be checked on the physical Pixel 10 Pro
+  XL before each release.
 
 ## Correction owed to `CLAUDE.md`
 
@@ -432,12 +446,13 @@ Proposed replacement for the section, offered for review rather than applied her
 >   `auto` (the default), `off` and `guest` do when headless. `-gpu host` works, and the
 >   harness both picks it and refuses the others. `docs/local-emulator.md` has the
 >   backtrace and the mode matrix.
-> - **The API 37 image is broken.** `android-37.0` crash-loops surfaceflinger inside its
->   own gralloc mapper, so every test fails there regardless of this app —
->   `docs/api-37-emulator-crash.md` records the evidence and the ruled-out fixes. This is
->   unrelated to the renderer above: it is a guest-side bug that CI hits too, which is why
->   the matrix stops at API 36 even though targetSdk is 37. **API 37 needs a manual check
->   on the Pixel 10 Pro XL before each release.**
+> - **API 37 needs the opposite renderer, and SystemUI turned off.** Both `android-37.0` and
+>   `android-37.1` abort surfaceflinger inside their own gralloc mapper, and init SIGKILLs
+>   zygote each time. Under `-gpu host` they never boot; under `-gpu swangle_indirect` they
+>   boot, and disabling SystemUI removes the trigger. `run-e2e.sh` does all of that per level;
+>   the local result is 49 tests / 2 failures / 2 skipped. CI's matrix still stops at 36.
+>   `docs/api-37-emulator-crash.md` has the matrix and the reasoning. **API 37 needs a manual
+>   check on the Pixel 10 Pro XL before each release.**
 
 The wording is worth getting right rather than merely correcting, because the original was
 not a careless sentence — it was a reasonable inference from three crashes, written down
