@@ -1,0 +1,326 @@
+name: API 37 debug
+
+# ---------------------------------------------------------------------------
+# WHAT THIS IS FOR, AND WHY IT IS SEPARATE
+#
+# status_check.yml's E2E matrix stops at API 36 because the android-37.x emulator
+# images abort surfaceflinger inside their own gralloc mapper. That was established
+# locally, under -gpu host and under ANGLE (docs/api-37-emulator-crash.md). It was
+# NOT established on a GitHub runner: CI runs -gpu swiftshader_indirect, and the one
+# local measurement of that mode was void for a purely local reason (Fedora's SELinux
+# denies execheap to SwiftShader's Reactor JIT -- docs/local-emulator.md). So what CI
+# actually does at API 37 is an open question, and this workflow is the instrument for
+# answering it.
+#
+# It is a copy of that E2E job with the matrix replaced by workflow_dispatch inputs,
+# so one hypothesis costs one dispatch rather than one commit. It triggers on nothing
+# else: no push, no pull_request, no schedule. Nothing depends on it and it gates
+# nothing.
+#
+# TWO THINGS THIS DELIBERATELY DOES NOT DO:
+#
+#   - It does not fork .github/scripts/e2e-run.sh. That script owns the FAILED-vs-WEDGED
+#     split, the SIGQUIT thread dump and the streamed logcat, and it is the copy CI
+#     exercises every day. This calls it, exactly as status_check.yml does.
+#   - It does not change status_check.yml. If a configuration here turns out to work,
+#     the change to the real matrix is proposed separately.
+#
+# THE WATCHDOG IS THE POINT, not a nicety. reactivecircus/android-emulator-runner calls
+# killEmulator() from its own catch block, so a run whose emulator never boots is torn
+# down before a single `script:` line executes -- no probe, no e2e-run.sh, no artifacts,
+# nothing to read afterwards. That is precisely the failure shape API 37 is suspected of.
+# The watchdog therefore starts BEFORE the action, from outside it, and samples the device
+# on its own clock.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_level:
+        description: 'API level, as the SDK spells it. 37.0, 37.1, 37.2-beta3, 36 ... A bare 37 does not exist and fails during SDK setup.'
+        type: string
+        default: '37.0'
+      target:
+        description: 'System image target. android-37.1 and 37.2-beta* ship ONLY as google_apis_ps16k -- there is no plain google_apis above 37.0.'
+        type: string
+        default: 'google_apis'
+      channel:
+        description: 'SDK channel. beta is required for any 37.2-beta* image.'
+        type: choice
+        options: ['stable', 'beta', 'dev', 'canary']
+        default: 'stable'
+      gpu_mode:
+        description: 'The -gpu argument. swiftshader_indirect is what status_check.yml uses today; swangle_indirect is what works locally on API 37.'
+        type: choice
+        options:
+          - swiftshader_indirect
+          - swangle_indirect
+          - angle_indirect
+          - host
+          - auto
+          - guest
+          - 'off'
+        default: 'swiftshader_indirect'
+      disable_system_ui:
+        description: 'Take SystemUI out before the suite runs, which is what stops SurfaceFlinger RegionSamplingThread reaching the mapper bug. Restarts the framework.'
+        type: boolean
+        default: false
+      run_tests:
+        description: 'Run the instrumented suite. false boots, probes and stops -- the cheap loop when the question is only whether it boots and at what abort rate.'
+        type: boolean
+        default: true
+      emulator_boot_timeout:
+        description: 'Seconds the action waits for sys.boot_completed. Do not lower this for a software renderer: a slow boot would be misreported as a failed one.'
+        type: string
+        default: '600'
+      emulator_extra_options:
+        description: 'Appended verbatim to the emulator command line -- e.g. "-verbose", or "-feature -GLDMA,-GLDMA2". The action interpolates it into a sh -c, so "| tee $RUNNER_TEMP/emulator.log" also works and is uploaded.'
+        type: string
+        default: ''
+      disable_animations:
+        description: 'The action settings-puts three animation scales after boot. Each is an adb call that throws if the framework is mid-restart, which would kill the run before the probe. false removes three of those calls.'
+        type: boolean
+        default: true
+      gradle_extra_args:
+        description: 'Passed to e2e-run.sh as E2E_EXTRA_GRADLE_ARGS, its existing hook -- e.g. "--rerun", or -Pandroid.testInstrumentationRunnerArguments.class=... to run one class instead of the suite.'
+        type: string
+        default: ''
+
+run-name: >-
+  api ${{ inputs.api_level }}/${{ inputs.target }} · gpu ${{ inputs.gpu_mode }} ·
+  systemui ${{ inputs.disable_system_ui && 'disabled' || 'running' }} ·
+  tests ${{ inputs.run_tests && 'yes' || 'no' }}
+
+# No `concurrency` block, unlike status_check.yml. Every dispatch here runs on the same
+# ref (main), so a group keyed on github.ref with cancel-in-progress would make two
+# parallel experiments cancel each other -- which is the opposite of what this is for.
+
+permissions:
+  contents: read
+
+env:
+  GRADLE_CACHE_PATHS: |
+    ~/.gradle/caches
+    ~/.gradle/wrapper
+
+jobs:
+  e2e-api37:
+    name: E2E API ${{ inputs.api_level }} (${{ inputs.gpu_mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '25'   # Matches the daemon JVM pinned in gradle/gradle-daemon-jvm.properties
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Without this the emulator falls back to software rendering and takes minutes
+      # longer to boot, when it boots at all.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Both helpers live in RUNNER_TEMP rather than in the repository: they are debug
+      # instrumentation for this workflow only, and writing them here keeps the whole
+      # experiment in one file that can be read top to bottom.
+      - name: Write the watchdog and the probe
+        env:
+          LABEL: ${{ inputs.api_level }}
+        run: |
+          cat > "$RUNNER_TEMP/watchdog.sh" <<'WATCHDOG'
+          #!/usr/bin/env bash
+          # Samples the device from outside the emulator action, because the action tears the
+          # emulator down on a boot timeout before any script: line runs. Everything here is
+          # `timeout`-wrapped: a wedged adb must not stall the sampler, and no probe may fail.
+          SERIAL="emulator-5554"
+          OUT="$RUNNER_TEMP/watchdog-api$LABEL.txt"
+          CRASH="$RUNNER_TEMP/crash-buffer-api$LABEL.txt"
+          GUESTLOG="$RUNNER_TEMP/watchdog-logcat-api$LABEL.txt"
+          STOP="$RUNNER_TEMP/watchdog.stop"
+
+          # A continuous guest logcat, restarted whenever the device goes away. During a
+          # surfaceflinger crash loop the framework restarts every few seconds and adb goes
+          # with it, so a single `adb logcat` would end at the first restart.
+          (
+            while [ ! -f "$STOP" ]; do
+              timeout 120 adb -s "$SERIAL" wait-for-device > /dev/null 2>&1 \
+                && timeout 3000 adb -s "$SERIAL" logcat -v time >> "$GUESTLOG" 2>&1
+              sleep 3
+            done
+          ) &
+
+          echo "watchdog started $(date -u +%FT%TZ) -- serial $SERIAL" >> "$OUT"
+          i=0
+          while [ "$i" -lt 300 ]; do
+            i=$((i + 1))
+            [ -f "$STOP" ] && break
+            boot="$(timeout 20 adb -s "$SERIAL" shell getprop sys.boot_completed 2> /dev/null | tr -d '\r\n')"
+            sf="$(timeout 20 adb -s "$SERIAL" shell pidof surfaceflinger 2> /dev/null | tr -d '\r\n')"
+            zy="$(timeout 20 adb -s "$SERIAL" shell pidof zygote64 2> /dev/null | tr -d '\r\n')"
+            # Kept as a file rather than a variable so the last successful read survives the
+            # action killing the emulator -- which is when it is most worth having.
+            if timeout 30 adb -s "$SERIAL" logcat -d -b crash > "$CRASH.new" 2> /dev/null; then
+              mv "$CRASH.new" "$CRASH"
+            fi
+            dma="$(grep -c 'hasReadColorBufferDma' "$CRASH" 2> /dev/null || true)"
+            sigabrt="$(grep -c 'signal 6' "$CRASH" 2> /dev/null || true)"
+            printf '%s boot=%-4s surfaceflinger=%-8s zygote64=%-8s dma_aborts=%-5s sigabrt=%s\n' \
+              "$(date -u +%T)" "${boot:-?}" "${sf:-none}" "${zy:-none}" "${dma:-0}" "${sigabrt:-0}" >> "$OUT"
+            # One shot, the first time the device is up: which GLES implementation the guest
+            # actually got. This is the guest-side answer to the same question the emulator's
+            # own gles_mode_selected line answers host-side.
+            if [ "$boot" = "1" ] && [ ! -f "$RUNNER_TEMP/renderer-api$LABEL.txt" ]; then
+              {
+                echo "=== booted at $(date -u +%FT%TZ), watchdog sample $i ==="
+                timeout 30 adb -s "$SERIAL" shell dumpsys SurfaceFlinger 2>&1 | head -40
+                echo "--- getprop ---"
+                timeout 20 adb -s "$SERIAL" shell getprop 2>&1 | grep -Ei 'egl|gles|gpu|ranchu|gfxstream' || true
+              } > "$RUNNER_TEMP/renderer-api$LABEL.txt" 2>&1
+            fi
+            sleep 20
+          done
+          echo "watchdog finished $(date -u +%FT%TZ) after $i samples" >> "$OUT"
+          WATCHDOG
+
+          cat > "$RUNNER_TEMP/probe.sh" <<'PROBE'
+          #!/usr/bin/env bash
+          # Runs on the booted device, before the suite. Two jobs: record what the guest got,
+          # and measure the gralloc abort RATE -- which is the number that decides whether a
+          # five-minute test run can survive, and the one comparable with the local figures in
+          # docs/api-37-emulator-crash.md (10-11 per 150 s idle under ANGLE with SystemUI up).
+          #
+          # Never exits non-zero. The action runs script: lines in one try/catch, so a failing
+          # probe would skip e2e-run.sh entirely and the run would measure nothing.
+          exec > >(tee -a "$RUNNER_TEMP/probe-api$LABEL.txt") 2>&1
+          echo "===== probe api$LABEL -- $(date -u +%FT%TZ) ====="
+          adb shell getprop sys.boot_completed
+          adb shell getprop ro.build.fingerprint
+          adb shell getprop ro.build.version.sdk
+          echo "--- SurfaceFlinger (the GLES line names the renderer the guest is on) ---"
+          adb shell dumpsys SurfaceFlinger 2>&1 | head -30
+          echo "--- binder services ---"
+          for s in package activity window; do adb shell service check "$s" 2>&1; done
+
+          count_aborts() { adb logcat -d -b crash 2> /dev/null | grep -c 'hasReadColorBufferDma'; }
+
+          before="$(count_aborts)"
+          sleep 45
+          after="$(count_aborts)"
+          echo "--- abort rate, SystemUI running: $((after - before)) new in 45 s (total ${after:-0}) ---"
+
+          if [ "${DISABLE_SYSTEM_UI:-false}" = "true" ]; then
+            echo "--- disabling SystemUI ---"
+            for i in $(seq 1 10); do
+              out="$(adb shell pm disable-user --user 0 com.android.systemui 2>&1 | tr -d '\r')"
+              echo "  attempt $i: $out"
+              case "$out" in *"new state: disabled"*) break ;; esac
+              sleep 5
+            done
+            # pm disable-user does not retract SystemUI's existing region-sampling
+            # registration -- by the time boot completes it has already registered. Only a
+            # framework restart brings back a SystemUI-less SurfaceFlinger. See
+            # disable_region_sampling in tools/local-emulator/run-e2e.sh.
+            echo "--- restarting the framework ---"
+            adb shell stop
+            adb shell start
+            for i in $(seq 1 30); do
+              if adb shell service check package 2> /dev/null | grep -q ': found' \
+                && adb shell service check activity 2> /dev/null | grep -q ': found'; then
+                echo "  services back after $((i * 5)) s"
+                break
+              fi
+              sleep 5
+            done
+            before="$(count_aborts)"
+            sleep 45
+            after="$(count_aborts)"
+            echo "--- abort rate, SystemUI disabled: $((after - before)) new in 45 s (total ${after:-0}) ---"
+          fi
+
+          echo "--- crash buffer (tail 60) ---"
+          adb logcat -d -b crash 2>&1 | tail -60
+          echo "===== probe done ====="
+          exit 0
+          PROBE
+
+          chmod +x "$RUNNER_TEMP/watchdog.sh" "$RUNNER_TEMP/probe.sh"
+          echo "helpers written to $RUNNER_TEMP"
+
+      - name: Start the watchdog
+        env:
+          LABEL: ${{ inputs.api_level }}
+        run: |
+          nohup bash "$RUNNER_TEMP/watchdog.sh" > "$RUNNER_TEMP/watchdog-stdout.txt" 2>&1 < /dev/null &
+          disown
+          echo "watchdog pid $!"
+
+      - name: Instrumented tests
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          LABEL: ${{ inputs.api_level }}
+          DISABLE_SYSTEM_UI: ${{ inputs.disable_system_ui }}
+          # e2e-run.sh's own hook, unset in CI's real workflow and therefore inert there.
+          E2E_EXTRA_GRADLE_ARGS: ${{ inputs.gradle_extra_args }}
+        with:
+          api-level: ${{ inputs.api_level }}
+          target: ${{ inputs.target }}
+          channel: ${{ inputs.channel }}
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: ${{ inputs.emulator_boot_timeout }}
+          emulator-options: -no-window -gpu ${{ inputs.gpu_mode }} -noaudio -no-boot-anim -camera-back none ${{ inputs.emulator_extra_options }}
+          disable-animations: ${{ inputs.disable_animations }}
+          # disk-size, ram-size: kept exactly as status_check.yml pins them, so this
+          # measures the renderer and not a different device. 8G because the APK plus
+          # FFmpeg does not fit the default userdata partition; 2560M because the
+          # emulator's own RAM floor varies by API level and 2560M is the highest of them.
+          disk-size: 8G
+          ram-size: 2560M
+          # Two lines, because the action splits script: on newlines and runs each as its
+          # own `sh -c`. The first is this workflow's own probe; the second is CI's real
+          # harness, invoked unmodified. run_tests: false replaces it with an echo rather
+          # than a second copy of the job.
+          script: |
+            bash ${{ runner.temp }}/probe.sh
+            ${{ inputs.run_tests && format('bash .github/scripts/e2e-run.sh {0}', inputs.api_level) || 'echo "run_tests=false -- suite skipped, boot and probe only"' }}
+
+      - name: Stop the watchdog
+        if: always()
+        run: |
+          touch "$RUNNER_TEMP/watchdog.stop"
+          echo "----- watchdog samples -----"
+          cat "$RUNNER_TEMP/watchdog-api${{ inputs.api_level }}.txt" 2>/dev/null || echo "(no watchdog output)"
+          echo "----- renderer -----"
+          cat "$RUNNER_TEMP/renderer-api${{ inputs.api_level }}.txt" 2>/dev/null || echo "(never booted, or dumpsys unavailable)"
+          echo "----- crash buffer, last read before teardown (tail 80) -----"
+          tail -80 "$RUNNER_TEMP/crash-buffer-api${{ inputs.api_level }}.txt" 2>/dev/null || echo "(none)"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: api37-debug-run${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/watchdog-api*.txt
+            ${{ runner.temp }}/watchdog-logcat-api*.txt
+            ${{ runner.temp }}/watchdog-stdout.txt
+            ${{ runner.temp }}/crash-buffer-api*.txt
+            ${{ runner.temp }}/renderer-api*.txt
+            ${{ runner.temp }}/probe-api*.txt
+            ${{ runner.temp }}/emulator*.log
+            ${{ runner.temp }}/logcat-api*.txt
+            ${{ runner.temp }}/diagnostics-api*.txt
+            ${{ runner.temp }}/wedge-diagnostics-api*.txt
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: warn
