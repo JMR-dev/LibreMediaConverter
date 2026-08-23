@@ -31,7 +31,17 @@ sealed interface JoinState {
     data class Ready(val inputs: List<InputFile>) : JoinState
     data class Joining(val inputs: List<InputFile>) : JoinState
     data class Waiting(val inputs: List<InputFile>) : JoinState
-    data class Joined(val staged: File, val strategy: ConcatStrategy) : JoinState
+    data class Joined(
+        val staged: File,
+        val strategy: ConcatStrategy,
+        /**
+         * What to call the file, and what type to open the save dialog with.
+         *
+         * From the job, not from a literal. See `ConcatWorker.KEY_SUGGESTED_NAME`.
+         */
+        val suggestedName: String,
+        val mimeType: String,
+    ) : JoinState
     data class Saved(val displayName: String) : JoinState
     data class Failed(val message: String) : JoinState
 }
@@ -93,14 +103,13 @@ class JoinViewModel @JvmOverloads constructor(
             // below, and both run on the main dispatcher, so nothing can interleave.
             if (_state.value !is JoinState.Idle || activeWorkId != null) return@launch
 
-            // Every join stages under the same constant name, so two finished joins always
-            // report the same file and no tag of either can be trusted to describe it. That is
-            // what Ambiguous means here, and the count falls back rather than being borrowed —
-            // which costs nothing in practice, since the count is only rendered while a job is
-            // live and a live job names no file to be aliased on. What it does not cover is the
-            // stream-copy-or-re-encode line on Joined, which comes from the picked job's output
-            // and can therefore belong to the other one. Same cause, same fix: one staging name
-            // per job.
+            // Joins used to stage under one constant name, so two finished joins always reported
+            // the same file and no tag of either could be trusted to describe it. That is what
+            // Ambiguous means here, and the count falls back rather than being borrowed — which
+            // costs nothing in practice, since the count is only rendered while a job is live and
+            // a live job names no file to be aliased on. Staging on the job id has closed that for
+            // new work, including the stream-copy-or-re-encode line on Joined, which comes from
+            // the picked job's output; joins already in the queue keep the old shape.
             val tags = (reattachment as? Reattachment.Certain)?.job?.tags.orEmpty()
             // Placeholders, and safe only because of where they can go. Joining reads nothing
             // but the size of this list, Waiting and Joined read none of it, and a reattached
@@ -169,7 +178,22 @@ class JoinViewModel @JvmOverloads constructor(
                             // Take responsibility for the file at the same moment the state
                             // starts referring to it, so the two cannot disagree.
                             pendingStaged = staged
-                            JoinState.Joined(staged, strategy)
+                            JoinState.Joined(
+                                staged = staged,
+                                strategy = strategy,
+                                // A join enqueued before the worker reported these carries
+                                // neither, and the fallback is the format such a job really
+                                // used -- ConcatWorker.request has always defaulted to it, and
+                                // the join screen has never offered a choice.
+                                suggestedName = info.outputData
+                                    .getString(ConcatWorker.KEY_SUGGESTED_NAME)
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: ConcatWorker.outputNameFor(ConcatWorker.DEFAULT_FORMAT),
+                                mimeType = info.outputData
+                                    .getString(ConcatWorker.KEY_MIME_TYPE)
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: ConcatWorker.DEFAULT_FORMAT.mimeType,
+                            )
                         }
                     }
 
@@ -203,7 +227,7 @@ class JoinViewModel @JvmOverloads constructor(
             }.onSuccess {
                 // publish() already deleted it; nothing left to clean up.
                 pendingStaged = null
-                _state.value = JoinState.Saved("joined.mp4")
+                _state.value = JoinState.Saved(joined.suggestedName)
             }.onFailure { e ->
                 // Deliberately NOT cleared -- see the same branch in ConversionViewModel.
                 // A failed save can leave the staged file as the only copy of the work, so

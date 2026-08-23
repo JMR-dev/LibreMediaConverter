@@ -155,9 +155,10 @@ open class OutputPublisher(private val context: Context) {
      * Activity. [StagingSweep] owns the rule and its reasoning.
      *
      * Deliberately not the `clearStaging()` this replaces. That deleted the directory's
-     * whole contents, and the convert tab, the join tab and `ConcatEngine`'s
-     * `concat_list.txt` all share this directory with no per-job namespacing, so a blanket
-     * delete could destroy a live job's file.
+     * whole contents, and the convert tab, the join tab and `ConcatEngine`'s list file all
+     * share this directory — so a blanket delete could destroy a live job's file. Per-job
+     * staging names ([StagingNames]) stop two jobs from *sharing* a file; they say nothing
+     * about whether a file's job is still running, which is the question here.
      *
      * [nowMs] is a parameter so the clock is the caller's, not a hidden global.
      */

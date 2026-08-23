@@ -8,6 +8,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.io.File
+import java.util.UUID
 
 /**
  * What a pure function cannot say: the file is really gone.
@@ -72,9 +73,15 @@ class OutputPublisherStagingTest {
 
     @Test
     fun `the sweep collects an orphan and leaves a live job alone`() {
-        val orphan = publisher.createStagingFile("orphan.mp4").apply { writeBytes(ByteArray(4096)) }
-        val liveOutput = publisher.createStagingFile("joined.mp4").apply { writeBytes(ByteArray(4096)) }
-        val liveList = publisher.createStagingFile("concat_list.txt").apply { writeText("file 'a.mp4'\n") }
+        // Named the way the app names them, so the sweep is exercised against real shapes.
+        val liveJob = StagingNames.forJob(UUID.randomUUID(), "mp4")
+        val orphan = publisher.createStagingFile(
+            StagingNames.forJob(UUID.randomUUID(), "mp4"),
+        ).apply { writeBytes(ByteArray(4096)) }
+        val liveOutput = publisher.createStagingFile(liveJob).apply { writeBytes(ByteArray(4096)) }
+        val liveList = publisher.createStagingFile(
+            StagingNames.concatListFor(liveJob),
+        ).apply { writeText("file 'a.mp4'\n") }
         assertTrue(orphan.setLastModified(System.currentTimeMillis() - StagingSweep.GRACE_PERIOD_MS - 60_000))
 
         publisher.sweepStaging()

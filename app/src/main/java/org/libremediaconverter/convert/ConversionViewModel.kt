@@ -69,13 +69,29 @@ sealed interface ConversionState {
     data class Ready(val input: InputFile) : ConversionState
     data class Converting(val input: InputFile, val percent: Int) : ConversionState
 
-    /** Budget for foreground work ran out; WorkManager will retry when it can. */
+    /**
+     * Something stopped the job from running for now, and WorkManager will try again.
+     *
+     * Two causes reach here and the state cannot tell them apart, because `ENQUEUED` with an
+     * attempt behind it is all `WorkInfo` says: the six-hour-a-day foreground-service budget
+     * running out mid-job, and the system refusing to let a job restart while the app is in the
+     * background. See [org.libremediaconverter.work.FailureOutcome].
+     */
     data class Waiting(val input: InputFile) : ConversionState
     data class Converted(
         val input: InputFile,
         val staged: File,
         val engineUsed: String = "",
         val routeReason: String = "",
+        /**
+         * What to call the file, and what type to open the save dialog with.
+         *
+         * Carried on the state rather than derived when the Save button is tapped, because the
+         * only thing that knows them is the job — see `ConversionWorker.KEY_SUGGESTED_NAME`. The
+         * staged file's own name says nothing: it is the job's id.
+         */
+        val suggestedName: String = "",
+        val mimeType: String = "",
     ) : ConversionState
     data class Saved(val displayName: String) : ConversionState
     data class Failed(val message: String) : ConversionState
@@ -155,11 +171,10 @@ class ConversionViewModel @JvmOverloads constructor(
      * every request with on its own, so it finds work enqueued by an earlier run of the app —
      * and by an earlier *version* of it — which an id saved in a `SavedStateHandle` would not.
      *
-     * One known wart, not fixed here because it is a different defect: the save dialog's
-     * suggested name and MIME type come from the current picker rather than from the job that
-     * ran, so a reattached job converting to something other than the default format is offered
-     * the default extension. That derivation is wrong on its own terms and is left to the change
-     * that fixes it properly.
+     * The save dialog's suggested name and MIME type used to be built from the current picker,
+     * which made a reattached job the worst case: its spec was never in these settings at all, so
+     * a job that converted to MP3 was offered `.mp4`. Both now travel in the job's own output
+     * `Data` — see [ConversionState.Converted].
      */
     private fun reattach() {
         viewModelScope.launch {
@@ -177,8 +192,8 @@ class ConversionViewModel @JvmOverloads constructor(
             if (_state.value !is ConversionState.Idle || activeWorkId != null) return@launch
 
             // Only a job that is the sole explanation for its staged file gets to name the input.
-            // When several jobs report the same file — which nothing prevents while the staging
-            // name is derived from the input's display name — the file is still the user's, but
+            // When several jobs report the same file — which staging on the job id has stopped for
+            // new work, but not for work already in the queue — the file is still the user's, but
             // saying which of them produced it would be a guess, so the card falls back to a
             // neutral label rather than borrowing the other job's.
             val tags = (reattachment as? Reattachment.Certain)?.job?.tags.orEmpty()
@@ -304,8 +319,11 @@ class ConversionViewModel @JvmOverloads constructor(
                         info.progress.getInt(ConversionWorker.KEY_PROGRESS, 0),
                     )
 
-                    // ENQUEUED after a run means a retry is pending — most likely the
-                    // six-hour foreground budget was exhausted mid-job.
+                    // ENQUEUED after a run means a retry is pending. Either the six-hour
+                    // foreground budget ran out mid-job, or the system refused to let the job
+                    // start again while the app was in the background — the second being the
+                    // likelier of the two, since it needs only a process restart. Nothing here
+                    // can tell them apart, and nothing needs to: the answer is the same.
                     WorkInfo.State.ENQUEUED ->
                         if (info.runAttemptCount > 0) {
                             ConversionState.Waiting(input)
@@ -329,6 +347,24 @@ class ConversionViewModel @JvmOverloads constructor(
                                     .getString(ConversionWorker.KEY_ENGINE_USED).orEmpty(),
                                 routeReason = info.outputData
                                     .getString(ConversionWorker.KEY_ROUTE_REASON).orEmpty(),
+                                suggestedName = info.outputData
+                                    .getString(ConversionWorker.KEY_SUGGESTED_NAME)
+                                    ?.takeIf { it.isNotBlank() }
+                                    // Work enqueued before the worker reported this carries
+                                    // nothing, and WorkManager keeps finished work for about a
+                                    // week -- so this branch is ordinary for a few days rather
+                                    // than a corner. It is the old derivation, kept because it is
+                                    // the same guess the app already made and there is genuinely
+                                    // nothing better available for such a job. New work never
+                                    // reaches it.
+                                    ?: ConversionWorker.outputNameFor(
+                                        input.displayName,
+                                        _settings.value.spec,
+                                    ),
+                                mimeType = info.outputData
+                                    .getString(ConversionWorker.KEY_MIME_TYPE)
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: _settings.value.spec.mimeType,
                             )
                         }
                     }
@@ -365,12 +401,7 @@ class ConversionViewModel @JvmOverloads constructor(
             }.onSuccess {
                 // publish() already deleted it; nothing left to clean up.
                 pendingStaged = null
-                _state.value = ConversionState.Saved(
-                    ConversionWorker.outputNameFor(
-                        converted.input.displayName,
-                        _settings.value.spec,
-                    ),
-                )
+                _state.value = ConversionState.Saved(converted.suggestedName)
             }.onFailure { e ->
                 // Deliberately NOT cleared. A failed save may mean the staged file is the
                 // only copy of an hour of transcoding, and the user's destination did not
@@ -403,11 +434,6 @@ class ConversionViewModel @JvmOverloads constructor(
         }
         _state.value = ConversionState.Idle
     }
-
-    fun suggestedOutputName(): String = ConversionWorker.outputNameFor(
-        currentInput()?.displayName ?: "output",
-        _settings.value.spec,
-    )
 
     private fun ConversionState.probe(): InputProbe? = when (this) {
         is ConversionState.Ready -> input.probe

@@ -13,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.MediaProbe
+import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.ffmpeg.ConcatEngine
 import org.libremediaconverter.model.ConcatStrategy
 import java.io.File
@@ -152,9 +153,12 @@ class ConcatEngineTest {
     fun theListFileIsCleanedUpAfterJoining(): Unit = runBlocking {
         val out = output("joined_cleanup.mp4")
         engine.join(listOf(Uri.fromFile(clipA), Uri.fromFile(clipB)), out)
+        // Asked of StagingNames rather than spelled out: the list file used to be the constant
+        // concat_list.txt, and a literal here would have gone on passing vacuously once the name
+        // moved -- it would be asserting that a file nothing creates does not exist.
         assertTrue(
             "the concat list file was left behind",
-            !File(out.parentFile, "concat_list.txt").exists(),
+            !File(out.parentFile, StagingNames.concatListFor(out.name)).exists(),
         )
     }
 

@@ -59,15 +59,20 @@ sealed interface Reattachment {
      *
      * Observed on a device rather than imagined: a tag query in a fresh process returned two
      * SUCCEEDED jobs whose output paths were both `…/conversions/input_converted.mp4`, with one
-     * file on disk. Nothing gives a job a staging path of its own — the name is derived from the
-     * input's display name — so a later conversion overwrites an earlier one's output while both
-     * jobs go on reporting that path as their result.
+     * file on disk. Nothing gave a job a staging path of its own — the name came from the input's
+     * display name — so a later conversion overwrote an earlier one's output while both jobs went
+     * on reporting that path as their result.
      *
      * The file is not the ambiguous part: whichever entry is picked, the user is offered the
      * bytes actually on disk, which is the thing that would otherwise be lost. What cannot be
      * recovered is which job wrote them, so the caller is told not to describe it. A card
      * labelled with the other job's input would be a confident lie, where a neutral label is
-     * merely thin. It resolves on its own once each job stages under a name of its own.
+     * merely thin.
+     *
+     * [org.libremediaconverter.convert.StagingNames] has since keyed staging on the job id, so
+     * nothing enqueued from now on can alias. This stays because the queue outlives the change:
+     * WorkManager keeps finished work for about a week, and the jobs most likely to be sitting in
+     * it when this code first runs are exactly the ones named the old way.
      */
     data class Ambiguous(override val job: JobSnapshot) : Reattachment
 
@@ -80,11 +85,14 @@ sealed interface Reattachment {
          *
          * - **[WorkInfo.State.CANCELLED]** — the user already said no. Reattaching would undo
          *   that.
-         * - **[WorkInfo.State.FAILED]** — nothing to act on, and nothing marks a failure as seen,
-         *   so it would reappear on every launch. That matters more than it looks: a worker
-         *   interrupted by process death can come back FAILED rather than retried, because the
-         *   restart's `setForeground` is refused as a background foreground-service start, so
-         *   failures left behind by earlier sessions are ordinary rather than rare.
+         * - **[WorkInfo.State.FAILED]** — nothing to act on, and nothing marks a failure as
+         *   seen, so it would reappear on every launch. The reason this mattered has since been
+         *   removed: a worker interrupted by process death used to come back FAILED rather than
+         *   retried, because the restart's `setForeground` was refused as a background
+         *   foreground-service start and the throw escaped `doWork()`. It now retries, so such
+         *   failures are rare again rather than ordinary. The exclusion stands on its own —
+         *   there is still nothing a FAILED job offers the user, and a job that exhausts its
+         *   retries is a job whose message this cannot show either.
          * - **[WorkInfo.State.SUCCEEDED] with no output file** — either it was saved, which
          *   deletes the staged copy, or the OS reclaimed the cache. Offering a Save button for a
          *   file that is gone turns a recoverable job into a failed save.
@@ -111,8 +119,8 @@ sealed interface Reattachment {
          * Live work outranks a finished result because a running job is holding a foreground
          * notification: someone opening the app while that notification is in the shade expects
          * to find that conversion, not a result from yesterday. It is also the right answer when
-         * the running job is overwriting the older one's staged file, which a shared staging name
-         * allows.
+         * the running job is overwriting the older one's staged file, which work enqueued before
+         * per-job staging names can still do.
          *
          * Within a rank the **newest staged file** wins, and that is not a detail. Losing a tie
          * is not the same as waiting for the next launch: the query has no `ORDER BY`, so its
