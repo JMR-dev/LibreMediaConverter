@@ -1,10 +1,15 @@
 # Defect audit
 
-**Status:** ten fixed and merged, two in progress, one parked. Fix status is per entry in the
-summary table; the entry bodies below describe each defect *as found* and are deliberately not
-rewritten as fixes land — this is the record of what was wrong, not a changelog.
-**Scope:** the Android-framework edge of the app, which has no JVM unit tests.
-**Last verified:** 2026-08-22, against `main` at `903b43c`.
+**Status:** twelve fixed and merged, one parked, two open, one no-action. Four numbers, because
+they have to sum to the sixteen entries below and the previous three did not. Fix status is per
+entry in the summary table and tracks `main`, re-checked at `18c53a3`; the entry bodies below
+describe each defect *as found* and are deliberately not rewritten as fixes land — this is the
+record of what was wrong, not a changelog.
+**Scope:** the Android-framework edge of the app, which had no JVM unit tests when this was
+written — it has them now; see [On testing these](#on-testing-these).
+**Last verified:** as-found evidence 2026-08-22, against `main` at `903b43c`; fix status
+re-checked against `main` at `18c53a3`. The two anchors move independently — the bodies are
+frozen, the status is not.
 **Device pass:** 2026-08-22 on a physical Pixel 10 Pro XL, API 37. Four entries were driven on
 hardware; **D1 did not reproduce and its premise is contradicted** — see its entry. Verdicts are
 marked per entry. Everything unmarked is still inspection only.
@@ -12,6 +17,25 @@ marked per entry. Everything unmarked is still inspection only.
 Instrumented baseline taken at the same time: `connectedDebugAndroidTest` on the Pixel gave
 **49 tests, 0 failures, 0 errors, 2 skipped**, no regression against the 40/0/2 recorded in
 `api-37-emulator-crash.md`. The 2 skips are the assumption-guarded `RealMediaBenchmark` tests.
+
+> **Correction — 2026-08-22 (`R3 / #12`, `R12 / #21`, `R13 / #22`).** The status metadata in this
+> document went stale within hours of being written, and this document is read as the work queue,
+> so the corrections are stated rather than made quietly:
+>
+> - **D5 and D7 were marked `open`; both were already merged to `main`.** `b86df47` (D5 —
+>   `InputQuery` plus `hasSpaceForUnknownSize`) and `c2e6344` (D7 — `setForegroundAsync`, no direct
+>   `notify()` left outside a comment) are both ancestors of `18c53a3`, and
+>   `fix/space-proxy-and-notification`, which the old text called "in progress", is merged.
+>   A reader acting on the old table would have re-implemented merged work.
+> - **The header count did not sum.** "Ten fixed and merged, two in progress, one parked" accounts
+>   for thirteen of the sixteen entries below; D12, D15 and D16 fell out of it.
+> - **"Where the fixes live" named a branch with no ref and a test total 15 short.** Corrected in
+>   that section, with the reason it went stale.
+> - **D11 was marked `merged` although one of its four rows was deliberately left undone.** Also
+>   corrected in the summary table; `7db3200`'s own commit body says so and this did not.
+>
+> The entry bodies are untouched. All 34 of their as-found citations were re-checked against
+> `903b43c` and are accurate; only status metadata and claims that had become false were changed.
 
 This is a survey, not a work order. Each entry records what is wrong, how confident we are that
 it is wrong, how to provoke it, and what a fix would have to decide. Acting on any of them is a
@@ -49,9 +73,16 @@ public properties, which is the opposite of what `config/detekt/detekt.yml` says
 is: *"Genuine smells … are fixed in the code, not silenced."*
 
 So the linters are clean and honest, and the defects are elsewhere — in the code they cannot see
-into. `OutputPublisher`, both ViewModels, both Workers and `MainActivity` have **no JVM unit tests
-at all**: roughly 1,200 of ~4,000 lines of main source, and the direct explanation for the ~31%
-coverage figure recorded in `CLAUDE.md`. Every entry below is in that untested set.
+into. At `903b43c`, `OutputPublisher`, both ViewModels, both Workers and `MainActivity` had **no
+JVM unit tests at all**: roughly 1,200 of ~4,000 lines of main source, and the direct explanation
+for the ~31% coverage figure recorded in `CLAUDE.md`. Every entry below is in that untested set.
+
+*That derivation is why the figure was what it was, and it is kept for exactly that reason — but
+the set it describes is no longer untested (`R15 / #24`). The follow-up added 25 JVM test files
+over precisely those ~1,200 lines, taking the suite from 180 to 257. So the ~31% predates them and
+has not been re-measured; `:app:jacocoTestReport` is the only thing that can say what it is now,
+and until it is re-run the figure should be read as "the number that motivated this work", not as
+current coverage.*
 
 ## How to read the confidence labels
 
@@ -436,6 +467,12 @@ which is what makes it visibly wrong rather than merely stale.
 `compose-ui-test-junit4` is **already on the androidTest classpath with zero current users** — no
 new dependency needed. It is an instrumented test, so it runs on CI, not locally.
 
+*Both halves of that last sentence stopped being true, and the fix went the other way (`R14 /
+#23`, 2026-08-22). `compose-ui-test-junit4` is declared for the JVM source set now, and the
+`StateRestorationTester` test this entry asked for is `AppRootRestorationTest`, which runs under
+Robolectric on `:app:testDebugUnitTest` — not an instrumented test at all. Instrumented tests also
+do run on this host now: `tools/local-emulator/run-e2e.sh`, API 33–36.*
+
 ---
 
 ## D7 — Direct `notify()` on WorkManager's foreground notification ID
@@ -581,6 +618,14 @@ than carried as a defect.
 ## D11 — Documentation and scaffold defects
 
 **Severity: low · Confirmed by inspection**
+
+*Three of the four rows below are fixed on `main` by `7db3200`; the second row is not, and the
+summary table said "merged" without saying so (`R13 / #22`). `7db3200`'s own commit body records
+the decision — "Not touched: `OutputPublisher`'s `hasSpaceFor` KDoc … that code belongs to a
+parked branch and another change stream" — so the row is **held with D1 on
+`fix/allocatable-space`**, not forgotten. It is still true today: nothing in `OutputPublisher.kt`
+mentions D1, which leaves a reader of that code with no way to learn the parked defect exists.
+The row itself is left as written, like every other as-found body in this file.*
 
 | Item | Location | Note |
 |---|---|---|
@@ -781,27 +826,41 @@ out of scope for the commit that created the situation.
 | D4 | `publish()` can leave a truncated file at the destination | medium | not attempted | **merged** |
 | D6 | Rotation resets the selected tab | medium | inspection only | **merged** |
 | D1 | `hasSpaceFor` measures the wrong quantity | medium | **NOT reproduced — premise contradicted** | parked, see below |
-| D5 | The space check can be vacuous | low-medium | **confirmed live** | open |
-| D7 | Direct `notify()` on WorkManager's notification ID | low-medium | resurrection **reproduced**; undismissability unverified | open |
+| D5 | The space check can be vacuous | low-medium | **confirmed live** | **merged** |
+| D7 | Direct `notify()` on WorkManager's notification ID | low-medium | resurrection **reproduced**; undismissability unverified | **merged** |
 | D9 | Output names derived from the wrong source | low | latent | **merged** |
 | D10 | `CancellationException` swallowed | low | not attempted | **merged** |
-| D11 | Documentation and scaffold | low | inspection only | **merged** |
+| D11 | Documentation and scaffold | low | inspection only | **merged**, less the `OutputPublisher` KDoc row — held with D1 |
 | D12 | Two detekt findings that are wrong | n/a | inspection only | no action — correct as written |
 | D14 | A failed FFprobe load crashes the pick | low (rare trigger) | **confirmed on the JVM** | **merged** |
 | D16 | Exhausted foreground-start retries report to nobody | low-medium | found while fixing D13 | open |
 | D15 | An oversized suggested name fails a finished conversion | low (very narrow) | found while fixing D9 | open |
 
-**Where the fixes live.** All merged work is on `feat/defect-fixes-base`, which now carries D2, D3,
-D4, D6, D8, D9, D10, D11, D13 and D14 and gates green (**242 JVM tests, detekt 0, lint clean**, up
-from 180). D5 and D7 are in progress on `fix/space-proxy-and-notification`. **D1 is parked unmerged** on
+**Where the fixes live.** All twelve merged fixes — D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D13
+and D14 — are on `main`; there is no integration branch left to check out. *This paragraph used to
+send the reader to `feat/defect-fixes-base`, which has no ref at all — not local, not remote, only
+a reflog entry — because it was deleted when it merged, and to `fix/space-proxy-and-notification`
+as still "in progress", which is merged too (its branch pointer does survive, at `c2e6344`).* The
+JVM suite gates green on `main` at `18c53a3` — **257 tests, 0 failures, 0 errors, 0 skipped**,
+with detekt reporting 0 findings and lint `0 errors, 0 warnings, 1 hint` (the deferred
+`UsableSpace` one, kept informational on purpose), against the 242 this paragraph used to quote
+and the 180 before the fixes began. That total is only as fresh as this commit; the 15 it was
+short are `UnknownInputSizeTest`,
+`SpaceCheckTest` and `ProgressNotificationTest`. Re-derive rather than trust it:
+`./gradlew :app:testDebugUnitTest`, then read `app/build/test-results/`. **D1 is parked unmerged** on
 `fix/allocatable-space`: the code is sound but the device pass contradicted its stated premise, so
 landing it needs a near-full-disk measurement first — see its entry. D15 and D16 were both found *while fixing* other entries and are
 recorded rather than folded in silently.
 
 Separately, `tools/local-emulator` carries the finding that **local emulators do work** — the
 segfault was SwiftShader's JIT against Fedora's SELinux `execheap` denial, and API 33–36 now run
-locally, 49 tests each, matching the Pixel. `docs/local-emulator.md` has the backtrace and the mode
-matrix, and proposes a `CLAUDE.md` correction that has not been applied.
+locally, every level matching the Pixel. That branch is merged. The sweep counted **49 tests per
+level at `22c7914`**, the commit that ran it — anchored here rather than left bare, because the
+instrumented suite has grown since (57 `@Test` on `main`) and an unanchored total invites a reader
+to mistake drift for breakage. The durable invariant is the shape, not the total: 0 failures,
+0 errors, 2 skipped, and the same total at every level and on the Pixel.
+`docs/local-emulator.md` has the backtrace and the mode matrix, and proposes a `CLAUDE.md`
+correction that has not been applied.
 
 ### If these are fixed
 
@@ -819,11 +878,28 @@ through a PR, never on `main`.
 
 ### On testing these
 
-The JVM test source set has exactly one dependency, `testImplementation(libs.junit)`. That is why
-every well-tested class in this project is pure (`model/`, `FFmpegCommandBuilder`,
+> **Correction — 2026-08-22 (`R14 / #23`, `R15 / #24`).** This section proposed a plan; the
+> follow-up work then executed it, so four of its load-bearing statements were true at `903b43c`
+> and false by `18c53a3`. It is re-dated rather than deleted, because the reasoning is *why* the
+> test stack looks the way it does — but nothing below describes `main` today unless a marked note
+> says so. Read the plain paragraphs as history.
+
+At `903b43c` the JVM test source set had exactly one dependency, `testImplementation(libs.junit)`.
+That is why every well-tested class in this project is pure (`model/`, `FFmpegCommandBuilder`,
 `FailureOutcome`) and every untested one takes a `Context`. Instrumented tests cannot run on the
 development host (`CLAUDE.md`, "Instrumented tests do not run locally"), so an androidTest-only
 red test is not a TDD loop anyone can execute here.
+
+*Neither sentence still holds. There are five `testImplementation` entries now — `junit`,
+`robolectric`, `androidx.work.testing`, the Compose BOM platform and `compose-ui-test-junit4` — so
+the one-dependency constraint that shaped this codebase no longer binds a new test. And
+instrumented tests do run on this host (`R14 / #23`): `22c7914` found the cause of the segfaults,
+and `tools/local-emulator/run-e2e.sh` runs the suite locally on API 33–36, recorded in
+[`local-emulator.md`](local-emulator.md). The pure-seams choice below still stands, but it now
+rests on speed and determinism — a JVM test is seconds against an emulator leg's minutes and a
+cold boot — rather than on impossibility, which is a weaker argument and should be made honestly.
+What does survive unchanged is the API 37 rule: that image is broken, so API 37 is still a
+physical-Pixel check before each release.*
 
 The approach chosen for the follow-up work is **pure seams plus Robolectric**: extract each
 decision into a pure function on the existing JUnit 4 stack — the pattern `work/FailureOutcome.kt`
@@ -833,9 +909,20 @@ prerelease guard in `app/build.gradle.kts` covers only `androidx.`, `junit` and 
 so a new group would float unguarded) and a `testOptions { unitTests.isIncludeAndroidResources = true }`
 block, which this module does not currently have at all.
 
+*Executed, and both build-side predictions held. Robolectric is a pinned entry in
+`libs.versions.toml`, pinned for exactly the reason given — the `componentSelection` guard does not
+cover `org.robolectric`, so a `4.+` would have resolved straight to a beta — and the reasoning is
+written beside it. The `testOptions` block this paragraph said the module "does not currently have
+at all" is in `app/build.gradle.kts` today.*
+
 Worth knowing before adding anything: **`androidx.work:work-testing`, `compose-ui-test-junit4` and
 `espresso-core` are already declared and have zero users.** `TestListenableWorkerBuilder` and
 `createComposeRule` are available on the androidTest classpath today with no build change.
+
+*Two of the three have users now — and on the JVM source set, not the instrumented one:
+`androidx.work.testing` is imported by seven files under `app/src/test`, and
+`androidx.compose.ui.test` by one (`AppRootRestorationTest`). **`espresso-core` is still at zero**,
+so that third of the sentence is the only part still standing.*
 
 ## Not covered here
 
