@@ -102,6 +102,25 @@ install for code that can never run — and on API 37 the full APK does not fit 
   though the JVM suite went from 11 test files to 43. Main source grew 4,114 -> 5,715 lines over
   the same period, so the denominator outran the numerator. Re-measure before quoting it; do not
   assume more tests means a higher percentage here.
+- **Testable code is not done until it is tested.** If a piece is unit testable, it gets unit
+  tests before it counts as done. If it is e2e testable, it gets e2e tests. Both clauses apply —
+  a change that is both needs both.
+
+  Three things make that a real bar rather than a slogan here:
+
+  - **Unit-testable is broader than it looks.** The pure-seam pattern — `work/FailureOutcome.kt`
+    documents the reasoning — turns "needs a device" into "a pure function plus a thin edge".
+    Robolectric is in the JVM source set, `compose-ui-test-junit4` with it, so Compose screens are
+    unit testable too. Reach for the seam before concluding something cannot be unit tested.
+  - **E2E is runnable locally now.** `tools/local-emulator/run-e2e.sh` runs API 33-36 on this
+    machine; see `docs/local-emulator.md`. That was believed impossible until the SELinux/renderer
+    cause was found, and it is what makes the e2e half of this norm enforceable.
+  - **A test has to bite.** Revert the line it covers, confirm it goes red, restore. A review of
+    this codebase ran 46 mutations against a 257-test suite and **9 were vacuous** — five of them
+    passing the whole suite over a completely unguarded code path. Green is not evidence.
+
+  Name what you did not cover and why. Genuine exemptions exist; implied coverage is the problem.
+
 - `kotlin.code.style=official`. Gradle stays Kotlin DSL.
 
 ## Dependency versions
