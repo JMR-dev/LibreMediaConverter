@@ -1,8 +1,11 @@
 # Defect audit
 
-**Status:** ten fixed and merged, two in progress, one parked. Fix status is per entry in the
-summary table; the entry bodies below describe each defect *as found* and are deliberately not
-rewritten as fixes land — this is the record of what was wrong, not a changelog.
+**Status:** twelve fixed and merged, one parked, two open, one no-action. Four numbers, because
+they have to sum to the sixteen entries below and the previous three did not. Fix status is per
+entry in the summary table and
+tracks `main`, re-checked at `18c53a3`; the entry bodies below describe each defect *as found* and
+are deliberately not rewritten as fixes land — this is the record of what was wrong, not a
+changelog.
 **Scope:** the Android-framework edge of the app, which has no JVM unit tests.
 **Last verified:** 2026-08-22, against `main` at `903b43c`.
 **Device pass:** 2026-08-22 on a physical Pixel 10 Pro XL, API 37. Four entries were driven on
@@ -12,6 +15,25 @@ marked per entry. Everything unmarked is still inspection only.
 Instrumented baseline taken at the same time: `connectedDebugAndroidTest` on the Pixel gave
 **49 tests, 0 failures, 0 errors, 2 skipped**, no regression against the 40/0/2 recorded in
 `api-37-emulator-crash.md`. The 2 skips are the assumption-guarded `RealMediaBenchmark` tests.
+
+> **Correction — 2026-08-23 (`R3 / #12`, `R12 / #21`, `R13 / #22`).** The status metadata in this
+> document went stale within hours of being written, and this document is read as the work queue,
+> so the corrections are stated rather than made quietly:
+>
+> - **D5 and D7 were marked `open`; both were already merged to `main`.** `b86df47` (D5 —
+>   `InputQuery` plus `hasSpaceForUnknownSize`) and `c2e6344` (D7 — `setForegroundAsync`, no direct
+>   `notify()` left outside a comment) are both ancestors of `18c53a3`, and
+>   `fix/space-proxy-and-notification`, which the old text called "in progress", is merged.
+>   A reader acting on the old table would have re-implemented merged work.
+> - **The header count did not sum.** "Ten fixed and merged, two in progress, one parked" accounts
+>   for thirteen of the sixteen entries below; D12, D15 and D16 fell out of it.
+> - **"Where the fixes live" named a branch with no ref and a test total 15 short.** Corrected in
+>   that section, with the reason it went stale.
+> - **D11 was marked `merged` although one of its four rows was deliberately left undone.** Also
+>   corrected in the summary table; `7db3200`'s own commit body says so and this did not.
+>
+> The entry bodies are untouched. All 34 of their as-found citations were re-checked against
+> `903b43c` and are accurate; only status metadata and claims that had become false were changed.
 
 This is a survey, not a work order. Each entry records what is wrong, how confident we are that
 it is wrong, how to provoke it, and what a fix would have to decide. Acting on any of them is a
@@ -582,6 +604,14 @@ than carried as a defect.
 
 **Severity: low · Confirmed by inspection**
 
+*Three of the four rows below are fixed on `main` by `7db3200`; the second row is not, and the
+summary table said "merged" without saying so (`R13 / #22`). `7db3200`'s own commit body records
+the decision — "Not touched: `OutputPublisher`'s `hasSpaceFor` KDoc … that code belongs to a
+parked branch and another change stream" — so the row is **held with D1 on
+`fix/allocatable-space`**, not forgotten. It is still true today: nothing in `OutputPublisher.kt`
+mentions D1, which leaves a reader of that code with no way to learn the parked defect exists.
+The row itself is left as written, like every other as-found body in this file.*
+
 | Item | Location | Note |
 |---|---|---|
 | Stale JDK claim | `README.md:111` | "Requires JDK 17+ (AGP 9 will not run on older) and the Android SDK with API 37." contradicts the Java 25 toolchain that `CLAUDE.md` documents. The same claim was already corrected once, in `CLAUDE.md`, by commit `f496291`. |
@@ -781,27 +811,39 @@ out of scope for the commit that created the situation.
 | D4 | `publish()` can leave a truncated file at the destination | medium | not attempted | **merged** |
 | D6 | Rotation resets the selected tab | medium | inspection only | **merged** |
 | D1 | `hasSpaceFor` measures the wrong quantity | medium | **NOT reproduced — premise contradicted** | parked, see below |
-| D5 | The space check can be vacuous | low-medium | **confirmed live** | open |
-| D7 | Direct `notify()` on WorkManager's notification ID | low-medium | resurrection **reproduced**; undismissability unverified | open |
+| D5 | The space check can be vacuous | low-medium | **confirmed live** | **merged** |
+| D7 | Direct `notify()` on WorkManager's notification ID | low-medium | resurrection **reproduced**; undismissability unverified | **merged** |
 | D9 | Output names derived from the wrong source | low | latent | **merged** |
 | D10 | `CancellationException` swallowed | low | not attempted | **merged** |
-| D11 | Documentation and scaffold | low | inspection only | **merged** |
+| D11 | Documentation and scaffold | low | inspection only | **merged**, less the `OutputPublisher` KDoc row — held with D1 |
 | D12 | Two detekt findings that are wrong | n/a | inspection only | no action — correct as written |
 | D14 | A failed FFprobe load crashes the pick | low (rare trigger) | **confirmed on the JVM** | **merged** |
 | D16 | Exhausted foreground-start retries report to nobody | low-medium | found while fixing D13 | open |
 | D15 | An oversized suggested name fails a finished conversion | low (very narrow) | found while fixing D9 | open |
 
-**Where the fixes live.** All merged work is on `feat/defect-fixes-base`, which now carries D2, D3,
-D4, D6, D8, D9, D10, D11, D13 and D14 and gates green (**242 JVM tests, detekt 0, lint clean**, up
-from 180). D5 and D7 are in progress on `fix/space-proxy-and-notification`. **D1 is parked unmerged** on
+**Where the fixes live.** All twelve merged fixes — D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D13
+and D14 — are on `main`; there is no integration branch left to check out. *This paragraph used to
+send the reader to `feat/defect-fixes-base`, which has no ref at all — not local, not remote, only
+a reflog entry — because it was deleted when it merged, and to `fix/space-proxy-and-notification`
+as still "in progress", which is merged too (its branch pointer does survive, at `c2e6344`).* The
+JVM suite gates green on `main` at `18c53a3` — **257 tests, 0 failures, 0 errors, 0 skipped,
+detekt 0, lint clean**, against the 242 this paragraph used to quote and the 180 before the fixes
+began. That total is only as fresh as this commit; the 15 it was short are `UnknownInputSizeTest`,
+`SpaceCheckTest` and `ProgressNotificationTest`. Re-derive rather than trust it:
+`./gradlew :app:testDebugUnitTest`, then read `app/build/test-results/`. **D1 is parked unmerged** on
 `fix/allocatable-space`: the code is sound but the device pass contradicted its stated premise, so
 landing it needs a near-full-disk measurement first — see its entry. D15 and D16 were both found *while fixing* other entries and are
 recorded rather than folded in silently.
 
 Separately, `tools/local-emulator` carries the finding that **local emulators do work** — the
 segfault was SwiftShader's JIT against Fedora's SELinux `execheap` denial, and API 33–36 now run
-locally, 49 tests each, matching the Pixel. `docs/local-emulator.md` has the backtrace and the mode
-matrix, and proposes a `CLAUDE.md` correction that has not been applied.
+locally, every level matching the Pixel. That branch is merged. The sweep counted **49 tests per
+level at `22c7914`**, the commit that ran it — anchored here rather than left bare, because the
+instrumented suite has grown since (57 `@Test` on `main`) and an unanchored total invites a reader
+to mistake drift for breakage. The durable invariant is the shape, not the total: 0 failures,
+0 errors, 2 skipped, and the same total at every level and on the Pixel.
+`docs/local-emulator.md` has the backtrace and the mode matrix, and proposes a `CLAUDE.md`
+correction that has not been applied.
 
 ### If these are fixed
 
