@@ -178,8 +178,9 @@ jobs:
   # across it -- none below 34, dataSync at 34, mediaProcessing from 35. Testing a
   # single level would leave two thirds of that branch unexercised.
   #
-  # It stops at 36 rather than targetSdk 37 because the android-37.0 emulator image
-  # is broken, not because 37 does not matter. See docs/api-37-emulator-crash.md.
+  # It reaches targetSdk 37, but the API 37 row is not like the other four and the
+  # comment on it says how. Two tests are excluded there and run in their own
+  # advisory job below. See docs/api-37-emulator-crash.md.
   #
   # FFmpeg is not built here. The AAR is committed under bin/, so a red run means the
   # code is broken rather than that a cross-compile hiccuped.
@@ -204,13 +205,28 @@ jobs:
             api-level: "35"
           - label: "36"
             api-level: "36"
-          # No API 37 row. targetSdk is 37, but the android-37.0 emulator image
-          # crash-loops surfaceflinger inside its own gralloc mapper, so every test
-          # fails there no matter what this app does. Ruling that in took four CI
-          # rounds, so the evidence and the ruled-out fixes are written down rather
-          # than left to be rediscovered: docs/api-37-emulator-crash.md. That file
-          # also records what to try first when re-adding it -- note that the row
-          # needs api-level "37.0", since a bare 37 fails during SDK setup.
+          # API 37, and it is NOT the same device as the four rows above it.
+          #
+          # CAVEAT, read this before trusting a green here: this leg runs with
+          # SystemUI disabled and the framework restarted under it. No other leg
+          # and no Pixel run uses that configuration. It is defensible only because
+          # nothing in this suite touches system UI -- these are Media3, FFmpeg and
+          # WorkManager tests -- and because the alternative is no CI coverage of
+          # the level this app targets. **Anything that ever does depend on system
+          # UI must not trust this row.** E2E_DISABLE_SYSTEM_UI is what does it;
+          # .github/scripts/e2e-run.sh explains the mechanism and why every step of
+          # it is verified rather than assumed.
+          #
+          # api-level must be "37.0". A bare 37 is not an SDK package and fails
+          # during setup, which cost a run to discover.
+          #
+          # notAnnotation removes the two tests that do not pass on this image; they
+          # run in the advisory job below, off the same marker so they cannot end up
+          # in both or neither. docs/api-37-emulator-crash.md has the measurements.
+          - label: "37"
+            api-level: "37.0"
+            disable-system-ui: "1"
+            gradle-args: "-Pandroid.testInstrumentationRunnerArguments.notAnnotation=org.libremediaconverter.FailsOnEmulatorApi37"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -236,6 +252,12 @@ jobs:
 
       - name: Instrumented tests
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        # Both of these are empty on every row but 37, and both are read with a
+        # `:-` default in e2e-run.sh, so the four legs below 37 run the identical
+        # gradle command they always have.
+        env:
+          E2E_DISABLE_SYSTEM_UI: ${{ matrix.disable-system-ui }}
+          E2E_EXTRA_GRADLE_ARGS: ${{ matrix.gradle-args }}
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
@@ -296,4 +318,112 @@ jobs:
         with:
           name: e2e-wedge-api${{ matrix.label }}
           path: ${{ runner.temp }}/wedge-diagnostics-api${{ matrix.label }}.txt
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # The two API 37 tests the gating row above excludes, run on their own so they
+  # stay visible instead of disappearing behind a notAnnotation.
+  #
+  # continue-on-error: it reports, it never blocks. That is the whole reason it is
+  # a separate job rather than a sixth matrix row: a row would share the gating
+  # job's `E2E API <label>` name, and a check cannot be both required and advisory
+  # under one name.
+  #
+  # It is named for WHAT IT RUNS, deliberately. Both tests drive a full H.264 ->
+  # H.265 hardware transcode through Media3Engine -- which is exactly what
+  # separates them from the two Media3EngineTest cases that pass here, since those
+  # two never decode video. The current theory about why they fail is in the next
+  # paragraph, where it can be corrected without renaming a check that people have
+  # already learned to look for.
+  #
+  # THEORY, NOT SETTLED: the exception surfaces at `dequeueOutputBuffer` on
+  # `c2.goldfish.h264.decoder`, the emulator's own codec, which gets its frames out
+  # of a host-side colour buffer -- the same readback machinery that aborts
+  # surfaceflinger on this image. What is MEASURED is narrower: these two fail on
+  # the API 37 emulator image; pass at API 36 on this runner under the same renderer
+  # AND the same SystemUI-disable path; pass at API 33-36 without that path at all,
+  # since nothing below 37 needs it; and pass on a physical Pixel 10 Pro XL at 37. That the decoder is the culprit rather than something else
+  # the decode path touches is inference. docs/api-37-emulator-crash.md separates
+  # the two, and the images also differ on the encoder side, which is why "broken
+  # h264 decoder" is not written into this job's name.
+  #
+  # WHEN THIS GOES GREEN, delete the annotation rather than this job: the gating
+  # row picks the tests back up automatically, and this job goes empty and can go
+  # with it.
+  # ---------------------------------------------------------------------------
+  e2e-api37-advisory:
+    name: E2E API 37 Media3 hardware transcode (advisory)
+    runs-on: ubuntu-latest
+    needs: ffmpeg
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      E2E_LABEL: "37-media3-transcode"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Instrumented tests
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          E2E_DISABLE_SYSTEM_UI: "1"
+          # The complement of the gating row's notAnnotation, off the same marker,
+          # so a test can never be excluded from both jobs or run in both.
+          E2E_EXTRA_GRADLE_ARGS: "-Pandroid.testInstrumentationRunnerArguments.annotation=org.libremediaconverter.FailsOnEmulatorApi37"
+        with:
+          # Every device pin below matches the gating row exactly, so a difference
+          # between the two jobs is the test selection and nothing else.
+          api-level: "37.0"
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          disk-size: 8G
+          ram-size: 2560M
+          script: bash .github/scripts/e2e-run.sh ${{ env.E2E_LABEL }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-report-api${{ env.E2E_LABEL }}
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: warn
+
+      # Uploaded always, and here it matters more than anywhere else in this file:
+      # this job is EXPECTED to be red, so the logcat is the only thing that says
+      # whether it is red for the known reason or for a new one.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-diagnostics-api${{ env.E2E_LABEL }}
+          path: |
+            ${{ runner.temp }}/logcat-api${{ env.E2E_LABEL }}.txt
+            ${{ runner.temp }}/diagnostics-api${{ env.E2E_LABEL }}.txt
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: e2e-wedge-api${{ env.E2E_LABEL }}
+          path: ${{ runner.temp }}/wedge-diagnostics-api${{ env.E2E_LABEL }}.txt
           if-no-files-found: ignore

@@ -469,8 +469,8 @@ Proposed replacement for the section, offered for review rather than applied her
 >   `android-37.1` abort surfaceflinger inside their own gralloc mapper, and init SIGKILLs
 >   zygote each time. Under `-gpu host` they never boot; under `-gpu swangle_indirect` they
 >   boot, and disabling SystemUI removes the trigger. `run-e2e.sh` does all of that per level,
->   and the local API 37 result is two failures and the two usual skips, not a clean run. CI's
->   matrix still stops at 36.
+>   and the local API 37 result is two failures and the two usual skips, not a clean run. CI
+>   takes API 37 as a gating leg plus an advisory one carrying those two tests.
 >   `docs/api-37-emulator-crash.md` has the matrix and the reasoning. **API 37 needs a manual
 >   check on the Pixel 10 Pro XL before each release.**
 

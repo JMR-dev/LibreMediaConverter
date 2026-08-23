@@ -7,8 +7,8 @@ boots, disabling SystemUI collapses the crash rate far enough to run a suite —
 **2 failures, 0 errors and the two by-design skips** (measured 49 / 2 / 0 / 2 at `22c7914`, where
 the suite was 49 tests — [Reading these totals](#reading-these-totals) before comparing any total
 with another). The crashes do not stop outright, and the two failures are real; both are quantified
-below. CI's matrix should still stop at 36 — see
-[So should CI take API 37?](#so-should-ci-take-api-37).
+below. CI now takes API 37 as two jobs — a gating leg and an advisory one for those two
+failures — see [So should CI take API 37?](#so-should-ci-take-api-37).
 **Last verified:** 2026-08-22, emulator `37.1.11.0` (build 15917651), Fedora 44,
 against system images `android-37.0` rev 6 **and** `android-37.1` rev 8.
 
@@ -465,19 +465,67 @@ this and why `stop`/`start` waits must poll `pidof system_server` and `service c
 
 ### So should CI take API 37?
 
-**No, and the matrix should still stop at 36.** Three reasons, in order of weight:
+**Yes, as two jobs: a gating `E2E API 37` and an advisory leg carrying the two tests that do not
+pass.** That reverses the answer this section gave, and the reversal is measured rather than
+argued — two of its three reasons were claims *about CI*, and CI had never been measured. The
+instrument that measured it is [`.github/workflows/api37-debug.yml`](../.github/workflows/api37-debug.yml),
+dispatch-only, a copy of the E2E job with the matrix replaced by inputs.
 
-1. CI runs `swiftshader_indirect` on a GPU-less runner. The aborts happen under ANGLE too — they
-   are merely sparser — so nothing here says a runner would be stable.
-2. The working configuration needs SystemUI disabled and a framework restart mid-job. That is a
-   lot of bespoke device surgery to put behind a merge gate, and it silently weakens what the leg
-   proves.
-3. Even at its best two tests fail, so the leg would be permanently red or permanently
-   allow-listed. Neither is a gate worth having.
+Every run below is `ubuntu-latest`, KVM on, `pixel_6`, x86_64, disk 8G, RAM 2560M, emulator
+`37.1.11.0` build 15917651 — the same emulator build the local investigation used. Every **API
+37** row is `system-images;android-37.0;google_apis;x86_64`; c2 is the API 36 control and runs
+that level's own image, which is the whole point of it.
 
-What has changed is the *local* story: API 37 is no longer a level nobody can look at. A
-regression that shows up at 37 and not at 36 can now be reproduced on this workstation in about
-four minutes, which is what the missing matrix row was really costing.
+| # | run | api | `-gpu` | SystemUI | suite | verdict |
+|---|---|---|---|---|---|---|
+| c1 | [32644947334](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32644947334) | 37.0 | swiftshader_indirect | running | `Starting 0 tests` | FAIL |
+| c2 | [32644965828](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32644965828) | **36** | swiftshader_indirect | running | 57 tests, BUILD SUCCESSFUL | green control |
+| c3 | [32644970240](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32644970240) | 37.0 | swangle_indirect | running | `Starting 0 tests` | FAIL |
+| c5 | [32645543238](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32645543238) | 37.0 | swangle_indirect | disabled | 57 / 2 / 0 / 2 | suite ran |
+| c6 | [32646029143](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646029143) | 37.0 | swiftshader_indirect | one-shot disable, **did not hold** | `Starting 0 tests` | FAIL |
+| c8 | [32646611485](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646611485) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+| c9 | [32646615706](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646615706) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+| c10 | [32646619472](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646619472) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+| c11 | [32647138060](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32647138060) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+
+57 is that checkout's own `@Test` count at `acc71bc`, so those are whole-suite runs and not
+truncated ones — see [Reading these totals](#reading-these-totals). Taking the three old reasons
+in turn:
+
+1. **"Nothing says a runner would be stable" — measured, and it is.** `-gpu swiftshader_indirect`
+   on a GPU-less runner resolves to `gles_mode_selected:swiftshader`, a third renderer that
+   locally never survives to say anything (Fedora's SELinux denies `execheap` to SwiftShader's
+   Reactor JIT — see [`local-emulator.md`](local-emulator.md)). It boots `android-37.0` in about
+   60 s. The local discriminator — fatal iff `gles_mode_selected:host` — holds, and a runner with
+   no GPU can never select host, so CI was never in the fatal class. Switching CI's `-gpu` changes
+   nothing either way: c1 and c3 both fail with SystemUI up, under swiftshader and swangle
+   respectively, and c5 and c8–c11 show the suite running under either once SystemUI is gone.
+2. **"Bespoke device surgery" — still true, and now a written caveat rather than a reason to skip
+   the level.** It is one env flag, `E2E_DISABLE_SYSTEM_UI`, read by `.github/scripts/e2e-run.sh`
+   and unset on every other leg. What it costs is stated where it can be read from the failing
+   check: the API 37 row runs a device configuration no other leg and no Pixel run uses. What
+   makes it dependable is verification, not repetition — c6 is the counter-case, a one-shot
+   `pm disable-user` that reported `new state: disabled-user` and then started SystemUI eight more
+   times. The verified form is 4/4; the unverified form was 3/4.
+3. **"Permanently red or permanently allow-listed" — this was the real objection, and it is the
+   one the split answers.** The two failures are marked `@FailsOnEmulatorApi37` in
+   `app/src/androidTest`. The gating job runs `notAnnotation` on that marker and must be green;
+   the advisory job runs `annotation` on the *same* marker, reports, and never blocks. One marker
+   rather than two lists, so a test cannot silently end up in neither job — which would read as
+   green.
+
+The cost is about three minutes on the API 37 leg — the `stop`/`start` plus a 45 s quiet window,
+and another round when the first does not verify. Measured wall clock for the whole job, boot
+included: 6–7 minutes at API 37 against ~6 at API 36.
+
+Two things this does **not** buy. The advisory job is expected red, so a *third* failure there is
+the signal and the run's logcat is the only thing that distinguishes it — which is why that job
+uploads diagnostics unconditionally. And a green `E2E API 37` still does not replace the release
+check on the Pixel: the emulator leg runs without SystemUI, and the Pixel does not.
+
+The *local* story changed at the same time and independently: API 37 is no longer a level nobody
+can look at. A regression that shows up at 37 and not at 36 can be reproduced on this workstation
+in about four minutes.
 
 ## Verified on real API 37 hardware
 
@@ -599,6 +647,12 @@ though a new API level shipped. Watch for these instead:
   which is what drives `RegionSamplingThread`, so one would very likely sidestep the bug
   entirely. Try it before anything else here.
 - **the upstream issue being marked fixed.**
+- **`E2E API 37 Media3 hardware transcode (advisory)` going green.** Nothing announces this: the
+  job is `continue-on-error`, so it fixing itself looks exactly like a check nobody reads
+  quietly ceasing to be red. It is listed here because that makes it the *least* likely of these
+  triggers to be noticed, not the most. When it happens, delete `@FailsOnEmulatorApi37` from the
+  two tests rather than the job — the gating leg picks them back up on its own, and the advisory
+  job then runs nothing and can go.
 
 ## Correction owed to `CLAUDE.md`
 
@@ -611,8 +665,9 @@ though a new API level shipped. Watch for these instead:
 
 The first sentence is right, and now under-specified in one direction and over-specified in the
 other: it is not only `android-37.0` (it is `37.1` too), and it does not crash-loop under every
-renderer. Proposed replacement, offered for review rather than applied here — `CLAUDE.md` is left
-alone deliberately, because several branches touch it:
+renderer. **The last clause is now simply false: CI's matrix does not stop at API 36 any more.**
+Proposed replacement, offered for review rather than applied here — `CLAUDE.md` is left alone
+deliberately, because several branches touch it:
 
 > - **The API 37 images crash-loop surfaceflinger under the host GL renderer.** Both
 >   `android-37.0` and `android-37.1` abort inside their own gralloc mapper
@@ -621,6 +676,7 @@ alone deliberately, because several branches touch it:
 >   boots at all; under `-gpu swangle_indirect` it boots and the aborts merely become
 >   intermittent. `docs/api-37-emulator-crash.md` has the seven-run matrix and the ruled-out
 >   list, and `tools/local-emulator/run-e2e.sh` picks the working renderer per API level.
->   CI's matrix stops at 36 because CI runs `swiftshader_indirect` on a GPU-less runner and the
->   aborts continue there too. **API 37 still needs a manual check on the Pixel 10 Pro XL before
->   each release.**
+>   CI takes API 37 as two jobs: a gating `E2E API 37` that disables SystemUI first, and an
+>   advisory leg carrying the two `@FailsOnEmulatorApi37` tests. The gating leg therefore runs a
+>   device configuration nothing else does. **API 37 still needs a manual check on the Pixel 10
+>   Pro XL before each release** — it is the only API 37 run with SystemUI intact.
