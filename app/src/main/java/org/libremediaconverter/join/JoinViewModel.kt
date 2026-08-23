@@ -31,7 +31,17 @@ sealed interface JoinState {
     data class Ready(val inputs: List<InputFile>) : JoinState
     data class Joining(val inputs: List<InputFile>) : JoinState
     data class Waiting(val inputs: List<InputFile>) : JoinState
-    data class Joined(val staged: File, val strategy: ConcatStrategy) : JoinState
+    data class Joined(
+        val staged: File,
+        val strategy: ConcatStrategy,
+        /**
+         * What to call the file, and what type to open the save dialog with.
+         *
+         * From the job, not from a literal. See `ConcatWorker.KEY_SUGGESTED_NAME`.
+         */
+        val suggestedName: String,
+        val mimeType: String,
+    ) : JoinState
     data class Saved(val displayName: String) : JoinState
     data class Failed(val message: String) : JoinState
 }
@@ -168,7 +178,22 @@ class JoinViewModel @JvmOverloads constructor(
                             // Take responsibility for the file at the same moment the state
                             // starts referring to it, so the two cannot disagree.
                             pendingStaged = staged
-                            JoinState.Joined(staged, strategy)
+                            JoinState.Joined(
+                                staged = staged,
+                                strategy = strategy,
+                                // A join enqueued before the worker reported these carries
+                                // neither, and the fallback is the format such a job really
+                                // used -- ConcatWorker.request has always defaulted to it, and
+                                // the join screen has never offered a choice.
+                                suggestedName = info.outputData
+                                    .getString(ConcatWorker.KEY_SUGGESTED_NAME)
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: ConcatWorker.outputNameFor(ConcatWorker.DEFAULT_FORMAT),
+                                mimeType = info.outputData
+                                    .getString(ConcatWorker.KEY_MIME_TYPE)
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: ConcatWorker.DEFAULT_FORMAT.mimeType,
+                            )
                         }
                     }
 
@@ -202,7 +227,7 @@ class JoinViewModel @JvmOverloads constructor(
             }.onSuccess {
                 // publish() already deleted it; nothing left to clean up.
                 pendingStaged = null
-                _state.value = JoinState.Saved("joined.mp4")
+                _state.value = JoinState.Saved(joined.suggestedName)
             }.onFailure { e ->
                 // Deliberately NOT cleared -- see the same branch in ConversionViewModel.
                 // A failed save can leave the staged file as the only copy of the work, so

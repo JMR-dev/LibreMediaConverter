@@ -15,9 +15,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.OutputPublisher
-import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.convert.installTestWorkManager
-import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.DeviceCodecs
 import org.libremediaconverter.model.EnginePreference
 import org.libremediaconverter.model.InputProbe
@@ -134,19 +132,4 @@ class PerJobStagingTest {
         val JOB_A: UUID = UUID.fromString("00000000-0000-4000-8000-00000000000a")
         val JOB_B: UUID = UUID.fromString("00000000-0000-4000-8000-00000000000b")
     }
-}
-
-/** An engine that only writes the file, which is the whole of what these tests look at. */
-private object WritingTranscoder : SoftwareTranscoder {
-    override suspend fun run(
-        request: ConversionRequest,
-        inputPath: String,
-        output: File,
-        durationMs: Long,
-        onProgress: (Int) -> Unit,
-    ) {
-        output.writeBytes(ByteArray(OUTPUT_BYTES))
-    }
-
-    private const val OUTPUT_BYTES = 512
 }

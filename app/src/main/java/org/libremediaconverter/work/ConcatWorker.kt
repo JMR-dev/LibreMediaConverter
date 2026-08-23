@@ -41,7 +41,7 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         }
         val totalBytes = inputData.getLong(KEY_TOTAL_BYTES, 0L)
         val format = OutputFormat.valueOf(
-            inputData.getString(KEY_FORMAT) ?: OutputFormat.MP4_H264.name,
+            inputData.getString(KEY_FORMAT) ?: DEFAULT_FORMAT.name,
         )
 
         if (!publisher.hasSpaceFor(totalBytes)) {
@@ -73,6 +73,11 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 workDataOf(
                     KEY_OUTPUT_PATH to staged.absolutePath,
                     KEY_STRATEGY to result.strategy.name,
+                    // See the same two in ConversionWorker. The join screen has no format picker
+                    // today, so `joined.mp4` was right by accident everywhere it was written out;
+                    // reporting them means the accident is not what holds it up.
+                    KEY_SUGGESTED_NAME to outputNameFor(format),
+                    KEY_MIME_TYPE to format.mimeType,
                 ),
             )
         } catch (e: CancellationException) {
@@ -111,7 +116,30 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_FORMAT = "format"
         const val KEY_OUTPUT_PATH = "output_path"
         const val KEY_STRATEGY = "strategy"
+
+        /** The name to offer in the save dialog, and the type to open it with. */
+        const val KEY_SUGGESTED_NAME = "suggested_name"
+        const val KEY_MIME_TYPE = "mime_type"
         const val KEY_ERROR = "error"
+
+        /**
+         * What a join produces when nothing says otherwise.
+         *
+         * Named once rather than repeated at the three places that need it -- the input-Data
+         * default, [request]'s parameter default, and the fallback a ViewModel uses for a job
+         * enqueued before this worker reported its format. Those three disagreeing is the shape
+         * this whole entry is about.
+         */
+        val DEFAULT_FORMAT: OutputFormat = OutputFormat.MP4_H264
+
+        /**
+         * The name to suggest in the save dialog for a join of this [format].
+         *
+         * A function rather than the literal `joined.mp4` it replaces: that literal appeared in
+         * the ViewModel and twice in the screen, and all three were correct only because the join
+         * screen has no format picker yet.
+         */
+        fun outputNameFor(format: OutputFormat): String = "joined.${format.extension}"
 
         private const val NOTIFICATION_ID = 1002
         private const val TAG = "ConcatWorker"
@@ -122,7 +150,7 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
          * join screen says about a job in flight, and after a restart nothing else can supply
          * it. See [JobTags].
          */
-        fun request(inputs: List<Uri>, totalBytes: Long, format: OutputFormat = OutputFormat.MP4_H264) =
+        fun request(inputs: List<Uri>, totalBytes: Long, format: OutputFormat = DEFAULT_FORMAT) =
             OneTimeWorkRequestBuilder<ConcatWorker>()
                 .addTag(JobTags.inputCount(inputs.size))
                 .setInputData(

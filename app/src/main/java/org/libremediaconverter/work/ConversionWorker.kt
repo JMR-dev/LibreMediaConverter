@@ -124,6 +124,14 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     KEY_OUTPUT_PATH to staged.absolutePath,
                     KEY_ENGINE_USED to decision.engine.name,
                     KEY_ROUTE_REASON to decision.reason.explanation,
+                    // Reported rather than left to be recomputed. The spec arrives here as input
+                    // Data, and WorkInfo never hands input Data back -- so this is the only moment
+                    // at which anything knows both the input's name and the spec that ran. A
+                    // ViewModel deriving it later has only its own picker, which is not the same
+                    // thing and is not the same thing in two different ways: a reattached job's
+                    // spec was never in those settings, and a live picker can move mid-job.
+                    KEY_SUGGESTED_NAME to outputNameFor(displayName, spec),
+                    KEY_MIME_TYPE to spec.mimeType,
                 ),
             )
         } catch (e: CancellationException) {
@@ -277,6 +285,10 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
         const val KEY_OUTPUT_PATH = "output_path"
         const val KEY_ENGINE_USED = "engine_used"
         const val KEY_ROUTE_REASON = "route_reason"
+
+        /** The name to offer in the save dialog, and the type to open it with. */
+        const val KEY_SUGGESTED_NAME = "suggested_name"
+        const val KEY_MIME_TYPE = "mime_type"
         const val KEY_ERROR = "error"
 
         private const val NOTIFICATION_ID = 1001

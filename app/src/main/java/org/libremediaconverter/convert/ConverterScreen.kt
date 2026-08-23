@@ -28,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -66,8 +67,14 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(viewModel::onInputPicked) }
 
+    // The contract's MIME type comes from the finished job rather than from the picker as it
+    // stands: some providers rewrite a document's extension to match it, so an MP3 offered as
+    // video/webm can arrive with the wrong one. Read straight off the collected state, so this
+    // recomposes because it depends on that rather than because an unrelated line happens to.
+    // Remembered against the type so the launcher re-registers only when it actually changes.
+    val destinationMime = (state as? ConversionState.Converted)?.mimeType ?: settings.spec.mimeType
     val chooseDestination = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(settings.spec.mimeType),
+        remember(destinationMime) { ActivityResultContracts.CreateDocument(destinationMime) },
     ) { uri -> uri?.let(viewModel::save) }
 
     // Requested at the point of use rather than on first launch, so the ask carries its
@@ -194,7 +201,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                             AssistChip(onClick = {}, label = { Text(s.routeReason) })
                         }
                         Button(
-                            onClick = { chooseDestination.launch(viewModel.suggestedOutputName()) },
+                            onClick = { chooseDestination.launch(s.suggestedName) },
                             modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
                         ) { Text("Save file") }
                         OutlinedButton(
