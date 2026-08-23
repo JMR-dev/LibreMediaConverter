@@ -8,6 +8,7 @@ import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.libremediaconverter.convert.MediaProbe
+import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.model.ConcatPlanner
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.model.OutputFormat
@@ -43,7 +44,12 @@ class ConcatEngine(private val context: Context) {
 
         // The demuxer reads its input list from a file, which must live somewhere
         // FFmpeg can read; app cache is a real path, so it just works.
-        val listFile = File(output.parentFile, "concat_list.txt").apply {
+        //
+        // Named after the output rather than by the constant "concat_list.txt" it used to use.
+        // The constant meant any two joins running at once shared one list file, so one of them
+        // read the other's inputs -- and it is why a blanket sweep of the staging directory was
+        // never safe. See StagingNames.
+        val listFile = File(output.parentFile, StagingNames.concatListFor(output.name)).apply {
             writeText(FFmpegConcatCommand.listFileContents(paths))
         }
 

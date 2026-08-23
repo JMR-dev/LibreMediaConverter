@@ -28,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -66,8 +67,14 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let(viewModel::onInputPicked) }
 
+    // The contract's MIME type comes from the finished job rather than from the picker as it
+    // stands: some providers rewrite a document's extension to match it, so an MP3 offered as
+    // video/webm can arrive with the wrong one. Read straight off the collected state, so this
+    // recomposes because it depends on that rather than because an unrelated line happens to.
+    // Remembered against the type so the launcher re-registers only when it actually changes.
+    val destinationMime = (state as? ConversionState.Converted)?.mimeType ?: settings.spec.mimeType
     val chooseDestination = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument(settings.spec.mimeType),
+        remember(destinationMime) { ActivityResultContracts.CreateDocument(destinationMime) },
     ) { uri -> uri?.let(viewModel::save) }
 
     // Requested at the point of use rather than on first launch, so the ask carries its
@@ -163,9 +170,15 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
 
                     is ConversionState.Waiting -> {
                         FileCard(s.input)
+                        // Two different causes land here and the state cannot tell them apart:
+                        // the six-hour-a-day background media budget running out, and the system
+                        // refusing to let a job restart while the app is in the background. The
+                        // old wording named only the first, which is now the less likely of the
+                        // two. "Keeping the app open helps" covers both -- it is literally what
+                        // grants the second one permission to run.
                         Text(
-                            "Paused. The system limits background media processing to " +
-                                "six hours a day, so this will resume automatically.",
+                            "Paused. Android limits background media processing, so this will " +
+                                "resume automatically — keeping the app open helps it along.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(
@@ -188,7 +201,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                             AssistChip(onClick = {}, label = { Text(s.routeReason) })
                         }
                         Button(
-                            onClick = { chooseDestination.launch(viewModel.suggestedOutputName()) },
+                            onClick = { chooseDestination.launch(s.suggestedName) },
                             modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
                         ) { Text("Save file") }
                         OutlinedButton(
@@ -409,7 +422,13 @@ private fun FileCard(input: InputFile) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(input.displayName, style = MaterialTheme.typography.titleMedium)
-            Text(formatBytes(input.sizeBytes), style = MaterialTheme.typography.bodySmall)
+            // The null is handled here rather than inside formatBytes, because "no provider would
+            // say" is not a number and a formatter that invented one -- "0 B" -- is the defect
+            // this card would be showing. It degrades in words, like the codec rows below it.
+            Text(
+                input.sizeBytes?.let(::formatBytes) ?: "Size unknown",
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             val probe = input.probe
             if (probe == null) {

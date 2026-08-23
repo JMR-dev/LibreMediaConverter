@@ -9,8 +9,12 @@ import androidx.work.Data
 import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.hasKeyWithValueOfType
 import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
+import org.libremediaconverter.convert.InputQuery
+import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.ffmpeg.ConcatEngine
 import org.libremediaconverter.model.OutputFormat
 
@@ -37,38 +41,66 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         if (uris.size < 2) {
             return Result.failure(workDataOf(KEY_ERROR to "Pick at least two files to join."))
         }
-        val totalBytes = inputData.getLong(KEY_TOTAL_BYTES, 0L)
+        // Absent, not zero, when the picker could not size every input -- see the same read in
+        // ConversionWorker and InputQuery for why the two are no longer one number.
+        val declaredTotal = inputData
+            .takeIf { it.hasKeyWithValueOfType<Long>(KEY_TOTAL_BYTES) }
+            ?.getLong(KEY_TOTAL_BYTES, 0L)
         val format = OutputFormat.valueOf(
-            inputData.getString(KEY_FORMAT) ?: OutputFormat.MP4_H264.name,
+            inputData.getString(KEY_FORMAT) ?: DEFAULT_FORMAT.name,
         )
 
-        if (!publisher.hasSpaceFor(totalBytes)) {
+        if (!hasRoomFor(declaredTotal, uris)) {
             return Result.failure(workDataOf(KEY_ERROR to "Not enough free space to join these files."))
         }
 
-        setForeground(
-            ForegroundInfo(
-                NOTIFICATION_ID,
-                notifications.build(id, "Joining ${uris.size} files", 0, indeterminate = true),
-                ConversionForegroundType.current(),
-            ),
-        )
+        // Named before anything below can throw, so every exit has the handle to clean up with.
+        // See the same line in ConversionWorker.
+        //
+        // Keyed on this job's id. The constant "joined.<ext>" this replaces meant any two joins of
+        // the same format wrote one file, and ConcatEngine's list file collided harder still.
+        val staged = publisher.createStagingFile(StagingNames.forJob(id, format.extension))
 
-        val staged = publisher.createStagingFile("joined.${format.extension}")
         return try {
+            // Inside the try: a foreground start refused because the app is in the background --
+            // which is where a WorkManager restart after process death always begins -- used to
+            // throw straight past this catch, taking the retry, the error message and the delete
+            // with it. See ConversionWorker.doWork and FailureOutcome.
+            setForeground(
+                ForegroundInfo(
+                    NOTIFICATION_ID,
+                    notifications.build(id, "Joining ${uris.size} files", 0, indeterminate = true),
+                    ConversionForegroundType.current(),
+                ),
+            )
+
             val result = ConcatEngine(applicationContext).join(uris, staged, format)
             Result.success(
                 workDataOf(
                     KEY_OUTPUT_PATH to staged.absolutePath,
                     KEY_STRATEGY to result.strategy.name,
+                    // See the same two in ConversionWorker. The join screen has no format picker
+                    // today, so `joined.mp4` was right by accident everywhere it was written out;
+                    // reporting them means the accident is not what holds it up.
+                    KEY_SUGGESTED_NAME to outputNameFor(format),
+                    KEY_MIME_TYPE to format.mimeType,
                 ),
             )
+        } catch (e: CancellationException) {
+            // Rethrown rather than answered with a Result -- see the same branch in
+            // ConversionWorker for why, and for why the delete stays.
+            staged.delete()
+            throw e
         } catch (e: Throwable) {
             staged.delete()
-            when (FailureOutcome.forStopReason(stopReason)) {
+            when (FailureOutcome.forFailure(stopReason, e, runAttemptCount)) {
                 FailureOutcome.RETRY -> {
-                    Log.w(TAG, "Foreground budget exhausted while joining; will retry.", e)
+                    Log.w(TAG, "Joining interrupted; will retry.", e)
                     Result.retry()
+                }
+                FailureOutcome.FOREGROUND_DENIED -> {
+                    Log.e(TAG, "Foreground start refused $runAttemptCount times; giving up.", e)
+                    Result.failure(workDataOf(KEY_ERROR to FailureOutcome.FOREGROUND_DENIED_MESSAGE))
                 }
                 FailureOutcome.FAIL -> {
                     Log.e(TAG, "Joining failed.", e)
@@ -76,6 +108,23 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 }
             }
         }
+    }
+
+    /**
+     * Whether staging can take this join, measuring the inputs when nothing else has.
+     *
+     * The same shape as `ConversionWorker.hasRoomFor` and for the same reasons, with one
+     * difference worth naming: a join's total is [InputQuery.total], which is null the moment a
+     * *single* input cannot be sized. Summing the ones that answered would produce a lower bound
+     * indistinguishable from a real total, which is the conflation this change exists to end.
+     */
+    private fun hasRoomFor(declared: Long?, uris: List<Uri>): Boolean {
+        val bytes = declared ?: InputQuery.total(uris.map { InputQuery.sizeOf(applicationContext, it) })
+        if (bytes == null) {
+            Log.i(TAG, "Nothing could size every input; checking headroom only.")
+            return publisher.hasSpaceForUnknownSize()
+        }
+        return publisher.hasSpaceFor(bytes)
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo = ForegroundInfo(
@@ -90,17 +139,49 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_FORMAT = "format"
         const val KEY_OUTPUT_PATH = "output_path"
         const val KEY_STRATEGY = "strategy"
+
+        /** The name to offer in the save dialog, and the type to open it with. */
+        const val KEY_SUGGESTED_NAME = "suggested_name"
+        const val KEY_MIME_TYPE = "mime_type"
         const val KEY_ERROR = "error"
+
+        /**
+         * What a join produces when nothing says otherwise.
+         *
+         * Named once rather than repeated at the three places that need it -- the input-Data
+         * default, [request]'s parameter default, and the fallback a ViewModel uses for a job
+         * enqueued before this worker reported its format. Those three disagreeing is the shape
+         * this whole entry is about.
+         */
+        val DEFAULT_FORMAT: OutputFormat = OutputFormat.MP4_H264
+
+        /**
+         * The name to suggest in the save dialog for a join of this [format].
+         *
+         * A function rather than the literal `joined.mp4` it replaces: that literal appeared in
+         * the ViewModel and twice in the screen, and all three were correct only because the join
+         * screen has no format picker yet.
+         */
+        fun outputNameFor(format: OutputFormat): String = "joined.${format.extension}"
 
         private const val NOTIFICATION_ID = 1002
         private const val TAG = "ConcatWorker"
 
-        fun request(inputs: List<Uri>, totalBytes: Long, format: OutputFormat = OutputFormat.MP4_H264) =
+        /**
+         * How many files are being joined is tagged as well as passed as input `Data`, because
+         * `WorkInfo` gives a job's tags back and its input `Data` never. It is the one thing the
+         * join screen says about a job in flight, and after a restart nothing else can supply
+         * it. See [JobTags].
+         */
+        fun request(inputs: List<Uri>, totalBytes: Long?, format: OutputFormat = DEFAULT_FORMAT) =
             OneTimeWorkRequestBuilder<ConcatWorker>()
+                .addTag(JobTags.inputCount(inputs.size))
                 .setInputData(
                     Data.Builder()
                         .putStringArray(KEY_INPUT_URIS, inputs.map(Uri::toString).toTypedArray())
-                        .putLong(KEY_TOTAL_BYTES, totalBytes)
+                        // Omitted rather than zeroed when a total could not be worked out; a
+                        // `Data` has no null, so the missing key is the unknown.
+                        .apply { totalBytes?.let { putLong(KEY_TOTAL_BYTES, it) } }
                         .putString(KEY_FORMAT, format.name)
                         .build(),
                 )

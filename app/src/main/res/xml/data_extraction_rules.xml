@@ -1,19 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+   What leaves the device when the system backs the app up or transfers it to a new one.
+
+   The app stores nothing of its own: no settings, no library, no history. Everything it
+   writes is either a staged conversion under cacheDir, which backup never takes and which
+   "Start over" and the staging sweep delete anyway, or WorkManager's queue.
+
+   So WorkManager's queue is the entire payload, and restoring it onto another device is
+   wrong rather than merely useless. Every row references a content:// URI granted to this
+   install on this device and an output path under this install's cacheDir; the grants do
+   not survive the transfer and the cache is not copied, so a restored row names a file that
+   cannot exist. ConversionViewModel queries WorkManager by tag on launch to reattach to
+   work it did not start, so those rows would not sit inert either: a fresh install would
+   come up reattached to a job the user never ran on it. WorkManager declares no backup
+   exclusion of its own, so nothing upstream prevents this.
+
+   Excluded from both paths for that reason. allowBackup stays true, because the decision
+   belongs here, where it is legible and per-file, rather than as an app-wide switch that
+   would also turn off device-to-device transfer for anything this app stores later. A
+   contributor who adds real user data should add the include for it here.
+
+   Each file is named rather than the whole "database" domain being excluded in one line.
+   A <exclude> carrying no path is skipped unchecked by lint's FullBackupContent detector,
+   so that spelling could silently protect nothing; these paths are ones the gate verifies.
+   androidx.work.workdb is Room-backed and therefore in WAL mode, hence the two sidecars.
+
+   Note that res/xml/backup_rules.xml is deliberately absent. android:fullBackupContent is
+   only read on Android 11 and lower, and minSdk is 33, so it could never have applied here.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="database" path="androidx.work.workdb" />
+        <exclude domain="database" path="androidx.work.workdb-wal" />
+        <exclude domain="database" path="androidx.work.workdb-shm" />
+        <exclude domain="sharedpref" path="androidx.work.util.preferences.xml" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Same reasoning: a content:// grant does not survive reaching a new device
+             either, so a transferred queue is as unusable as a restored one. -->
+        <exclude domain="database" path="androidx.work.workdb" />
+        <exclude domain="database" path="androidx.work.workdb-wal" />
+        <exclude domain="database" path="androidx.work.workdb-shm" />
+        <exclude domain="sharedpref" path="androidx.work.util.preferences.xml" />
     </device-transfer>
-    -->
 </data-extraction-rules>
