@@ -7,8 +7,8 @@ boots, disabling SystemUI collapses the crash rate far enough to run a suite —
 **2 failures, 0 errors and the two by-design skips** (measured 49 / 2 / 0 / 2 at `22c7914`, where
 the suite was 49 tests — [Reading these totals](#reading-these-totals) before comparing any total
 with another). The crashes do not stop outright, and the two failures are real; both are quantified
-below. CI's matrix should still stop at 36 — see
-[So should CI take API 37?](#so-should-ci-take-api-37).
+below. CI now takes API 37 as two jobs — a gating leg and an advisory one for those two
+failures — see [So should CI take API 37?](#so-should-ci-take-api-37).
 **Last verified:** 2026-08-22, emulator `37.1.11.0` (build 15917651), Fedora 44,
 against system images `android-37.0` rev 6 **and** `android-37.1` rev 8.
 
@@ -339,38 +339,193 @@ Caused by: android.media.MediaCodec$CodecException:
 ```
 
 Three measurements say this is the emulator image and not this app, and not the software
-renderer:
+renderer. A fourth bullet offers a mechanism, and is inference rather than measurement:
 
 - **Control at API 35 under the identical renderer.** `GPU_MODE=swangle_indirect
   tools/local-emulator/run-e2e.sh 35` → **49 / 0 / 0 / 2** at `22c7914`, green.
   `c2.goldfish.h264.decoder` is perfectly happy under ANGLE one API level down, so the renderer is
   not what breaks it.
 - **Real API 37 hardware passes**, see below. There is no `c2.goldfish.*` codec on a Pixel.
+- **API 36 against API 37 on CI, back to back, everything else held.** Same two tests, same
+  `-gpu swiftshader_indirect`, same SystemUI-disable path — `pm disable-user`, `stop`, wait for
+  `system_server` to actually be gone, `start`, then verify against `pm list packages -d`. Both
+  runs were narrowed to the two failing tests:
+
+  ```
+  -Pandroid.testInstrumentationRunnerArguments.class=\
+    org.libremediaconverter.convert.Media3EngineTest#transcodesH264ToH265AndReportsProgress,\
+    org.libremediaconverter.convert.Media3EngineTest#runsFromAThreadWithNoLooper
+  ```
+
+  and the filter is confirmed three independent ways: `tests="2"` in the XML, `Expected 2 tests`
+  in the abort message, and `run started: 2 tests` in the guest logcat.
+
+  | run | api | result XML |
+  |---|---|---|
+  | [32660148155](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660148155) | 37.0 | `tests="2" failures="2" errors="0" skipped="0"` |
+  | [32660152961](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660152961) | 36 | `tests="2" failures="0" errors="0" skipped="0" time="4.603"` |
+
+  API 37 fails with the signature above — `name=c2.goldfish.h264.decoder`,
+  `MediaCodec$CodecException` at `dequeueOutputBuffer(MediaCodec.java:4274)`. API 36 passes both in
+  4.603 s, and `c2.goldfish.h264.decoder` is in *its* logcat too (44 mentions), so the two runs are
+  not being served by different decoder names. **What this falsifies is "the stripped
+  configuration is what breaks these tests"** — a reading none of the other measurements
+  addresses, because they all compare against a device that still had SystemUI. Here SystemUI is
+  absent and the framework has been restarted on both sides, and the healthy image is green anyway.
+
+  Two things it does **not** control, which is why it narrows the claim rather than closing it:
+
+  - **The restarts were not performed under equal conditions.** API 36 did its `stop`/`start` with
+    `dma_aborts=0`; API 37's did the same restart with two aborts already logged. "A framework
+    restart performed while the abort loop is running" therefore remains uncontrolled.
+  - **The images differ on the encoder side.** These tests transcode H.264 → H.265. The API 37
+    logcat carries `c2.goldfish.hevc.decoder` (16 mentions in the control run) where API 36 carries
+    `c2.android.hevc.encoder` (32). The pipeline is not identical end to end, which is a second
+    reason "the image ships a broken h264 decoder" is the wrong *shape* of claim: what is measured
+    is that these two tests fail on the API 37 image, pass at API 36 under the same renderer *and*
+    the same disable path, and pass at 33–36 without needing that path at all — because nothing
+    below 37 has the bug it works around.
 - The failing call is `dequeueOutputBuffer` on the *goldfish* decoder — the emulator's own codec,
   which like `RegionSamplingThread` gets its frames out of a host-side colour buffer. Same
   readback machinery, one layer down. This is inference rather than a measurement, and is flagged
-  as such; what is measured is the first two bullets.
+  as such; what is measured is the first three bullets.
 
 **Do not try `-feature -HardwareDecoder`.** It is the obvious next idea and it is much worse:
 forcing the guest onto software decoders took the run from 2 failures to **46**, across
 `RemuxTest`, `ForcedFailureTest`, `HardwareFallbackTest` and `UnopenableUriTest` as well. The
 suite depends on those decoders existing.
 
+### The intact-SystemUI counterfactual cannot be measured on CI
+
+The control the block above still lacks is the obvious one: run those same two tests at API 37
+with SystemUI **left running**. Passing would put the failure on the disable rather than on the
+image; failing on the decoder would make the decoder attribution direct instead of inferred.
+
+**Seven dispatches of `api37-debug.yml`, zero verdicts.** Not bad luck — a mechanism, which is why
+this is written down rather than left as a gap for the next person to spend seven runs on:
+
+| arm | run | result XML | what actually happened |
+|---|---|---|---|
+| E1 | [32660528355](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660528355) | `tests="1" failures="1"`, `<failure>` body empty | `Expected 2 tests, received 0. INSTRUMENTATION_ABORTED: System has crashed.` |
+| E2 | [32660533845](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660533845) | `tests="0"` | never installed: `Failed to commit install session ... Failure calling service package: Broken pipe (32)` |
+| E3 | [32660539259](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32660539259) | `tests="0"` | `Test run failed to complete. No test results.` |
+| E4 | [32661117237](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661117237) | `tests="2" failures="2"` | both failed in `@Before`, never reached MediaCodec |
+| E5 | [32661121972](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661121972) | `tests="2" failures="2"` | same |
+| S1 | [32661127224](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661127224) | `tests="1" failures="1"` | same, single-test arm |
+| S2 | [32661132024](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32661132024) | `tests="1" failures="1"` | same |
+
+While the framework is crash-looping, the guest cannot reliably create per-user private
+directories. An app installed during the loop has no cache directory — and `Media3EngineTest`
+copies its H.264 fixture into `context.cacheDir` in `@Before`, so it dies there, **before any
+MediaCodec exists**:
+
+```
+W/ContextImpl( 8216): Failed to ensure /data/user/0/org.libremediaconverter/cache
+I/TestRunner( 8216): run started: 1 tests
+E/TestRunner( 8216): failed: transcodesH264ToH265AndReportsProgress(...)
+E/TestRunner( 8216): java.io.FileNotFoundException:
+  /data/user/0/org.libremediaconverter/cache/sample_h264.mp4: open failed: ENOENT
+  at org.libremediaconverter.convert.Media3EngineTest.setUp(Media3EngineTest.kt:47)
+```
+
+Not app-specific: `com.google.android.googlesdksetup` and `com.google.android.apps.nexuslauncher`
+hit the same `Failed to ensure /data/user/0/<pkg>/cache` in the same logcats.
+
+**The result XML masks this, and reading only the report gets you the wrong bug.** What E4, E5, S1
+and S2 report is
+
+```
+<failure>kotlin.UninitializedPropertyAccessException: lateinit property output has not been initialized
+at org.libremediaconverter.convert.Media3EngineTest.tearDown(Media3EngineTest.kt:56)
+```
+
+— `tearDown` failing because `setUp` threw before it assigned `output`. That looks like a
+teardown defect in this repository and is not one; the cause is only in the guest logcat.
+
+So the obstacle is structural: install, data-directory creation and instrumentation start-up do
+not fit between framework kills, and four of the seven runs show the directory creation itself is
+broken during the loop. More dispatches of this shape would repeat these outcomes. The
+counterfactual is still open on the **Pixel 10 Pro XL**, the one API 37 device here that is not an
+emulator — but a Pixel has no `c2.goldfish.*` codec at all, so it answers "does the app work at
+API 37", not "is that codec broken".
+
+#### Abort cadence, corrected
+
+`.github/workflows/api37-debug.yml` carried "roughly every 20 s" for the kill cycle in its own
+comments. That number was the watchdog's **sampling** interval, not the cadence, and the two got
+conflated. Measured across the seven runs above, gaps between successive `hasReadColorBufferDma`
+aborts run **20 s to 90 s, median 60–70 s — three to five aborts in a four-minute window**.
+Slower than assumed, and still not slow enough: install, data-directory creation and
+instrumentation start-up do not fit inside one gap.
+
+`sys.boot_completed` held at `1` throughout every one of those test windows. The device reports
+itself booted while zygote is being killed under it, which is why no boot-state check catches
+this and why `stop`/`start` waits must poll `pidof system_server` and `service check` instead
+(see `disable_region_sampling` in `tools/local-emulator/run-e2e.sh`).
+
 ### So should CI take API 37?
 
-**No, and the matrix should still stop at 36.** Three reasons, in order of weight:
+**Yes, as two jobs: a gating `E2E API 37` and an advisory leg carrying the two tests that do not
+pass.** That reverses the answer this section gave, and the reversal is measured rather than
+argued — two of its three reasons were claims *about CI*, and CI had never been measured. The
+instrument that measured it is [`.github/workflows/api37-debug.yml`](../.github/workflows/api37-debug.yml),
+dispatch-only, a copy of the E2E job with the matrix replaced by inputs.
 
-1. CI runs `swiftshader_indirect` on a GPU-less runner. The aborts happen under ANGLE too — they
-   are merely sparser — so nothing here says a runner would be stable.
-2. The working configuration needs SystemUI disabled and a framework restart mid-job. That is a
-   lot of bespoke device surgery to put behind a merge gate, and it silently weakens what the leg
-   proves.
-3. Even at its best two tests fail, so the leg would be permanently red or permanently
-   allow-listed. Neither is a gate worth having.
+Every run below is `ubuntu-latest`, KVM on, `pixel_6`, x86_64, disk 8G, RAM 2560M, emulator
+`37.1.11.0` build 15917651 — the same emulator build the local investigation used. Every **API
+37** row is `system-images;android-37.0;google_apis;x86_64`; c2 is the API 36 control and runs
+that level's own image, which is the whole point of it.
 
-What has changed is the *local* story: API 37 is no longer a level nobody can look at. A
-regression that shows up at 37 and not at 36 can now be reproduced on this workstation in about
-four minutes, which is what the missing matrix row was really costing.
+| # | run | api | `-gpu` | SystemUI | suite | verdict |
+|---|---|---|---|---|---|---|
+| c1 | [32644947334](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32644947334) | 37.0 | swiftshader_indirect | running | `Starting 0 tests` | FAIL |
+| c2 | [32644965828](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32644965828) | **36** | swiftshader_indirect | running | 57 tests, BUILD SUCCESSFUL | green control |
+| c3 | [32644970240](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32644970240) | 37.0 | swangle_indirect | running | `Starting 0 tests` | FAIL |
+| c5 | [32645543238](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32645543238) | 37.0 | swangle_indirect | disabled | 57 / 2 / 0 / 2 | suite ran |
+| c6 | [32646029143](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646029143) | 37.0 | swiftshader_indirect | one-shot disable, **did not hold** | `Starting 0 tests` | FAIL |
+| c8 | [32646611485](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646611485) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+| c9 | [32646615706](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646615706) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+| c10 | [32646619472](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32646619472) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+| c11 | [32647138060](https://github.com/JMR-dev/LibreMediaConverter/actions/runs/32647138060) | 37.0 | swiftshader_indirect | disabled, verified | 57 / 2 / 0 / 2 | suite ran |
+
+57 is that checkout's own `@Test` count at `acc71bc`, so those are whole-suite runs and not
+truncated ones — see [Reading these totals](#reading-these-totals). Taking the three old reasons
+in turn:
+
+1. **"Nothing says a runner would be stable" — measured, and it is.** `-gpu swiftshader_indirect`
+   on a GPU-less runner resolves to `gles_mode_selected:swiftshader`, a third renderer that
+   locally never survives to say anything (Fedora's SELinux denies `execheap` to SwiftShader's
+   Reactor JIT — see [`local-emulator.md`](local-emulator.md)). It boots `android-37.0` in about
+   60 s. The local discriminator — fatal iff `gles_mode_selected:host` — holds, and a runner with
+   no GPU can never select host, so CI was never in the fatal class. Switching CI's `-gpu` changes
+   nothing either way: c1 and c3 both fail with SystemUI up, under swiftshader and swangle
+   respectively, and c5 and c8–c11 show the suite running under either once SystemUI is gone.
+2. **"Bespoke device surgery" — still true, and now a written caveat rather than a reason to skip
+   the level.** It is one env flag, `E2E_DISABLE_SYSTEM_UI`, read by `.github/scripts/e2e-run.sh`
+   and unset on every other leg. What it costs is stated where it can be read from the failing
+   check: the API 37 row runs a device configuration no other leg and no Pixel run uses. What
+   makes it dependable is verification, not repetition — c6 is the counter-case, a one-shot
+   `pm disable-user` that reported `new state: disabled-user` and then started SystemUI eight more
+   times. The verified form is 4/4; the unverified form was 3/4.
+3. **"Permanently red or permanently allow-listed" — this was the real objection, and it is the
+   one the split answers.** The two failures are marked `@FailsOnEmulatorApi37` in
+   `app/src/androidTest`. The gating job runs `notAnnotation` on that marker and must be green;
+   the advisory job runs `annotation` on the *same* marker, reports, and never blocks. One marker
+   rather than two lists, so a test cannot silently end up in neither job — which would read as
+   green.
+
+The cost is about three minutes on the API 37 leg — the `stop`/`start` plus a 45 s quiet window,
+and another round when the first does not verify. Measured wall clock for the whole job, boot
+included: 6–7 minutes at API 37 against ~6 at API 36.
+
+Two things this does **not** buy. The advisory job is expected red, so a *third* failure there is
+the signal and the run's logcat is the only thing that distinguishes it — which is why that job
+uploads diagnostics unconditionally. And a green `E2E API 37` still does not replace the release
+check on the Pixel: the emulator leg runs without SystemUI, and the Pixel does not.
+
+The *local* story changed at the same time and independently: API 37 is no longer a level nobody
+can look at. A regression that shows up at 37 and not at 36 can be reproduced on this workstation
+in about four minutes.
 
 ## Verified on real API 37 hardware
 
@@ -492,6 +647,12 @@ though a new API level shipped. Watch for these instead:
   which is what drives `RegionSamplingThread`, so one would very likely sidestep the bug
   entirely. Try it before anything else here.
 - **the upstream issue being marked fixed.**
+- **`E2E API 37 Media3 hardware transcode (advisory)` going green.** Nothing announces this: the
+  job is `continue-on-error`, so it fixing itself looks exactly like a check nobody reads
+  quietly ceasing to be red. It is listed here because that makes it the *least* likely of these
+  triggers to be noticed, not the most. When it happens, delete `@FailsOnEmulatorApi37` from the
+  two tests rather than the job — the gating leg picks them back up on its own, and the advisory
+  job then runs nothing and can go.
 
 ## Correction owed to `CLAUDE.md`
 
@@ -504,8 +665,9 @@ though a new API level shipped. Watch for these instead:
 
 The first sentence is right, and now under-specified in one direction and over-specified in the
 other: it is not only `android-37.0` (it is `37.1` too), and it does not crash-loop under every
-renderer. Proposed replacement, offered for review rather than applied here — `CLAUDE.md` is left
-alone deliberately, because several branches touch it:
+renderer. **The last clause is now simply false: CI's matrix does not stop at API 36 any more.**
+Proposed replacement, offered for review rather than applied here — `CLAUDE.md` is left alone
+deliberately, because several branches touch it:
 
 > - **The API 37 images crash-loop surfaceflinger under the host GL renderer.** Both
 >   `android-37.0` and `android-37.1` abort inside their own gralloc mapper
@@ -514,6 +676,7 @@ alone deliberately, because several branches touch it:
 >   boots at all; under `-gpu swangle_indirect` it boots and the aborts merely become
 >   intermittent. `docs/api-37-emulator-crash.md` has the seven-run matrix and the ruled-out
 >   list, and `tools/local-emulator/run-e2e.sh` picks the working renderer per API level.
->   CI's matrix stops at 36 because CI runs `swiftshader_indirect` on a GPU-less runner and the
->   aborts continue there too. **API 37 still needs a manual check on the Pixel 10 Pro XL before
->   each release.**
+>   CI takes API 37 as two jobs: a gating `E2E API 37` that disables SystemUI first, and an
+>   advisory leg carrying the two `@FailsOnEmulatorApi37` tests. The gating leg therefore runs a
+>   device configuration nothing else does. **API 37 still needs a manual check on the Pixel 10
+>   Pro XL before each release** — it is the only API 37 run with SystemUI intact.

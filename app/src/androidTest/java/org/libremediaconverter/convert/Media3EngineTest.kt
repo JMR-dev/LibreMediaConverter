@@ -16,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.FailsOnEmulatorApi37
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.OutputFormat
 import java.io.File
@@ -57,6 +58,7 @@ class Media3EngineTest {
     }
 
     @Test
+    @FailsOnEmulatorApi37
     fun transcodesH264ToH265AndReportsProgress(): Unit = runBlocking {
         val seen = mutableListOf<Int>()
 
@@ -119,6 +121,7 @@ class Media3EngineTest {
      * HandlerThread indirection holds before any of that lands in Phase 2.
      */
     @Test
+    @FailsOnEmulatorApi37
     fun runsFromAThreadWithNoLooper() {
         val pool = Executors.newSingleThreadExecutor()
         try {

@@ -3,14 +3,20 @@ name: API 37 debug
 # ---------------------------------------------------------------------------
 # WHAT THIS IS FOR, AND WHY IT IS SEPARATE
 #
-# status_check.yml's E2E matrix stops at API 36 because the android-37.x emulator
-# images abort surfaceflinger inside their own gralloc mapper. That was established
-# locally, under -gpu host and under ANGLE (docs/api-37-emulator-crash.md). It was
-# NOT established on a GitHub runner: CI runs -gpu swiftshader_indirect, and the one
-# local measurement of that mode was void for a purely local reason (Fedora's SELinux
-# denies execheap to SwiftShader's Reactor JIT -- docs/local-emulator.md). So what CI
-# actually does at API 37 is an open question, and this workflow is the instrument for
-# answering it.
+# The android-37.x emulator images abort surfaceflinger inside their own gralloc
+# mapper. That was established locally, under -gpu host and under ANGLE
+# (docs/api-37-emulator-crash.md), but NOT on a GitHub runner: CI runs
+# -gpu swiftshader_indirect, and the one local measurement of that mode was void for a
+# purely local reason (Fedora's SELinux denies execheap to SwiftShader's Reactor JIT --
+# docs/local-emulator.md). What CI actually does at API 37 was an open question, and
+# this workflow is the instrument that answered it.
+#
+# IT IS STILL THE INSTRUMENT. status_check.yml now carries API 37 -- a gating leg that
+# disables SystemUI first, and an advisory one for the two @FailsOnEmulatorApi37 tests
+# -- so this file's job is no longer to decide that, but to test a change to it for one
+# dispatch instead of one commit. The next questions it exists for are written down
+# under "When to revisit" in docs/api-37-emulator-crash.md: a new API 37.x image, or an
+# ATD image for 37, either of which could retire the whole workaround.
 #
 # It is a copy of that E2E job with the matrix replaced by workflow_dispatch inputs,
 # so one hypothesis costs one dispatch rather than one commit. It triggers on nothing
@@ -264,8 +270,11 @@ jobs:
             # `ActivityManager: Start proc N:com.android.systemui ... GradientColorWallpaper`
             # eight more times after a `pm disable-user` that had reported
             # `new state: disabled-user`, and ten more RegionSampling aborts with it. The
-            # framework is being SIGKILLed every ~20 s while this runs, so a package-state
-            # change can be lost with the system_server that accepted it.
+            # framework is being SIGKILLed under this loop, so a package-state change can be
+            # lost with the system_server that accepted it. (An earlier version of this comment
+            # said "every ~20 s". That was the watchdog's SAMPLING interval, not the cadence.
+            # Measured: 20-90 s between aborts, median 60-70 s, 3-5 in a four-minute window --
+            # docs/api-37-emulator-crash.md, "Abort cadence, corrected".)
             #
             # Nothing here trusts a command's own report. Each round: disable, take the
             # framework down and confirm it is DOWN before bringing it back (the previous

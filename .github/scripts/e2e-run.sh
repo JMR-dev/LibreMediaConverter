@@ -40,6 +40,104 @@ WEDGE_LOG="$TMP/wedge-diagnostics-api${LABEL}.txt"
 # enough under the job's 60-min cap that a genuine wedge still leaves time to capture it.
 WEDGE_TIMEOUT=1200
 
+# ---------------------------------------------------------------------------
+# API 37 only, and nothing else sets it, so this is inert everywhere it is not wanted --
+# the same shape as E2E_EXTRA_GRADLE_ARGS below. The other four E2E legs run byte-identical
+# commands with it unset.
+#
+# WHY IT RUNS HERE, BEFORE THE LOGCAT STREAM: `adb shell stop` ends the `adb logcat` started
+# below, and nothing restarts it, so a disable performed after that point would cost this leg
+# its whole diagnostic story for the part of the run that matters. Everything this function
+# counts comes from `adb logcat -d -b crash`, which is a fresh read each time and independent
+# of the stream.
+#
+# WHAT IT IS FOR: the android-37.x images abort surfaceflinger from RegionSamplingThread inside
+# their own gralloc mapper (docs/api-37-emulator-crash.md). surfaceflinger is a critical service,
+# so init SIGKILLs zygote with it and the framework restarts under the run -- Gradle then reports
+# `cmd: Can't find service: package` and `Starting 0 tests`. RegionSamplingThread exists only
+# because SystemUI registers a nav-bar luma-sampling listener, so removing the package removes
+# the whole chain. Measured cadence of those kills: 20-90 s apart, median 60-70 s, three to five
+# in a four-minute window -- fast enough that install and instrumentation start-up do not fit
+# inside one gap.
+#
+# NOTHING HERE TRUSTS A COMMAND'S OWN REPORT, and that is not paranoia: of four runs of an
+# earlier one-shot version, one (32646029143) reported `new state: disabled-user` and then
+# started SystemUI eight more times, with ten more aborts. `pm disable-user` can be accepted by
+# a system_server that is SIGKILLed before the state is written, and `pm disable-user` does not
+# retract SystemUI's existing region-sampling registration either -- by the time boot completes
+# it has already registered, so only a framework restart brings back a SystemUI-less
+# surfaceflinger. Hence: disable, take the framework DOWN and confirm system_server is really
+# gone (an earlier probe asked `service check` 0.3 s after `stop` and got `found` from the
+# system_server that was still exiting, so its wait was not a wait), bring it back, verify the
+# package against `pm list packages -d`, and require a 45 s window with zero new aborts.
+# Three rounds, because one is not reliable and the failure is silent.
+# ---------------------------------------------------------------------------
+count_aborts() { adb logcat -d -b crash 2> /dev/null | grep -c 'hasReadColorBufferDma'; }
+systemui_disabled() { adb shell pm list packages -d 2> /dev/null | grep -q 'com.android.systemui'; }
+
+disable_region_sampling() {
+  local round=1 i out before after
+  while [ "$round" -le 3 ]; do
+    echo "--- SystemUI disable, round $round ---"
+    for i in $(seq 1 10); do
+      out="$(adb shell pm disable-user --user 0 com.android.systemui 2>&1 | tr -d '\r')"
+      echo "  pm attempt $i: $out"
+      case "$out" in *"new state: disabled"*) break ;; esac
+      sleep 5
+    done
+
+    echo "  restarting the framework"
+    adb shell stop
+    for i in $(seq 1 20); do
+      [ -z "$(adb shell pidof system_server 2> /dev/null | tr -d '\r\n')" ] && break
+      sleep 2
+    done
+    echo "  system_server down after ~$((i * 2)) s"
+    adb shell start
+    for i in $(seq 1 30); do
+      if adb shell service check package 2> /dev/null | grep -q ': found' \
+        && adb shell service check activity 2> /dev/null | grep -q ': found' \
+        && [ -n "$(adb shell pidof system_server 2> /dev/null | tr -d '\r\n')" ]; then
+        echo "  services back after ~$((i * 5)) s"
+        break
+      fi
+      sleep 5
+    done
+
+    if systemui_disabled; then
+      echo "  verified: com.android.systemui is in pm list packages -d"
+    else
+      echo "  NOT DISABLED after the restart -- the package state did not survive"
+      round=$((round + 1))
+      continue
+    fi
+
+    before="$(count_aborts)"
+    sleep 45
+    after="$(count_aborts)"
+    echo "  abort rate, SystemUI disabled: $((after - before)) new in 45 s (total ${after:-0})"
+    [ "$((after - before))" -eq 0 ] && break
+    echo "  still aborting after round $round"
+    round=$((round + 1))
+  done
+
+  # A warning rather than an exit. If the disable did not take, the run is about to report
+  # `Starting 0 tests` and fail on its own -- and it will do so with the logcat, the crash
+  # buffer and the diagnostics attached, which is more useful than dying here with none of it.
+  if systemui_disabled; then
+    echo "  final state: SystemUI disabled"
+  else
+    echo "::warning::E2E api${LABEL}: SystemUI is still enabled -- expect INSTRUMENTATION_ABORTED"
+  fi
+  return 0
+}
+
+if [ "${E2E_DISABLE_SYSTEM_UI:-}" = "1" ]; then
+  echo "::group::E2E api${LABEL} -- removing the region-sampling listener"
+  disable_region_sampling
+  echo "::endgroup::"
+fi
+
 # Stream logcat from now until the step ends, into a file that survives to the artifact upload.
 # Without this, a failure that happens on-device leaves nothing behind: `adb logcat -d` at the
 # end only has whatever is still in the ring buffer, and a chatty test run evicts the cause.
