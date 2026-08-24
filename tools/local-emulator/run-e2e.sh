@@ -456,7 +456,10 @@ cleanup() {
 # bash runs a trap only between commands, so this starts when whatever was in the foreground
 # returns -- which for Ctrl-C is immediately, because the same interrupt reached that command
 # too. `kill -INT` aimed at this script alone waits for the foreground command to finish.
-# shellcheck disable=SC2329  # invoked indirectly -- installed as the INT and TERM trap a few lines below.
+# Invoked indirectly -- installed as the INT and TERM trap a few lines below. Both codes,
+# because shellcheck 0.9.0 reports this as unreachable commands (SC2317) and 0.11.0 as an
+# uninvoked function (SC2329); CI pins 0.11.0 but a local install may be either.
+# shellcheck disable=SC2317,SC2329
 on_signal() {
   echo
   echo "interrupted (SIG$1) -- stopping the emulator and removing the AVDs this run created"

@@ -142,8 +142,16 @@ install for code that can never run — and on API 37 the full APK does not fit 
   two findings that raises today are answered with targeted `disable` directives carrying their
   reason, exactly as `config/detekt/detekt.yml` carries only the rules this codebase legitimately
   breaks. Do not silence it with `--severity=warning` — that hides the next real finding too.
-  Locally there is no shellcheck package installed; `podman run --rm -v "$PWD:/mnt:z"
-  docker.io/koalaman/shellcheck:stable <files>` is what was used.
+  **It is pinned by image digest, and joins ktlint/detekt/JaCoCo in the "Dependency versions"
+  rule above** — for exactly the reason stated there, demonstrated the day it was added. The first
+  cut used the runner's ambient shellcheck. That is **0.9.0**, while the container used to check
+  locally was 0.11.0, and the two disagree about how to report a trap handler: 0.11.0 says
+  `SC2329` once on the declaration, 0.9.0 says `SC2317` on each of seven lines in the body. Same
+  script, same directive, one green and one red. Directives that must survive both name both codes.
+
+  Locally, use the same pin rather than whatever is installed:
+  `podman run --rm -v "$PWD:/mnt:z" docker.io/koalaman/shellcheck@sha256:61862eba... <files>`
+  (the digest is in `status_check.yml`; there is no shellcheck system package on this host).
 
   **It does not cover inline `run:` blocks in the workflows**, and a good deal of this repo's bash
   lives there. `actionlint` does cover them — it runs shellcheck over each `run:` — and reports one

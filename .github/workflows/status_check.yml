@@ -160,16 +160,27 @@ jobs:
       # entry point itself -- and nothing was checking it. `git ls-files` rather than a
       # fixed list, so a script added later is covered without editing this workflow.
       #
-      # Full severity, `info` included. The two findings it raises today are answered
-      # with targeted `disable` directives carrying their reason, the same way
+      # Full severity, `info` included. The findings it raises today are answered with
+      # targeted `disable` directives carrying their reason, the same way
       # config/detekt/detekt.yml carries only the rules this codebase legitimately
       # breaks. A blanket --severity=warning would have hidden them and the next real
-      # one alike. shellcheck is preinstalled on the ubuntu runner image; the version is
-      # printed so a finding that appears out of nowhere can be pinned to an upgrade.
+      # one alike.
+      #
+      # PINNED BY DIGEST, for the reason CLAUDE.md already gives for pinning ktlint,
+      # detekt and JaCoCo: a new rule in a linter makes files nobody touched stop
+      # passing, so CI goes red on a PR whose diff cannot explain it. That is not
+      # hypothetical here. The first cut of this step used the runner's ambient
+      # shellcheck, which is 0.9.0, and 0.9.0 reports a trap handler as seven
+      # unreachable commands (SC2317) where 0.11.0 reports it once on the declaration
+      # (SC2329) -- same script, same directive, different answer, and a red build on
+      # the PR that introduced the step. The version is printed so a finding that
+      # appears out of nowhere can be tied to a bump of this line.
       - name: shellcheck
+        env:
+          SHELLCHECK: koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d
         run: |
-          shellcheck --version
-          git ls-files -z '*.sh' | xargs -0 -r shellcheck
+          docker run --rm "$SHELLCHECK" --version
+          git ls-files -z '*.sh' | xargs -0 -r docker run --rm -v "$PWD:/mnt" "$SHELLCHECK"
 
       # `!cancelled()` rather than a plain sequence: a shellcheck failure above must not
       # cost the ktlint/detekt/lint lists. Same reason this step passes --continue -- one
