@@ -156,7 +156,26 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # Shell is the other language in this repo -- four scripts, one of them the CI
+      # entry point itself -- and nothing was checking it. `git ls-files` rather than a
+      # fixed list, so a script added later is covered without editing this workflow.
+      #
+      # Full severity, `info` included. The two findings it raises today are answered
+      # with targeted `disable` directives carrying their reason, the same way
+      # config/detekt/detekt.yml carries only the rules this codebase legitimately
+      # breaks. A blanket --severity=warning would have hidden them and the next real
+      # one alike. shellcheck is preinstalled on the ubuntu runner image; the version is
+      # printed so a finding that appears out of nowhere can be pinned to an upgrade.
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          git ls-files -z '*.sh' | xargs -0 -r shellcheck
+
+      # `!cancelled()` rather than a plain sequence: a shellcheck failure above must not
+      # cost the ktlint/detekt/lint lists. Same reason this step passes --continue -- one
+      # round trip should produce every list, not stop at the first.
       - name: ktlint, detekt and Android lint
+        if: '!cancelled()'
         run: ./gradlew :app:ktlintCheck :app:detekt :app:lintDebug --continue --stacktrace
 
       # The XML matters as much as the HTML: it is the one that can be diffed between
