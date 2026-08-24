@@ -64,16 +64,28 @@ of the first one that fails.
 on this machine (below), so without it an androidTest compile error is not discovered until CI.
 ktlint and detekt also cover the `test`/`androidTest` source sets that `lintDebug` skips.
 
-## Instrumented tests do not run locally
+## Instrumented tests: where they actually run
 
-Two independent reasons, so do not spend time on either:
+This section said the opposite until 2026-08-24, and both of its claims had been false for two
+days. Read it as the current answer, and see the git history if you need the old one.
 
-- **Emulators segfault on this host.** qemu dies on every AVD. Instrumented tests run on CI or on
-  the physical Pixel, never in a local emulator.
-- **The API 37 image is broken.** `android-37.0` crash-loops surfaceflinger inside its own gralloc
-  mapper, so every test fails there regardless of this app. `docs/api-37-emulator-crash.md` records
-  the evidence and the ruled-out fixes; CI's matrix therefore stops at API 36 even though targetSdk
-  is 37. **API 37 needs a manual check on the Pixel 10 Pro XL before each release.**
+- **Local emulators work, for API 33-36.** `tools/local-emulator/run-e2e.sh` runs them on this
+  host. The segfault that made this look impossible was not a broken machine: SwiftShader's Reactor
+  JIT writes generated shader code onto the heap and executes it, Fedora's SELinux policy denies
+  `execheap`, and qemu dies. Choosing a different renderer avoids it entirely — `-gpu host`,
+  `angle_indirect` and `swangle_indirect` all boot, while `auto`, `off`, `guest` and
+  `swiftshader_indirect` do not. `docs/local-emulator.md` has the evidence and the per-API renderer
+  table.
+- **CI runs API 37, and it gates.** The matrix is 33/34/35/36/37. Two Media3 hardware-transcode
+  tests fail inside the emulator's own `c2.goldfish.h264.decoder` rather than on anything this app
+  does; they carry `@FailsOnEmulatorApi37` and run in a separate `continue-on-error` job,
+  `E2E API 37 Media3 hardware transcode (advisory)`. The gating leg runs the other 55.
+  **That advisory job is red on every PR, by design** — do not read it as your change breaking
+  something, and do not read a green run as evidence those two tests pass.
+  `docs/api-37-emulator-crash.md` has the measurements.
+
+Still true, and the reason the advisory job is not simply deleted: **API 37 needs a manual check on
+the Pixel 10 Pro XL before each release.** The advisory pair is the one thing CI cannot answer for.
 
 On a device or emulator, build only the ABI it can execute:
 
@@ -112,9 +124,9 @@ install for code that can never run — and on API 37 the full APK does not fit 
     documents the reasoning — turns "needs a device" into "a pure function plus a thin edge".
     Robolectric is in the JVM source set, `compose-ui-test-junit4` with it, so Compose screens are
     unit testable too. Reach for the seam before concluding something cannot be unit tested.
-  - **E2E is runnable locally now.** `tools/local-emulator/run-e2e.sh` runs API 33-36 on this
-    machine; see `docs/local-emulator.md`. That was believed impossible until the SELinux/renderer
-    cause was found, and it is what makes the e2e half of this norm enforceable.
+  - **E2E is runnable locally**, API 33-36, via `tools/local-emulator/run-e2e.sh` — see
+    "Instrumented tests: where they actually run" above. That was believed impossible until the
+    SELinux/renderer cause was found, and it is what makes the e2e half of this norm enforceable.
   - **A test has to bite.** Revert the line it covers, confirm it goes red, restore. A review of
     this codebase ran 46 mutations against a 257-test suite and **9 were vacuous** — five of them
     passing the whole suite over a completely unguarded code path. Green is not evidence.
