@@ -135,6 +135,42 @@ install for code that can never run — and on API 37 the full APK does not fit 
 
 - `kotlin.code.style=official`. Gradle stays Kotlin DSL.
 
+- **File one-off issues with `tools/github/file-issue.sh`, not `gh issue create`.** `gh issue
+  create` does not touch the project board, so the issue exists, carries its labels, and is
+  invisible in the Kanban — indistinguishable from never having been filed. Measured 2026-08-24:
+  eight issues filed as a scripted batch all reached the board; one filed as a one-off minutes
+  later did not. A batch carries the board step in its loop; **one-offs are where it slips**, which
+  is what the script is for. It resolves the project and Status ids by name rather than caching
+  them, and it **reads the item back** — a mutation returning 200 is not evidence the board shows
+  what was asked for. Exit 3 means the issue was created but did not reach the board, and prints
+  the number so it cannot be lost quietly.
+
+  `above-cut` and `backlog` are **labels from the 2026-08-22 triage pass** — "worked autonomously
+  overnight" and "held for manual review". They are not board columns. Status carries board state;
+  do not put a cut label on a newly filed ticket.
+
+- **shellcheck runs in CI**, inside the Static analysis job, over `git ls-files '*.sh'` so a new
+  script is covered without editing the workflow. It runs at full severity, `info` included: the
+  two findings that raises today are answered with targeted `disable` directives carrying their
+  reason, exactly as `config/detekt/detekt.yml` carries only the rules this codebase legitimately
+  breaks. Do not silence it with `--severity=warning` — that hides the next real finding too.
+  **It is pinned by image digest, and joins ktlint/detekt/JaCoCo in the "Dependency versions"
+  rule above** — for exactly the reason stated there, demonstrated the day it was added. The first
+  cut used the runner's ambient shellcheck. That is **0.9.0**, while the container used to check
+  locally was 0.11.0, and the two disagree about how to report a trap handler: 0.11.0 says
+  `SC2329` once on the declaration, 0.9.0 says `SC2317` on each of seven lines in the body. Same
+  script, same directive, one green and one red. Directives that must survive both name both codes.
+
+  Locally, use the same pin rather than whatever is installed:
+  `podman run --rm -v "$PWD:/mnt:z" docker.io/koalaman/shellcheck@sha256:61862eba... <files>`
+  (the digest is in `status_check.yml`; there is no shellcheck system package on this host).
+
+  **It does not cover inline `run:` blocks in the workflows**, and a good deal of this repo's bash
+  lives there. `actionlint` does cover them — it runs shellcheck over each `run:` — and reports one
+  pre-existing `info` finding in `build.yml`. It is not wired in because every action here is
+  pinned by SHA, and actionlint's usual installer is a `curl | bash` off a moving branch; doing it
+  properly means pinning a container digest. Tracked separately rather than bolted on.
+
 ## Dependency versions
 
 Libraries **float on minor + patch** (`coreKtx = "1.+"`). Three groups deliberately do not:
