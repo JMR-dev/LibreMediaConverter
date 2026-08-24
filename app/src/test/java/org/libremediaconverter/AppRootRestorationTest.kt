@@ -8,7 +8,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.StateRestorationTester
-import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -42,8 +41,11 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class AppRootRestorationTest {
 
+    // Not `createComposeRule()` directly: see [drainEscapedCoroutineErrors]. Every Compose test
+    // class in this source set starts there, whether or not it is the one that happens to be
+    // running when another test's escaped coroutine error is delivered.
     @get:Rule
-    val composeRule = createComposeRule()
+    val composeRule = createDrainedComposeRule()
 
     private val restoration = StateRestorationTester(composeRule)
 
