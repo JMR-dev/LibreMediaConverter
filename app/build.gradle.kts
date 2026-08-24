@@ -188,6 +188,30 @@ detekt {
 }
 
 // Pin the coverage agent rather than inheriting whatever Gradle bundles.
+// Robolectric loads every class it touches through its own sandbox classloader, and those
+// classes arrive with no source location. JaCoCo skips no-location classes by default, so
+// without this block **not one Robolectric test counts** -- and Robolectric is what exercises
+// the framework edge here: the workers, the publisher, both ViewModels, every Compose screen.
+//
+// Measured on e06b082, same 335 tests, same 0 failures, only this block added:
+//
+//     LINE    29.7% -> 69.2%        OutputPublisher      0.0% -> 97.5%
+//     BRANCH  29.8% -> 53.2%        ConversionViewModel  0.0% -> 85.4%
+//
+// The discriminator, if this ever looks like superstition: inside ConverterScreenKt, `describe`
+// is the one non-Composable and is exercised by a plain JVM test -- it reported 8/8 covered while
+// every @Composable in the same class reported 0, including ones whose mutations demonstrably
+// failed the build when reverted.
+//
+// `excludes` is not optional. Without it JaCoCo walks JDK-internal classes that Robolectric has
+// no location for either, and the test JVM dies rather than reporting a number.
+tasks.withType<Test>().configureEach {
+    extensions.configure<JacocoTaskExtension> {
+        isIncludeNoLocationClasses = true
+        excludes = listOf("jdk.internal.*")
+    }
+}
+
 jacoco {
     toolVersion = libs.versions.jacoco.get()
 }

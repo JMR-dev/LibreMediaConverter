@@ -108,12 +108,26 @@ install for code that can never run — and on API 37 the full APK does not fit 
 - The `model` package is excluded from `ReturnCount` and `CyclomaticComplexMethod` only. It is the
   decision layer, where one branch is one documented user-visible outcome and the metric counts
   answers rather than complexity. Every other rule still applies there.
-- **Coverage is reported, not gated** — **29.8% of lines (629/2113), 28.7% of branches**, measured
-  on `main` 2026-08-23 with `./gradlew :app:jacocoTestReport`. A floor needs a baseline that has
-  settled first, and this one has not: the figure **fell** from the ~31% recorded earlier even
-  though the JVM suite went from 11 test files to 43. Main source grew 4,114 -> 5,715 lines over
-  the same period, so the denominator outran the numerator. Re-measure before quoting it; do not
-  assume more tests means a higher percentage here.
+- **Coverage is reported, not gated** — **69.2% of lines (1519/2194), 53.2% of branches**,
+  measured 2026-08-24 with `./gradlew :app:jacocoTestReport`.
+
+  **Every figure this file carried before that date was an artifact, roughly half the real one.**
+  Robolectric loads classes through its own sandbox classloader with no source location, JaCoCo
+  skips no-location classes by default, and nothing told it otherwise — so **not one Robolectric
+  test counted**, and Robolectric is what exercises the framework edge here. The
+  `isIncludeNoLocationClasses` block in `app/build.gradle.kts` is what fixes it; **do not delete
+  it as stray config**, and re-run the numbers if you ever touch it. Same commit, same 335 tests:
+  29.7% -> 69.2% with that block alone.
+
+  The old entry also explained the wrong thing. It said coverage **fell** as the suite grew from 11
+  test files to 43 because "the denominator outran the numerator" on framework-edge code "the JVM
+  cannot reach". The JVM reaches that code fine. What actually happened is that the new tests were
+  disproportionately Robolectric, so each one added denominator and no numerator — the measurement
+  was punishing exactly the tests that were hardest to write.
+
+  Two things still hold. A floor needs a baseline that has settled, and this one has now moved by
+  39 points in a single build change, so it has not. And **re-measure before quoting** — that
+  instruction is the only reason this was caught.
 - **Testable code is not done until it is tested.** If a piece is unit testable, it gets unit
   tests before it counts as done. If it is e2e testable, it gets e2e tests. Both clauses apply —
   a change that is both needs both.
