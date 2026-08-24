@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -31,6 +32,7 @@ import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.ui.PrimaryButtonHeight
 import org.libremediaconverter.ui.ScreenPaddingHorizontal
 import org.libremediaconverter.ui.ScreenPaddingVertical
+import org.libremediaconverter.ui.TestTags
 import org.libremediaconverter.work.ConcatWorker
 
 @UnstableApi
@@ -82,7 +84,8 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                     onClick = { pickInputs.launch(arrayOf("video/*")) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(PrimaryButtonHeight),
+                        .height(PrimaryButtonHeight)
+                        .testTag(TestTags.Join.CHOOSE_FILES),
                 ) { Text("Choose files") }
             }
 
@@ -97,11 +100,16 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                         s.inputs.forEach { FileRow(it) }
                         Button(
                             onClick = viewModel::join,
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.Join.JOIN),
                         ) { Text("Join ${s.inputs.size} files") }
                         OutlinedButton(
                             onClick = { pickInputs.launch(arrayOf("video/*")) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag(TestTags.Join.CHOOSE_DIFFERENT_FILES),
                         ) { Text("Choose different files") }
                     }
 
@@ -110,10 +118,14 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                         // Indeterminate on purpose: FFmpeg reports progress against a
                         // single input's duration, which means nothing across a
                         // concatenation. A fabricated percentage would be worse than none.
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag(TestTags.Join.PROGRESS),
+                        )
                         OutlinedButton(
                             onClick = viewModel::cancel,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
 
@@ -127,7 +139,7 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                         )
                         OutlinedButton(
                             onClick = viewModel::cancel,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
 
@@ -146,11 +158,14 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                         )
                         Button(
                             onClick = { chooseDestination.launch(s.suggestedName) },
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.SAVE_FILE),
                         ) { Text("Save file") }
                         OutlinedButton(
                             onClick = viewModel::reset,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag(TestTags.START_OVER),
                         ) { Text("Start over") }
                     }
 
@@ -158,7 +173,10 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                         Text("Saved ${s.displayName}.", style = MaterialTheme.typography.bodyLarge)
                         Button(
                             onClick = viewModel::reset,
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.Join.JOIN_MORE),
                         ) { Text("Join more") }
                     }
 
@@ -170,7 +188,10 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                         )
                         Button(
                             onClick = viewModel::reset,
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.START_OVER),
                         ) { Text("Start over") }
                     }
                 }
@@ -180,8 +201,12 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
 }
 
 @Composable
-private fun FileRow(input: InputFile) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+internal fun FileRow(input: InputFile) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(TestTags.Join.fileRow(input.displayName)),
+    ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(input.displayName, style = MaterialTheme.typography.bodyMedium)
         }
