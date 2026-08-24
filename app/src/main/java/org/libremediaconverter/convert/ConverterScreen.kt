@@ -33,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,6 +52,7 @@ import org.libremediaconverter.model.VideoCodec
 import org.libremediaconverter.ui.PrimaryButtonHeight
 import org.libremediaconverter.ui.ScreenPaddingHorizontal
 import org.libremediaconverter.ui.ScreenPaddingVertical
+import org.libremediaconverter.ui.TestTags
 import java.util.Locale
 
 @UnstableApi
@@ -116,7 +118,8 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                     onClick = { pickInput.launch(arrayOf("*/*")) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(PrimaryButtonHeight),
+                        .height(PrimaryButtonHeight)
+                        .testTag(TestTags.Converter.CHOOSE_FILE),
                 ) { Text("Choose file") }
             }
 
@@ -147,11 +150,16 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                             // The Advanced picker lets an impossible combination be selected on
                             // purpose, so this is what stops it from being run.
                             enabled = validation.isValid,
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.Converter.CONVERT),
                         ) { Text("Convert") }
                         OutlinedButton(
                             onClick = { pickInput.launch(arrayOf("*/*")) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag(TestTags.Converter.CHOOSE_DIFFERENT_FILE),
                         ) { Text("Choose a different file") }
                     }
 
@@ -160,11 +168,13 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                         Text("Converting… ${s.percent}%")
                         LinearProgressIndicator(
                             progress = { s.percent / 100f },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag(TestTags.Converter.PROGRESS),
                         )
                         OutlinedButton(
                             onClick = viewModel::cancel,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
 
@@ -183,7 +193,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                         )
                         OutlinedButton(
                             onClick = viewModel::cancel,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
 
@@ -202,11 +212,14 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                         }
                         Button(
                             onClick = { chooseDestination.launch(s.suggestedName) },
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.SAVE_FILE),
                         ) { Text("Save file") }
                         OutlinedButton(
                             onClick = viewModel::reset,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag(TestTags.START_OVER),
                         ) { Text("Start over") }
                     }
 
@@ -214,7 +227,10 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                         Text("Saved ${s.displayName}.", style = MaterialTheme.typography.bodyLarge)
                         Button(
                             onClick = viewModel::reset,
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.Converter.CONVERT_ANOTHER),
                         ) { Text("Convert another") }
                     }
 
@@ -226,7 +242,10 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                         )
                         Button(
                             onClick = viewModel::reset,
-                            modifier = Modifier.fillMaxWidth().height(PrimaryButtonHeight),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(PrimaryButtonHeight)
+                                .testTag(TestTags.START_OVER),
                         ) { Text("Start over") }
                     }
                 }
@@ -237,9 +256,12 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FormatPicker(selected: OutputFormat?, onSelect: (OutputFormat) -> Unit) {
+internal fun FormatPicker(selected: OutputFormat?, onSelect: (OutputFormat) -> Unit) {
     Text("Output format", style = MaterialTheme.typography.titleSmall)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.testTag(TestTags.Converter.FORMAT_CHIPS),
+    ) {
         OutputFormat.entries.forEach { format ->
             FilterChip(
                 selected = format == selected,
@@ -267,7 +289,7 @@ private fun FormatPicker(selected: OutputFormat?, onSelect: (OutputFormat) -> Un
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AdvancedPicker(
+internal fun AdvancedPicker(
     spec: OutputSpec,
     validation: Validation,
     onContainer: (Container) -> Unit,
@@ -277,14 +299,23 @@ private fun AdvancedPicker(
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
 
-    TextButton(onClick = { expanded = !expanded }) {
+    TextButton(
+        onClick = { expanded = !expanded },
+        modifier = Modifier.testTag(TestTags.Converter.ADVANCED_TOGGLE),
+    ) {
         Text(if (expanded) "Hide advanced" else "Advanced")
     }
 
     AnimatedVisibility(visible = expanded) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.testTag(TestTags.Converter.ADVANCED_PANEL),
+        ) {
             Text("Container", style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.testTag(TestTags.Converter.ADVANCED_CONTAINER_CHIPS),
+            ) {
                 Container.entries.forEach { container ->
                     FilterChip(
                         selected = container == spec.container,
@@ -295,7 +326,10 @@ private fun AdvancedPicker(
             }
 
             Text("Video", style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.testTag(TestTags.Converter.ADVANCED_VIDEO_CHIPS),
+            ) {
                 VideoCodec.entries.forEach { codec ->
                     FilterChip(
                         selected = codec == spec.videoCodec,
@@ -306,7 +340,10 @@ private fun AdvancedPicker(
             }
 
             Text("Audio", style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.testTag(TestTags.Converter.ADVANCED_AUDIO_CHIPS),
+            ) {
                 AudioCodec.entries.forEach { codec ->
                     FilterChip(
                         selected = codec == spec.audioCodec,
@@ -331,9 +368,11 @@ private fun AdvancedPicker(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ValidationError(invalid: Validation.Invalid, onSuggestion: (OutputSpec) -> Unit) {
+internal fun ValidationError(invalid: Validation.Invalid, onSuggestion: (OutputSpec) -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(TestTags.Converter.VALIDATION_ERROR),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.errorContainer,
             contentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -347,10 +386,11 @@ private fun ValidationError(invalid: Validation.Invalid, onSuggestion: (OutputSp
             if (invalid.suggestions.isNotEmpty()) {
                 Text("Try instead:", style = MaterialTheme.typography.labelMedium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    invalid.suggestions.forEach { suggestion ->
+                    invalid.suggestions.forEachIndexed { index, suggestion ->
                         AssistChip(
                             onClick = { onSuggestion(suggestion) },
                             label = { Text(describe(suggestion)) },
+                            modifier = Modifier.testTag(TestTags.Converter.suggestion(index)),
                         )
                     }
                 }
@@ -359,7 +399,7 @@ private fun ValidationError(invalid: Validation.Invalid, onSuggestion: (OutputSp
     }
 }
 
-private fun describe(spec: OutputSpec): String {
+internal fun describe(spec: OutputSpec): String {
     val video = when (spec.videoCodec) {
         VideoCodec.NONE -> null
         else -> spec.videoCodec.label
@@ -374,9 +414,12 @@ private fun describe(spec: OutputSpec): String {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun QualityPicker(selected: QualityTier, onSelect: (QualityTier) -> Unit) {
+internal fun QualityPicker(selected: QualityTier, onSelect: (QualityTier) -> Unit) {
     Text("Quality", style = MaterialTheme.typography.titleSmall)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.testTag(TestTags.Converter.QUALITY_CHIPS),
+    ) {
         QualityTier.entries.forEach { tier ->
             FilterChip(
                 selected = tier == selected,
@@ -390,9 +433,12 @@ private fun QualityPicker(selected: QualityTier, onSelect: (QualityTier) -> Unit
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun EnginePicker(selected: EnginePreference, onSelect: (EnginePreference) -> Unit) {
+internal fun EnginePicker(selected: EnginePreference, onSelect: (EnginePreference) -> Unit) {
     Text("Engine", style = MaterialTheme.typography.titleSmall)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.testTag(TestTags.Converter.ENGINE_CHIPS),
+    ) {
         EnginePreference.entries.forEach { preference ->
             FilterChip(
                 selected = preference == selected,
@@ -403,7 +449,7 @@ private fun EnginePicker(selected: EnginePreference, onSelect: (EnginePreference
     }
 }
 
-private fun EnginePreference.label(): String = when (this) {
+internal fun EnginePreference.label(): String = when (this) {
     EnginePreference.AUTO -> "Automatic"
     EnginePreference.PREFER_HARDWARE -> "Prefer hardware"
     EnginePreference.FORCE_SOFTWARE -> "Force software"
@@ -418,21 +464,34 @@ private fun EnginePreference.label(): String = when (this) {
  * pretending it has an unknown codec.
  */
 @Composable
-private fun FileCard(input: InputFile) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+internal fun FileCard(input: InputFile) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(TestTags.Converter.FILE_CARD),
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(input.displayName, style = MaterialTheme.typography.titleMedium)
+            Text(
+                input.displayName,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.testTag(TestTags.Converter.FILE_CARD_NAME),
+            )
             // The null is handled here rather than inside formatBytes, because "no provider would
             // say" is not a number and a formatter that invented one -- "0 B" -- is the defect
             // this card would be showing. It degrades in words, like the codec rows below it.
             Text(
                 input.sizeBytes?.let(::formatBytes) ?: "Size unknown",
                 style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag(TestTags.Converter.FILE_CARD_BYTES),
             )
 
             val probe = input.probe
             if (probe == null) {
-                Text("Reading…", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Reading…",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag(TestTags.Converter.FILE_CARD_NOTE),
+                )
                 return@Column
             }
 
@@ -442,6 +501,7 @@ private fun FileCard(input: InputFile) {
                 InputKind.UNPARSEABLE -> Text(
                     "Could not identify this file. It will be converted with FFmpeg.",
                     style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag(TestTags.Converter.FILE_CARD_NOTE),
                 )
 
                 InputKind.IMAGE -> {
@@ -481,22 +541,23 @@ private fun FileCard(input: InputFile) {
 }
 
 @Composable
-private fun DetailRow(label: String, value: String) {
+internal fun DetailRow(label: String, value: String) {
     Text(
         "$label: $value",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag(TestTags.Converter.detailRow(label)),
     )
 }
 
-private fun formatDuration(ms: Long): String {
+internal fun formatDuration(ms: Long): String {
     val totalSeconds = ms / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format(Locale.US, "%d:%02d", minutes, seconds)
 }
 
-private fun formatBytes(bytes: Long): String = when {
+internal fun formatBytes(bytes: Long): String = when {
     bytes >= 1_000_000_000 -> String.format(Locale.US, "%.1f GB", bytes / 1e9)
     bytes >= 1_000_000 -> String.format(Locale.US, "%.1f MB", bytes / 1e6)
     bytes >= 1_000 -> String.format(Locale.US, "%.0f kB", bytes / 1e3)
