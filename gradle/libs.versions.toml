@@ -80,6 +80,17 @@ jacoco = "0.8.15"
 # 4.16.1 is the newest RELEASED version; the 4.17 line is beta-only at the time of writing.
 robolectric = "4.16.1"
 
+# kotlinx-coroutines-test. Already on the unit-test classpath transitively, through
+# compose-ui-test-junit4 -- declared here because a source file now imports it, and a direct
+# import of a transitive is a dependency nobody chose.
+#
+# PINNED, for the same reason as robolectric above: org.jetbrains.kotlinx is not one of the
+# groups in the prerelease guard's `floatedGroupPrefixes`, so a "1.+" here would be free to
+# resolve to a milestone build. This value is what the Compose BOM already resolves it to, so
+# stating it changes nothing in the graph today; if the BOM moves ahead, Gradle takes the
+# higher version and this stays a floor rather than a conflict.
+coroutinesTest = "1.9.0"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
@@ -133,6 +144,10 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 # run on the development host at all (see CLAUDE.md), so an androidTest-only red test is not
 # a TDD loop anyone here can execute.
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+
+# Only for its `runTest`, and only to drain the collector kotlinx-coroutines-test installs
+# process-wide. See EscapedCoroutineErrors.kt in the JVM test source set.
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 
 [plugins]
 # com.android.application and org.jetbrains.kotlin.plugin.compose are deliberately absent.
