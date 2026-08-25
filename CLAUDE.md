@@ -185,11 +185,12 @@ install for code that can never run — and on API 37 the full APK does not fit 
   `podman run --rm -v "$PWD:/mnt:z" docker.io/koalaman/shellcheck@sha256:61862eba... <files>`
   (the digest is in `status_check.yml`; there is no shellcheck system package on this host).
 
-  **It does not cover inline `run:` blocks in the workflows**, and a good deal of this repo's bash
-  lives there. `actionlint` does cover them — it runs shellcheck over each `run:` — and reports one
-  pre-existing `info` finding in `build.yml`. It is not wired in because every action here is
-  pinned by SHA, and actionlint's usual installer is a `curl | bash` off a moving branch; doing it
-  properly means pinning a container digest. Tracked separately rather than bolted on.
+  **`actionlint` covers the half shellcheck cannot see** — the inline `run:` blocks, where a good
+  deal of this repo's bash lives. It runs shellcheck over each `run:` plus its own checks on
+  expression syntax, `needs:` references, matrix keys and action inputs. It sits in the same job,
+  **pinned by digest** for the reason above and one of its own: its documented installer is a
+  `curl | bash` off a moving branch, which does not belong in a repo that pins every action by SHA.
+  Locally: `podman run --rm -v "$PWD:/repo:z" -w /repo docker.io/rhysd/actionlint@sha256:9d360886... -color`.
 
 ## Dependency versions
 

@@ -81,7 +81,11 @@ jobs:
 
       - name: Verify the released artifacts
         run: |
-          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          # A glob, not `ls | head`: the glob is already here, and parsing ls is what
+          # SC2012 is about. Gradle's names have no spaces today, which is exactly the
+          # kind of assumption that holds until it does not.
+          apks=(app/build/outputs/apk/release/*.apk)
+          APK="${apks[0]}"
           # A release that shipped one ABI, or lost 16 KB alignment, would install
           # fine on a test device and fail for users or at Play submission. Both are
           # cheap to check and expensive to discover later.
