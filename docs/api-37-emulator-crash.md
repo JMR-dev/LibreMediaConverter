@@ -230,11 +230,17 @@ booted (`emulator_alive=yes`). The host emulator is fine; the guest is not.
 
 ## Can the suite run on it?
 
-**Almost.** `tools/local-emulator/run-e2e.sh 37` now runs the whole suite locally, and all of it
-passes except two tests. Measured at `22c7914`: **49 tests, 2 failures, 0 errors, 2 skipped** — 45
-passed, the two `Media3EngineTest` failures dissected below, and the two `assumeTrue` skips every
-level has. It costs two deviations from how every other level is run, and both are worth
-understanding before trusting the leg.
+**Almost, and less so than it was.** `tools/local-emulator/run-e2e.sh 37` runs the whole suite
+locally. Measured at `22c7914`: **49 tests, 2 failures, 0 errors, 2 skipped** — 45 passed, the two
+`Media3EngineTest` failures dissected below, and the two `assumeTrue` skips every level has. It
+costs two deviations from how every other level is run, and both are worth understanding before
+trusting the leg.
+
+**That was the high-water mark.** On 2026-08-24 a test that touches system UI joined the suite,
+and the level stopped *finishing* rather than merely failing two —
+[see below](#something-does-depend-on-system-ui-now-and-it-is-excluded-rather-than-trusted).
+Two `Media3EngineTest` failures is what **CI's gating leg** expects, because it filters on
+`notAnnotation`; a local `run-e2e.sh 37` does not filter and sees more.
 
 Two things about that total before it is compared with anything. It is the size of the suite on
 the checkout that ran, not a property of API 37 — `app/src/androidTest` held 49 `@Test` methods at
@@ -320,10 +326,44 @@ and proceeding straight to the tests fails exactly as before. The harness theref
 1. **The renderer is ANGLE, not the host GPU.** Shared with nothing else in the matrix — API
    33–36 run `-gpu host` locally, and CI runs `swiftshader_indirect`.
 2. **SystemUI is disabled.** The API 37 leg does not run the same device configuration as any
-   other leg or as the Pixel. It is defensible here only because nothing in this suite touches
-   system UI — these are Media3, FFmpeg and WorkManager tests — and because the alternative is no
-   local API 37 coverage at all. **Anything that ever does depend on system UI must not trust
-   this leg.**
+   other leg or as the Pixel. It was defensible here because nothing in this suite touched
+   system UI — Media3, FFmpeg and WorkManager tests — and because the alternative is no local
+   API 37 coverage at all. **Anything that ever does depend on system UI must not trust this
+   leg.** Something now does; see the section below.
+
+### Something does depend on system UI now, and it is excluded rather than trusted
+
+Added 2026-08-24, and it is the first entry on this page that is not a codec.
+
+`SafPickerRoundTripTest` drives the real system file picker and rotates the display. Both reach
+the gralloc mapper — DocumentsUI is another app's windows, and a rotation rebuilds every surface
+on screen — and **disabling SystemUI does not help**, because it removes the *idle* trigger
+(RegionSamplingThread's nav-bar luma sampling) and not this one. The two tests fail on
+`android-37.0` under `swangle_indirect` with SystemUI disabled and verified quiet, and they were
+measured **separately**, because inferring the second from the first would have been the same
+mistake this page's opening correction is about:
+
+| test | how it fails | `hasReadColorBufferDma` aborts in the window |
+|---|---|---|
+| `thePickedInputSurvivesARealRotation` | `INSTRUMENTATION_ABORTED: System has crashed.` — `Expected 59 tests, received 50`. The framework dies **during** it, so six later tests never run and the JUnit XML carries a failure with no text at all. | 5 |
+| `pickingAFileThroughTheSystemPickerFillsInTheFileCard` | `androidx.test.uiautomator.StaleObjectException` at `UiObject2.click`, tapping the fixture root the previous line had just found. A restart rebuilt the window between the two. | 3 |
+
+Both pass on API 33 and API 36 locally, whole suite, `59 / 0 / 0 / 2` on each — so this is the
+image, on the same evidence pattern as the codec failures above.
+
+The class therefore carries `@FailsOnEmulatorApi37` and runs on the advisory leg. **The rule the
+deviation states is being applied, not broken:** the thing that depends on system UI does not
+trust this leg.
+
+Two consequences worth stating rather than discovering:
+
+- **`run-e2e.sh 37` applies no annotation filter**, so a local API 37 run reports these on top of
+  the two `Media3EngineTest` ones, and — new — **does not finish**. Its totals come back short,
+  and which later tests ran is arbitrary. The summary row says so.
+- **The advisory job is still named `E2E API 37 Media3 hardware transcode (advisory)`**, and it
+  now carries two tests that are neither Media3 nor a transcode. Renaming a check is a branch-
+  protection change and was deliberately not made in the same PR; the name is stale, the
+  behaviour is correct.
 
 ### The two remaining failures are the same bug, one layer down
 
@@ -650,9 +690,15 @@ though a new API level shipped. Watch for these instead:
 - **`E2E API 37 Media3 hardware transcode (advisory)` going green.** Nothing announces this: the
   job is `continue-on-error`, so it fixing itself looks exactly like a check nobody reads
   quietly ceasing to be red. It is listed here because that makes it the *least* likely of these
-  triggers to be noticed, not the most. When it happens, delete `@FailsOnEmulatorApi37` from the
-  two tests rather than the job — the gating leg picks them back up on its own, and the advisory
-  job then runs nothing and can go.
+  triggers to be noticed, not the most. When it happens, delete `@FailsOnEmulatorApi37` from
+  everything carrying it rather than deleting the job — the gating leg picks them back up on its
+  own, and the advisory job then runs nothing and can go.
+
+  **It is not two tests any more.** As of 2026-08-24 the marker is on `Media3EngineTest`'s two
+  methods *and* on `SafPickerRoundTripTest` as a class, and the two groups fail for unrelated
+  reasons — a codec and the gralloc mapper. They can go green independently, so check both before
+  concluding the marker is done; and the job's name still says "Media3 hardware transcode", which
+  half of what it runs is not.
 
 ## Correction owed to `CLAUDE.md`
 

@@ -17,6 +17,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.libremediaconverter.FailsOnEmulatorApi37
 import org.libremediaconverter.MainActivity
 import org.libremediaconverter.ui.TestTags
 
@@ -70,9 +71,39 @@ import org.libremediaconverter.ui.TestTags
  *
  * The Pixel 10 Pro XL is secure-locked and cannot be unlocked from a shell, so the picker cannot be
  * driven there at all. That is why this gap survived as long as it did.
- * `tools/local-emulator/run-e2e.sh` runs API 33-36 on the development host.
+ * `tools/local-emulator/run-e2e.sh` runs API 33-36 on the development host, and both tests pass
+ * there: **59 / 0 / 0 / 2 at API 33 and again at API 36**, whole suite, 2026-08-24.
+ *
+ * ### Why [FailsOnEmulatorApi37] is on this class
+ *
+ * Measured, per that annotation's own rule, and measured **per test** rather than inferred from
+ * one of them — see `docs/api-37-emulator-crash.md`, which this is the first entry in that is not
+ * a codec.
+ *
+ * This is the first thing in the suite that touches system UI, and the android-37.x images are
+ * where that stops being free: surfaceflinger aborts inside the guest's Gralloc5 mapper, init
+ * SIGKILLs zygote with it, and the framework restarts underneath the run. Disabling SystemUI --
+ * the deviation the API 37 leg already makes -- removes the *idle* trigger, not this one. Driving
+ * DocumentsUI and rotating the display generate exactly the surface traffic that reaches the
+ * mapper. Both tests fail on `android-37.0` under `swangle_indirect` with SystemUI disabled, and
+ * they fail in the two shapes a framework restart produces:
+ *
+ * ```
+ * thePickedInputSurvivesARealRotation
+ *   INSTRUMENTATION_ABORTED: System has crashed.       (5 hasReadColorBufferDma aborts; the run
+ *   Expected 59 tests, received 50                      never finished, taking 6 later tests out)
+ *
+ * pickingAFileThroughTheSystemPickerFillsInTheFileCard
+ *   androidx.test.uiautomator.StaleObjectException     (3 aborts; the picker's root node was
+ *     at UiObject2.click(UiObject2.java:526)            rebuilt between finding it and tapping it)
+ * ```
+ *
+ * The annotation says only that, and CI reads it twice, so this class runs on the advisory API 37
+ * leg and not on the gating one. **Do not read it as "a rotation is allowed to lose the file".**
+ * That is what API 33 through 36 are for, and they answer it.
  */
 @UnstableApi
+@FailsOnEmulatorApi37
 @RunWith(AndroidJUnit4::class)
 class SafPickerRoundTripTest {
 

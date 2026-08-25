@@ -240,12 +240,21 @@ jobs:
           # CAVEAT, read this before trusting a green here: this leg runs with
           # SystemUI disabled and the framework restarted under it. No other leg
           # and no Pixel run uses that configuration. It is defensible only because
-          # nothing in this suite touches system UI -- these are Media3, FFmpeg and
+          # nothing THIS LEG RUNS touches system UI -- Media3, FFmpeg and
           # WorkManager tests -- and because the alternative is no CI coverage of
           # the level this app targets. **Anything that ever does depend on system
           # UI must not trust this row.** E2E_DISABLE_SYSTEM_UI is what does it;
           # .github/scripts/e2e-run.sh explains the mechanism and why every step of
           # it is verified rather than assumed.
+          #
+          # "this leg" and not "this suite", since 2026-08-24: the suite now has a
+          # test that DOES touch system UI. SafPickerRoundTripTest drives DocumentsUI
+          # and rotates the display, both of which reach the gralloc mapper this image
+          # aborts in -- disabling SystemUI removes the idle trigger, not that one. It
+          # was measured failing here, per test, and carries @FailsOnEmulatorApi37, so
+          # notAnnotation below keeps it off this row. The rule the caveat states is
+          # doing its job rather than being violated; docs/api-37-emulator-crash.md
+          # has both failures.
           #
           # api-level must be "37.0". A bare 37 is not an SDK package and fails
           # during setup, which cost a run to discover.
