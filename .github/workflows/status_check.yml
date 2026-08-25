@@ -247,14 +247,21 @@ jobs:
           # .github/scripts/e2e-run.sh explains the mechanism and why every step of
           # it is verified rather than assumed.
           #
-          # "this leg" and not "this suite", since 2026-08-24: the suite now has a
-          # test that DOES touch system UI. SafPickerRoundTripTest drives DocumentsUI
-          # and rotates the display, both of which reach the gralloc mapper this image
-          # aborts in -- disabling SystemUI removes the idle trigger, not that one. It
-          # was measured failing here, per test, and carries @FailsOnEmulatorApi37, so
-          # notAnnotation below keeps it off this row. The rule the caveat states is
-          # doing its job rather than being violated; docs/api-37-emulator-crash.md
-          # has both failures.
+          # "this leg" and not "this suite", since 2026-08-24, and the difference is
+          # now load-bearing: SafPickerRoundTripTest DOES touch system UI. It drives
+          # DocumentsUI and rotates the display, and both reach the gralloc mapper
+          # this image aborts in -- disabling SystemUI removes the IDLE trigger, not
+          # those. Measured per method on android-37.0: the ROTATION test takes the
+          # framework down (INSTRUMENTATION_ABORTED) and carries
+          # @FailsOnEmulatorApi37, so notAnnotation below keeps it off this row; the
+          # PICKER test passes and runs here like anything else. A rotation rebuilds
+          # every surface at once, and starting another app's activity does not.
+          #
+          # So this row does now run one test that depends on system UI, and the
+          # caveat above still applies to it: a green here is not evidence the picker
+          # works on a device with SystemUI running -- the Pixel release check is.
+          # docs/api-37-emulator-crash.md has the per-method measurements, and the
+          # correction that produced them.
           #
           # api-level must be "37.0". A bare 37 is not an SDK package and fails
           # during setup, which cost a run to discover.

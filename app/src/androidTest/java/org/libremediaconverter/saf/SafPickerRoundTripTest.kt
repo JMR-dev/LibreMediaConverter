@@ -10,6 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.After
@@ -74,36 +75,37 @@ import org.libremediaconverter.ui.TestTags
  * `tools/local-emulator/run-e2e.sh` runs API 33-36 on the development host, and both tests pass
  * there: **59 / 0 / 0 / 2 at API 33 and again at API 36**, whole suite, 2026-08-24.
  *
- * ### Why [FailsOnEmulatorApi37] is on this class
+ * ### Why only the rotation test carries [FailsOnEmulatorApi37]
  *
- * Measured, per that annotation's own rule, and measured **per test** rather than inferred from
- * one of them — see `docs/api-37-emulator-crash.md`, which this is the first entry in that is not
- * a codec.
- *
- * This is the first thing in the suite that touches system UI, and the android-37.x images are
- * where that stops being free: surfaceflinger aborts inside the guest's Gralloc5 mapper, init
+ * This class is the first thing in the suite that touches system UI, and the android-37.x images
+ * are where that stops being free: surfaceflinger aborts inside the guest's Gralloc5 mapper, init
  * SIGKILLs zygote with it, and the framework restarts underneath the run. Disabling SystemUI --
- * the deviation the API 37 leg already makes -- removes the *idle* trigger, not this one. Driving
- * DocumentsUI and rotating the display generate exactly the surface traffic that reaches the
- * mapper. Both tests fail on `android-37.0` under `swangle_indirect` with SystemUI disabled, and
- * they fail in the two shapes a framework restart produces:
+ * the deviation the API 37 leg already makes -- removes the *idle* trigger, not this one.
+ *
+ * The marker is on one method and not on the class, because that is what was measured, one method
+ * per fresh emulator, on `android-37.0` under `swangle_indirect`:
  *
  * ```
- * thePickedInputSurvivesARealRotation
- *   INSTRUMENTATION_ABORTED: System has crashed.       (5 hasReadColorBufferDma aborts; the run
- *   Expected 59 tests, received 50                      never finished, taking 6 later tests out)
- *
- * pickingAFileThroughTheSystemPickerFillsInTheFileCard
- *   androidx.test.uiautomator.StaleObjectException     (3 aborts; the picker's root node was
- *     at UiObject2.click(UiObject2.java:526)            rebuilt between finding it and tapping it)
+ * thePickedInputSurvivesARealRotation            INSTRUMENTATION_ABORTED: System has crashed.
+ *                                               Expected 1 tests, received 0
+ * pickingAFileThroughTheSystemPickerFillsInTheFileCard                              PASSED
  * ```
  *
- * The annotation says only that, and CI reads it twice, so this class runs on the advisory API 37
- * leg and not on the gating one. **Do not read it as "a rotation is allowed to lose the file".**
- * That is what API 33 through 36 are for, and they answer it.
+ * A rotation rebuilds every surface on screen at once, which the mapper does not survive; merely
+ * starting DocumentsUI does not.
+ *
+ * **The first version of this said the class, and it was wrong.** The picker test had failed at
+ * API 37 too -- with a `StaleObjectException` that turned out to be this file's own bug rather
+ * than the image's, and which CI then reproduced deterministically at API 33, 34 and 35. Fixing
+ * it ([tapPickerNode]) and re-measuring is what separated the two. An annotation is a claim about
+ * an image, and a broken test makes every image look broken; **re-measure after fixing a test
+ * before deciding what the platform did.**
+ *
+ * The annotation says only that, and CI reads it twice, so the rotation test runs on the advisory
+ * API 37 leg and not the gating one. **Do not read it as "a rotation is allowed to lose the
+ * file".** That is what API 33 through 36 are for, and they answer it.
  */
 @UnstableApi
-@FailsOnEmulatorApi37
 @RunWith(AndroidJUnit4::class)
 class SafPickerRoundTripTest {
 
@@ -162,6 +164,7 @@ class SafPickerRoundTripTest {
     }
 
     @Test
+    @FailsOnEmulatorApi37
     fun thePickedInputSurvivesARealRotation() {
         pickTheFixture()
         // The identity hash rather than the Activity itself, so nothing here keeps a destroyed
@@ -213,18 +216,54 @@ class SafPickerRoundTripTest {
         // types against Root.COLUMN_MIME_TYPES and drops the roots that cannot answer, so a filter
         // the fixture root does not satisfy takes the root out of the picker altogether -- along
         // with "Images", "Audio", "Videos" and "Documents", measured on API 34.
-        val root = awaitPickerNode(By.text(FixtureDocumentsProvider.ROOT_TITLE)) {
+        tapPickerNode(By.text(FixtureDocumentsProvider.ROOT_TITLE)) {
             // Which screen the picker opens on is its own business: it lands on Recent, where the
             // roots are a strip at the bottom, but a device with a populated Recent may need the
             // drawer. Looking in the second place widens where the root is searched for; it does
             // not weaken what has to be found, which is still this root.
             device.findObject(By.desc(SHOW_ROOTS_DESCRIPTION))?.click()
         }
-        root.click()
 
-        awaitPickerNode(By.text(FixtureDocumentsProvider.FIXTURE_DISPLAY_NAME)).click()
+        tapPickerNode(By.text(FixtureDocumentsProvider.FIXTURE_DISPLAY_NAME))
 
         awaitNode(TestTags.Converter.FILE_CARD_NAME)
+    }
+
+    /**
+     * Finds the picker node [selector] names and taps it, re-finding it if it goes stale.
+     *
+     * **The re-finding is not padding, and this is not a retry of the assertion.** A `UiObject2`
+     * holds an `AccessibilityNodeInfo` captured when it was found, and DocumentsUI is still
+     * settling when the node first appears — its list rebinds, the roots strip lays out, a window
+     * animates. If the node is replaced in that gap, `click()` throws `StaleObjectException`
+     * against the handle rather than missing the target. Measured on a cold API 34 emulator:
+     *
+     * ```
+     * androidx.test.uiautomator.StaleObjectException
+     *   at androidx.test.uiautomator.UiObject2.getAccessibilityNodeInfo(UiObject2.java:1042)
+     *   at androidx.test.uiautomator.UiObject2.click(UiObject2.java:526)
+     * ```
+     *
+     * So what is retried is *acquiring a handle to a node that has to be there anyway* — every
+     * attempt still goes through [awaitPickerNode], which fails outright if the node is absent.
+     * The MIME mutation's bite is untouched: a root that is not in the picker is not found on any
+     * attempt, and the failure is still "the system picker never showed" rather than a stale one.
+     */
+    private fun tapPickerNode(selector: BySelector, ifAbsent: () -> Unit = {}) {
+        var stale: StaleObjectException? = null
+        repeat(TAP_ATTEMPTS) { attempt ->
+            // ifAbsent only on the first attempt: it navigates, and re-navigating from a screen it
+            // already reached would walk away from the node.
+            val node = awaitPickerNode(selector, if (attempt == 0) ifAbsent else ({}))
+            device.waitForIdle()
+            try {
+                node.click()
+                return
+            } catch (e: StaleObjectException) {
+                stale = e
+            }
+        }
+        throw AssertionError("$selector kept going stale between finding it and tapping it", stale)
     }
 
     /**
@@ -269,6 +308,16 @@ class SafPickerRoundTripTest {
 
         /** `Surface.ROTATION_0`, named rather than `0` so the comparison reads. */
         const val NATURAL_ROTATION = 0
+
+        /**
+         * How many times a picker node may be re-found before its staleness is the finding.
+         *
+         * Three, not "until the timeout". Each attempt already waits up to [PICKER_TIMEOUT_MS] for
+         * the node to exist, so this bounds only the settling window after it does; a node that is
+         * still being replaced after three of those is telling you something about the device, and
+         * a loop that hid it would be the flake rather than the fix.
+         */
+        const val TAP_ATTEMPTS = 3
 
         /** DocumentsUI's drawer button. It carries no text, only this description. */
         const val SHOW_ROOTS_DESCRIPTION = "Show roots"

@@ -15,11 +15,13 @@
 # EXIT CODE: 0 only if every level was green; 1 if any level failed, wedged or could not be
 # set up; 2 if it refused to start at all. **A bare `run-e2e.sh` therefore exits 1 by design.**
 # API 37 is in the default list on purpose -- leaving it out is what left the level unlooked-at
-# for as long as it was -- and it is permanently two failures short of green, on the emulator's
-# own c2.goldfish.h264.decoder rather than on anything this app does. The summary names the two,
-# so a third is visibly new, and the last line printed says the same thing. Anything that reads a
-# non-zero exit as breakage should name the levels it wants: `run-e2e.sh 33 34 35 36` is the
-# sweep that can be green. docs/api-37-emulator-crash.md has the measurements.
+# for as long as it was -- and it is permanently short of green, on the emulator image rather
+# than on anything this app does. Since 2026-08-24 it does not even FINISH: one of its expected
+# failures kills the framework, so the totals come back short with an arbitrary tail. The summary
+# names every failure it expects, so an unnamed one is visibly new, and the last line printed
+# says the same thing. Anything that reads a non-zero exit as breakage should name the levels it
+# wants: `run-e2e.sh 33 34 35 36` is the sweep that can be green.
+# docs/api-37-emulator-crash.md has the measurements.
 #
 # WHY THIS EXISTS, AND WHAT IT DELIBERATELY DOES NOT DO
 #
@@ -326,12 +328,14 @@ boot_emulator() {
 #
 # "Touched", past tense, since 2026-08-24. SafPickerRoundTripTest drives DocumentsUI and rotates
 # the display, and both reach the gralloc mapper these images abort in -- disabling SystemUI
-# removes the IDLE trigger, not that one. Unlike CI, THIS SCRIPT APPLIES NO ANNOTATION FILTER, so
-# a local `run-e2e.sh 37` runs it and reports a third and fourth failure on top of the two
-# Media3EngineTest ones the summary names. Measured 2026-08-24: the rotation test takes the
-# framework down outright (INSTRUMENTATION_ABORTED, and six later tests never run), the picker
-# test dies on a StaleObjectException. CI's gating leg does not see either -- they carry
-# @FailsOnEmulatorApi37 and it filters on notAnnotation.
+# removes the IDLE trigger, not those. Measured per method on android-37.0: the ROTATION test
+# takes the framework down (INSTRUMENTATION_ABORTED) and carries @FailsOnEmulatorApi37; the
+# picker test passes.
+#
+# THIS SCRIPT APPLIES NO ANNOTATION FILTER, unlike CI, so a local `run-e2e.sh 37` runs the
+# rotation test anyway -- and because that test kills the framework rather than merely failing,
+# THE LEVEL DOES NOT FINISH. Its totals come back short and which later tests ran is arbitrary.
+# CI's gating leg never sees it.
 #
 # The retry loop is not defensive padding: at the moment boot_completed flips, the framework
 # may be in one of its restarts and `pm` is simply not published yet. The first attempt at this
@@ -577,20 +581,21 @@ for api in "${APIS[@]}"; do
   # code. So the row NAMES the expected ones, and anything else is then obviously new.
   #
   # The list grew on 2026-08-24 and the shape of the row changed with it. The two
-  # Media3EngineTest failures are a codec; SafPickerRoundTripTest is the gralloc bug reached
-  # through system UI, and its rotation test takes the framework down rather than merely
-  # failing -- so that level does not finish, and the totals come back SHORT (50 of 59 at the
-  # time of writing) with the later tests never run. A run whose totals do not add up is
-  # therefore expected here too, which it never was before, and is the reason this says
-  # "at least".
+  # Media3EngineTest failures are a codec; the third is the gralloc bug reached through system
+  # UI, and it takes the framework DOWN rather than merely failing -- so the level does not
+  # finish, and the totals come back SHORT (50 of 59 when this was written) with the later
+  # tests never run. A run whose totals do not add up is expected here now, which it never
+  # was before.
   case "$api" in
     37 | 37.*)
       line="$line
-    expected here, at least: 2 Media3EngineTest failures on c2.goldfish.h264.decoder, plus
-    both SafPickerRoundTripTest tests -- and the run ABORTS partway, so the total is short
-    and which later tests ran is arbitrary. Anything else is new.
-    CI's gating leg sees only the first two: the SAF class carries @FailsOnEmulatorApi37 and
-    this script, unlike CI, applies no annotation filter. docs/api-37-emulator-crash.md"
+    expected here: 2 Media3EngineTest failures on c2.goldfish.h264.decoder, plus
+    SafPickerRoundTripTest.thePickedInputSurvivesARealRotation -- which kills the framework
+    rather than merely failing, so the run ABORTS partway and the total comes back SHORT with
+    an arbitrary tail. That is expected here too, and never was before. Anything else is new.
+    CI's gating leg sees only the first two: the rotation test carries @FailsOnEmulatorApi37
+    and this script, unlike CI, applies no annotation filter.
+    docs/api-37-emulator-crash.md"
       ;;
   esac
   if [ "$rc" -ne 0 ]; then

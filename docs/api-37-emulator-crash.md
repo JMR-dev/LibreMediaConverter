@@ -331,39 +331,55 @@ and proceeding straight to the tests fails exactly as before. The harness theref
    API 37 coverage at all. **Anything that ever does depend on system UI must not trust this
    leg.** Something now does; see the section below.
 
-### Something does depend on system UI now, and it is excluded rather than trusted
+### Something does depend on system UI now, and half of it is excluded
 
-Added 2026-08-24, and it is the first entry on this page that is not a codec.
+Added 2026-08-24, and the first entry on this page that is not a codec.
 
 `SafPickerRoundTripTest` drives the real system file picker and rotates the display. Both reach
 the gralloc mapper — DocumentsUI is another app's windows, and a rotation rebuilds every surface
 on screen — and **disabling SystemUI does not help**, because it removes the *idle* trigger
-(RegionSamplingThread's nav-bar luma sampling) and not this one. The two tests fail on
-`android-37.0` under `swangle_indirect` with SystemUI disabled and verified quiet, and they were
-measured **separately**, because inferring the second from the first would have been the same
-mistake this page's opening correction is about:
+(RegionSamplingThread's nav-bar luma sampling) and not this one.
 
-| test | how it fails | `hasReadColorBufferDma` aborts in the window |
+Measured one method per fresh emulator, `android-37.0`, `swangle_indirect`, SystemUI disabled and
+verified quiet — separately, because inferring the second from the first is the mistake this
+page's opening correction is about:
+
+| test | result on android-37.0 | `hasReadColorBufferDma` aborts in the window |
 |---|---|---|
-| `thePickedInputSurvivesARealRotation` | `INSTRUMENTATION_ABORTED: System has crashed.` — `Expected 59 tests, received 50`. The framework dies **during** it, so six later tests never run and the JUnit XML carries a failure with no text at all. | 5 |
-| `pickingAFileThroughTheSystemPickerFillsInTheFileCard` | `androidx.test.uiautomator.StaleObjectException` at `UiObject2.click`, tapping the fixture root the previous line had just found. A restart rebuilt the window between the two. | 3 |
+| `thePickedInputSurvivesARealRotation` | **fails**: `INSTRUMENTATION_ABORTED: System has crashed.`, `Expected 1 tests, received 0`. The framework dies **during** it, so the JUnit XML carries a failure with no text at all. | 3 |
+| `pickingAFileThroughTheSystemPickerFillsInTheFileCard` | **passes** | 4 |
 
-Both pass on API 33 and API 36 locally, whole suite, `59 / 0 / 0 / 2` on each — so this is the
-image, on the same evidence pattern as the codec failures above.
+So a rotation, which rebuilds every surface at once, is what the mapper does not survive. Merely
+starting DocumentsUI is not. Only the rotation test carries `@FailsOnEmulatorApi37`; the picker
+test runs on the gating leg like anything else.
 
-The class therefore carries `@FailsOnEmulatorApi37` and runs on the advisory leg. **The rule the
-deviation states is being applied, not broken:** the thing that depends on system UI does not
-trust this leg.
+#### The correction that produced that table
 
-Two consequences worth stating rather than discovering:
+**The first version of this section said both tests failed, and put the marker on the class.** The
+picker test had indeed failed at API 37 — with `androidx.test.uiautomator.StaleObjectException`,
+which looked like a framework restart invalidating an accessibility node, because that is exactly
+what it looks like.
 
-- **`run-e2e.sh 37` applies no annotation filter**, so a local API 37 run reports these on top of
-  the two `Media3EngineTest` ones, and — new — **does not finish**. Its totals come back short,
-  and which later tests ran is arbitrary. The summary row says so.
-- **The advisory job is still named `E2E API 37 Media3 hardware transcode (advisory)`**, and it
-  now carries two tests that are neither Media3 nor a transcode. Renaming a check is a branch-
-  protection change and was deliberately not made in the same PR; the name is stale, the
-  behaviour is correct.
+It was the test's own bug. `UiObject2` caches the `AccessibilityNodeInfo` it was found with, and
+DocumentsUI is still settling when a node first appears; the handle went stale before `click()`.
+CI then reproduced it **deterministically** at API 33, 34 and 35 — every cold runner emulator, not
+intermittently — which is what made it obviously not an API 37 property. It had passed locally
+only because the emulator was warm.
+
+The lesson is worth more than the measurement: **an annotation is a claim about an image, and a
+broken test makes every image look broken.** Re-measure after fixing a test before deciding what
+the platform did. Both the abort and the stale node produce "the run fell over", and only one of
+them was the image.
+
+#### Two consequences worth stating rather than discovering
+
+- **`run-e2e.sh 37` applies no annotation filter**, unlike CI, so a local API 37 run includes the
+  rotation test and therefore **does not finish**: its totals come back short and which later
+  tests ran is arbitrary. The summary row says so.
+- **The advisory job is still named `E2E API 37 Media3 hardware transcode (advisory)`** and now
+  carries a test that is neither Media3 nor a transcode. Renaming a check is a branch-protection
+  change and was deliberately not made in the same PR; the name is stale, the behaviour is
+  correct.
 
 ### The two remaining failures are the same bug, one layer down
 
