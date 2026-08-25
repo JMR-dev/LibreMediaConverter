@@ -242,8 +242,20 @@ object MediaProbe {
         else -> Container.MKV
     }
 
-    /** FFprobe describes still images through the image demuxers rather than a media container. */
-    private fun isImageFormat(formatName: String): Boolean {
+    /**
+     * FFprobe describes still images through the image demuxers rather than a media container.
+     *
+     * The two halves of the rule are not interchangeable. `image2` is a whole name — what FFprobe
+     * reports for a numbered image sequence — while `_pipe` has to be a *suffix* test, because the
+     * piped demuxers are named one per image codec: `png_pipe`, `jpeg_pipe`, `webp_pipe`, and
+     * thirty more. Relaxing that suffix to a substring would swallow `yuv4mpegpipe`, which is raw
+     * video, and `classify` checks this before anything else — so a false positive makes the
+     * source-info card describe a video as an image.
+     *
+     * `internal` so the unit tests can name both halves; the JVM test source set is a friend of
+     * `main`, so this stays invisible outside the module.
+     */
+    internal fun isImageFormat(formatName: String): Boolean {
         val names = formatName.split(',').map { it.trim().lowercase() }
         return names.any { it == "image2" || it.endsWith("_pipe") }
     }
@@ -284,11 +296,35 @@ object MediaProbe {
         }
     }
 
-    private fun MediaFormat.intOr(key: String, fallback: Int = 0): Int =
+    /**
+     * One track property as an Int, or [fallback] when the format has no Int to give.
+     *
+     * `containsKey` alone is not enough, because `MediaFormat` is a heterogeneous map: a key it
+     * holds as a Float answers `getInteger` with a `ClassCastException` rather than a coercion, and
+     * `KEY_FRAME_RATE` — which [probeForConcat] reads — is legitimately set either way. The
+     * `runCatching` is therefore load-bearing rather than defensive. Without it a single
+     * oddly-typed field throws past the whole track loop, and the catch there answers with an empty
+     * [ConcatInput], discarding the codec and dimensions that had already been read.
+     *
+     * `internal` for the unit tests, as [shortName].
+     */
+    internal fun MediaFormat.intOr(key: String, fallback: Int = 0): Int =
         if (containsKey(key)) runCatching { getInteger(key) }.getOrDefault(fallback) else fallback
 
-    /** MediaFormat MIME -> the short codec names the router and FFmpeg both speak. */
-    private fun shortName(mime: String): String = when (mime) {
+    /**
+     * MediaFormat MIME -> the short codec names the router and FFmpeg both speak.
+     *
+     * A lookup table over platform constants is the shape that rots quietly. Most of these arms are
+     * translations rather than trimming — `video/avc` is `h264`, `audio/mp4a-latm` is `aac`,
+     * `video/x-vnd.on2.vp9` is `vp9` — so a dropped arm does not fail. It falls through to
+     * `substringAfter('/')` and reports a different, plausible-looking string that
+     * `CodecNames` may or may not still recognise, and an unrecognised codec is how a
+     * stream-copyable file quietly becomes a re-encode.
+     *
+     * `internal` so the unit tests can name every arm; the JVM test source set is a friend of
+     * `main`, so this stays invisible outside the module.
+     */
+    internal fun shortName(mime: String): String = when (mime) {
         MediaFormat.MIMETYPE_VIDEO_AVC -> "h264"
         MediaFormat.MIMETYPE_VIDEO_HEVC -> "hevc"
         MediaFormat.MIMETYPE_VIDEO_VP8 -> "vp8"
