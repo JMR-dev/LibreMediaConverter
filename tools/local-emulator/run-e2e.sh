@@ -236,10 +236,24 @@ ensure_avd() {
   else
     if [ ! -d "$img_dir" ]; then
       echo "  installing $pkg"
-      yes | sdkmanager --install "$pkg" > /dev/null 2>&1 || {
+      # Read sdkmanager's own status, not the pipeline's. `yes` never ends, so the moment
+      # sdkmanager exits and closes the pipe, `yes` dies of SIGPIPE with 141 -- and this
+      # script runs under `pipefail`, which takes the rightmost NON-ZERO status. A package
+      # that installed perfectly therefore reported "FAILED to install".
+      #
+      # Measured rather than reasoned: under `set -o pipefail`, `yes | true` exits 141 on
+      # every run, and `yes | sh -c 'exit 3'` exits 3 -- so the pipeline status cannot tell
+      # a clean install from a broken one, while ${PIPESTATUS[1]} reports 0 and 3.
+      #
+      # The `echo no | avdmanager` below is deliberately NOT changed. One line fits the pipe
+      # buffer, so echo has already exited before the close and there is no signal to
+      # receive; `echo no | true` measured 0 on every run. Only an unbounded producer is
+      # exposed to this.
+      yes | sdkmanager --install "$pkg" > /dev/null 2>&1
+      if [ "${PIPESTATUS[1]}" -ne 0 ]; then
         echo "  FAILED to install $pkg"
         return 1
-      }
+      fi
     fi
     echo "  creating AVD $avd from $pkg"
     echo no | avdmanager create avd -n "$avd" -k "$pkg" -d pixel_6 --force > /dev/null 2>&1 || {
