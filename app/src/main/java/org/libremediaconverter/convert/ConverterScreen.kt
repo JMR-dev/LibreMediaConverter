@@ -289,7 +289,11 @@ internal fun ConverterScreenContent(
                             // explains why a job was slow, makes the software fallback
                             // visible, and is how the user learns a remux happened rather
                             // than a re-encode.
-                            AssistChip(onClick = {}, label = { Text(s.routeReason) })
+                            AssistChip(
+                                onClick = {},
+                                label = { Text(s.routeReason) },
+                                modifier = Modifier.testTag(TestTags.Converter.ROUTE_REASON),
+                            )
                         }
                         Button(
                             onClick = { actions.onSave(s.suggestedName) },
