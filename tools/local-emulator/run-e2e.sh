@@ -15,11 +15,13 @@
 # EXIT CODE: 0 only if every level was green; 1 if any level failed, wedged or could not be
 # set up; 2 if it refused to start at all. **A bare `run-e2e.sh` therefore exits 1 by design.**
 # API 37 is in the default list on purpose -- leaving it out is what left the level unlooked-at
-# for as long as it was -- and it is permanently two failures short of green, on the emulator's
-# own c2.goldfish.h264.decoder rather than on anything this app does. The summary names the two,
-# so a third is visibly new, and the last line printed says the same thing. Anything that reads a
-# non-zero exit as breakage should name the levels it wants: `run-e2e.sh 33 34 35 36` is the
-# sweep that can be green. docs/api-37-emulator-crash.md has the measurements.
+# for as long as it was -- and it is permanently short of green, on the emulator image rather
+# than on anything this app does. Since 2026-08-24 it does not even FINISH: one of its expected
+# failures kills the framework, so the totals come back short with an arbitrary tail. The summary
+# names every failure it expects, so an unnamed one is visibly new, and the last line printed
+# says the same thing. Anything that reads a non-zero exit as breakage should name the levels it
+# wants: `run-e2e.sh 33 34 35 36` is the sweep that can be green.
+# docs/api-37-emulator-crash.md has the measurements.
 #
 # WHY THIS EXISTS, AND WHAT IT DELIBERATELY DOES NOT DO
 #
@@ -320,9 +322,20 @@ boot_emulator() {
 #
 # THIS IS A DEVIATION, and it is deliberately loud rather than silent. The API 37 leg does not
 # run the same device configuration as API 33-36 or as the Pixel. It is defensible only
-# because nothing in this suite touches SystemUI -- these are Media3, FFmpeg and WorkManager
-# tests -- and because the alternative is no API 37 coverage at all. Anything that ever does
-# depend on system UI must not trust this leg. docs/api-37-emulator-crash.md explains why.
+# because nothing in this suite touched SystemUI -- Media3, FFmpeg and WorkManager tests --
+# and because the alternative is no API 37 coverage at all. Anything that ever does depend on
+# system UI must not trust this leg. docs/api-37-emulator-crash.md explains why.
+#
+# "Touched", past tense, since 2026-08-24. SafPickerRoundTripTest drives DocumentsUI and rotates
+# the display, and both reach the gralloc mapper these images abort in -- disabling SystemUI
+# removes the IDLE trigger, not those. Measured per method on android-37.0: the ROTATION test
+# takes the framework down (INSTRUMENTATION_ABORTED) and carries @FailsOnEmulatorApi37; the
+# picker test passes.
+#
+# THIS SCRIPT APPLIES NO ANNOTATION FILTER, unlike CI, so a local `run-e2e.sh 37` runs the
+# rotation test anyway -- and because that test kills the framework rather than merely failing,
+# THE LEVEL DOES NOT FINISH. Its totals come back short and which later tests ran is arbitrary.
+# CI's gating leg never sees it.
 #
 # The retry loop is not defensive padding: at the moment boot_completed flips, the framework
 # may be in one of its restarts and `pm` is simply not published yet. The first attempt at this
@@ -564,13 +577,25 @@ for api in "${APIS[@]}"; do
   guest_forensics "$api"
   # API 37 is in the default list on purpose, and it is expected to be red. Leaving it out would
   # put the level back where this whole exercise found it -- untested and unlooked-at -- but a
-  # summary that just says "2 failures" with no explanation trains people to ignore the exit
-  # code. So the row says which two, and a THIRD failure is then obviously new.
+  # summary that just says "N failures" with no explanation trains people to ignore the exit
+  # code. So the row NAMES the expected ones, and anything else is then obviously new.
+  #
+  # The list grew on 2026-08-24 and the shape of the row changed with it. The two
+  # Media3EngineTest failures are a codec; the third is the gralloc bug reached through system
+  # UI, and it takes the framework DOWN rather than merely failing -- so the level does not
+  # finish, and the totals come back SHORT (50 of 59 when this was written) with the later
+  # tests never run. A run whose totals do not add up is expected here now, which it never
+  # was before.
   case "$api" in
     37 | 37.*)
       line="$line
-    expected here: 2 failures, both Media3EngineTest, on c2.goldfish.h264.decoder.
-    A third is new -- docs/api-37-emulator-crash.md"
+    expected here: 2 Media3EngineTest failures on c2.goldfish.h264.decoder, plus
+    SafPickerRoundTripTest.thePickedInputSurvivesARealRotation -- which kills the framework
+    rather than merely failing, so the run ABORTS partway and the total comes back SHORT with
+    an arbitrary tail. That is expected here too, and never was before. Anything else is new.
+    CI's gating leg sees only the first two: the rotation test carries @FailsOnEmulatorApi37
+    and this script, unlike CI, applies no annotation filter.
+    docs/api-37-emulator-crash.md"
       ;;
   esac
   if [ "$rc" -ne 0 ]; then
@@ -596,8 +621,9 @@ echo "=============================================================="
 # worse than no note at all.
 if [ "$overall" -ne 0 ] && [ "$NON37_RED" -eq 0 ]; then
   echo "note: the only level that went red is API 37, which exits non-zero by design -- it is"
-  echo "      permanently 2 failures short of green. Confirm its row above shows exactly those"
-  echo "      two and nothing else; docs/api-37-emulator-crash.md says why they are the image."
+  echo "      permanently short of green, and since 2026-08-24 it does not even finish. Confirm"
+  echo "      its row above names every failure it shows; docs/api-37-emulator-crash.md says why"
+  echo "      each of them is the image rather than this app."
 fi
 
 exit "$overall"

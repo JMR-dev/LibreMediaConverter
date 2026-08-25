@@ -235,8 +235,11 @@ val jacocoGeneratedExcludes = listOf(
 )
 
 // AGP 9 compiles Kotlin through its built-in compiler, which writes here rather than to the
-// classic `tmp/kotlin-classes/debug`. All hand-written code in this module is Kotlin, so the
-// javac output (BuildConfig and R only) is not read at all.
+// classic `tmp/kotlin-classes/debug`. All hand-written code in the MAIN source set is Kotlin, so
+// the javac output (BuildConfig and R only) is not read at all. There is now one hand-written
+// Java file in the module -- androidTest's FixtureDocumentsProvider, which cannot be Kotlin
+// because the process it runs in has no Kotlin stdlib; its own header explains why. It is in
+// androidTest, so it is not in this task's classDirectories and this stays accurate.
 val jacocoDebugKotlinClasses = layout.buildDirectory.dir(
     "intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes",
 )
@@ -340,5 +343,11 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.work.testing)
+    // androidTest only, and it has to be: UiAutomator drives the whole device, including
+    // windows belonging to other packages. The system file picker is one -- DocumentsUI runs
+    // in its own process, so Compose's matchers cannot see it and Espresso's cannot either
+    // (both are scoped to this process's view hierarchy). Nothing on the JVM has a device to
+    // drive, so there is no unit-test counterpart to add it to.
+    androidTestImplementation(libs.androidx.uiautomator)
     debugImplementation(libs.compose.ui.test.manifest)
 }
