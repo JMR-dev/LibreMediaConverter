@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The first manifest this source set has ever had, and it exists for one component.
+
+  SafPickerRoundTripTest drives the real system file picker. DocumentsUI only shows what a
+  DocumentsProvider offers it, so a test that picks a file needs a provider to pick from, and
+  that provider has to be declared: a ContentProvider is instantiated by the system from a
+  manifest entry and cannot be registered from test code.
+
+  It is declared HERE rather than in src/debug on purpose. src/debug would put a fake storage
+  root inside the shipped debug APK, where it would show up in every developer's own file
+  picker and in every other app's; this way it is installed only by the instrumentation APK,
+  alongside the test that needs it, and is gone the moment that APK is uninstalled.
+
+  The four attributes are not decoration. Each one is required for the picker to see it:
+
+    exported             DocumentsUI is another app; an unexported provider is invisible to it.
+    permission           MANAGE_DOCUMENTS is held by DocumentsUI and essentially nothing else,
+                         so this is what stops any installed app from reading the fixture. The
+                         provider is exported to the *picker*, not to the world.
+    grantUriPermissions  How the app under test ends up able to read the URI it was handed. The
+                         picker returns the document URI with FLAG_GRANT_READ_URI_PERMISSION,
+                         and that flag does nothing unless the provider allows grants. Without
+                         it the pick "succeeds" and every read of the result fails.
+    DOCUMENTS_PROVIDER   The action DocumentsUI queries the package manager for. No filter, no
+                         root in the drawer.
+
+  The authority carries the .test suffix because this component belongs to the instrumentation
+  package (org.libremediaconverter.test), not to the app. Authorities are global to the device:
+  reusing the app's would collide with the app on any device where both are installed.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <provider
+            android:name="org.libremediaconverter.saf.FixtureDocumentsProvider"
+            android:authorities="org.libremediaconverter.test.fixtures"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+    </application>
+
+</manifest>

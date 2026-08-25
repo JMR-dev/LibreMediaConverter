@@ -340,5 +340,11 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.work.testing)
+    // androidTest only, and it has to be: UiAutomator drives the whole device, including
+    // windows belonging to other packages. The system file picker is one -- DocumentsUI runs
+    // in its own process, so Compose's matchers cannot see it and Espresso's cannot either
+    // (both are scoped to this process's view hierarchy). Nothing on the JVM has a device to
+    // drive, so there is no unit-test counterpart to add it to.
+    androidTestImplementation(libs.androidx.uiautomator)
     debugImplementation(libs.compose.ui.test.manifest)
 }

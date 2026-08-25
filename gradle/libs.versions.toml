@@ -42,6 +42,18 @@ annotation = "1.+"
 junit = "4.+"
 androidxJunit = "1.+"
 espressoCore = "3.+"
+# UiAutomator. FLOATING, and the argument for it is the one the guard already makes:
+# androidx.test.uiautomator is inside `floatedGroupPrefixes` ("androidx."), so `2.+` reads
+# as "the newest RELEASED 2.x" exactly the way `work = "2.+"` does -- and this library does
+# publish alphas above its stable, so without the guard it would be a pin.
+#
+# Not pinned like ktlint/detekt/robolectric, because it is not that kind of dependency. Those
+# are pinned because a new *rule* or a new *runtime* makes untouched files fail -- the tool
+# changes its verdict on code nobody edited. UiAutomator has no verdict: it clicks what a
+# selector names, and a selector that stops matching is this repo's test to fix, in a diff
+# that says so. `2.` and not bare `+` because 3.x does not exist yet and a major is where the
+# selector API would be free to change under exactly that assumption.
+uiautomator = "2.+"
 # PINNED, unlike its neighbours. Under semver a 0.x minor is allowed to break, and
 # this library is load-bearing exactly where breakage is hardest to see: the wrapper
 # reaches for smartexception.java.Exceptions only when an FFmpeg call FAILS, so a
@@ -138,6 +150,11 @@ smart-exception-java = { group = "com.arthenica", name = "smart-exception-java",
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+
+# The only way to touch UI this app does not own. Compose's own matchers stop at this
+# process's composition, and the system file picker is a DocumentsUI activity in another
+# process -- so a SAF round trip is unreachable without it.
+androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomator", version.ref = "uiautomator" }
 
 # Robolectric — an Android runtime for the JVM test source set, so file-lifecycle behaviour
 # that needs a real Context can be verified without a device. The instrumented suite cannot
