@@ -280,8 +280,13 @@ jobs:
           # docs/api-37-emulator-crash.md has the per-method measurements, and the
           # correction that produced them.
           #
-          # api-level must be "37.0". A bare 37 is not an SDK package and fails
-          # during setup, which cost a run to discover.
+          # api-level must be a POINT release. A bare 37 is not an SDK package and
+          # fails during setup, which cost a run to discover. `37.0` is the choice
+          # here rather than the only option: `37.1` and `37.2-beta*` exist and
+          # abort the same way, and api37-debug.yml's inputs document both, with
+          # the wrinkle that above 37.0 they ship only as google_apis_ps16k.
+          # docs/api-37-emulator-crash.md measures 37.0 rev 6 and 37.1 rev 8 side
+          # by side, so pinning 37.0 is a decision, not a constraint.
           #
           # notAnnotation removes the three tests that do not pass on this image; they
           # run in the advisory job below, off the same marker so they cannot end up
