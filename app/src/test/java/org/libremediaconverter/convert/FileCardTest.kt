@@ -3,13 +3,13 @@ package org.libremediaconverter.convert
 import android.net.Uri
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.media3.common.util.UnstableApi
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.libremediaconverter.createDrainedComposeRule
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.InputKind
@@ -56,7 +56,7 @@ import org.robolectric.RobolectricTestRunner
 class FileCardTest {
 
     @get:Rule
-    val composeRule = createDrainedComposeRule()
+    val composeRule = createComposeRule()
 
     @Test
     fun `a file no provider could measure says so in words rather than showing a zero`() {
