@@ -17,28 +17,32 @@ import org.junit.Test
  * and some thirty more. Widening that suffix to a substring is the tempting simplification and it
  * is wrong, because `yuv4mpegpipe` is raw video.
  *
- * Every format name asserted here was read back from `ffprobe -show_entries format=format_name`
- * rather than guessed: a picked `.png` reports `png_pipe`, a picked `.jpg` reports `jpeg_pipe`, a
- * `.y4m` reports `yuv4mpegpipe`, and `image2` needs the demuxer named explicitly.
+ * The image names were measured rather than recalled. `ffprobe -show_entries format=format_name`
+ * reports `png_pipe` for a `.png`, `jpeg_pipe` for a `.jpg`, `yuv4mpegpipe` for a `.y4m`, and
+ * `image2` only when that demuxer is named explicitly. The container names come from
+ * [MediaProbeFormatTest], and the case and spacing variants are synthetic — those exercise the
+ * normalisation rather than anything FFprobe emits.
  *
- * One known gap, deliberately not asserted either way: `image2pipe` is a real FFprobe format name
- * for an image read from a stream, and this rule answers false for it — it is not `image2` and
- * does not end in `_pipe`. Whether that is worth fixing is a question about picked-file behaviour
- * on a device, not something to settle by pinning today's answer here.
+ * One real format name is deliberately not asserted either way. `image2pipe` gets a false answer
+ * here, being neither `image2` nor a `_pipe` suffix, and that is inert rather than a latent bug:
+ * FFprobe only selects it when the demuxer is named with `-f image2pipe`, while `probeWithFFprobe`
+ * forces no format at all, so a picked image arrives as `png_pipe` or its own codec's equivalent.
+ * Pinning today's answer for a name this app cannot receive would be a test about FFmpeg's command
+ * line rather than about this rule.
  */
 class MediaProbeImageFormatTest {
 
     @Test
     fun `a numbered image sequence is an image`() {
-        assertTrue(MediaProbe.isImageFormat("image2"))
+        assertIsImage("image2")
     }
 
     /** What a picked PNG or JPEG actually reports, and the reason the suffix rule exists. */
     @Test
     fun `the per-codec piped demuxers are images`() {
-        assertTrue(MediaProbe.isImageFormat("png_pipe"))
-        assertTrue(MediaProbe.isImageFormat("jpeg_pipe"))
-        assertTrue(MediaProbe.isImageFormat("webp_pipe"))
+        assertIsImage("png_pipe")
+        assertIsImage("jpeg_pipe")
+        assertIsImage("webp_pipe")
     }
 
     /**
@@ -50,15 +54,15 @@ class MediaProbeImageFormatTest {
      */
     @Test
     fun `a format that merely contains pipe is not an image`() {
-        assertFalse(MediaProbe.isImageFormat("yuv4mpegpipe"))
+        assertNotImage("yuv4mpegpipe")
     }
 
     /** The ordinary media containers, which is what the false answer is mostly for. */
     @Test
     fun `a real container is not an image`() {
-        assertFalse(MediaProbe.isImageFormat("mov,mp4,m4a,3gp,3g2,mj2"))
-        assertFalse(MediaProbe.isImageFormat("matroska,webm"))
-        assertFalse(MediaProbe.isImageFormat("mp3"))
+        assertNotImage("mov,mp4,m4a,3gp,3g2,mj2")
+        assertNotImage("matroska,webm")
+        assertNotImage("mp3")
     }
 
     /**
@@ -68,14 +72,20 @@ class MediaProbeImageFormatTest {
      */
     @Test
     fun `an image entry is found anywhere in the list, whatever its spacing or case`() {
-        assertTrue(MediaProbe.isImageFormat("PNG_PIPE"))
-        assertTrue(MediaProbe.isImageFormat(" image2 "))
-        assertTrue(MediaProbe.isImageFormat("something_else, tiff_pipe"))
+        assertIsImage("PNG_PIPE")
+        assertIsImage(" image2 ")
+        assertIsImage("something_else, tiff_pipe")
     }
 
     /** Nothing to go on is not an image; the card falls back to describing an unknown container. */
     @Test
     fun `an empty format name is not an image`() {
-        assertFalse(MediaProbe.isImageFormat(""))
+        assertNotImage("")
     }
+
+    private fun assertIsImage(formatName: String) =
+        assertTrue("isImageFormat(\"$formatName\")", MediaProbe.isImageFormat(formatName))
+
+    private fun assertNotImage(formatName: String) =
+        assertFalse("isImageFormat(\"$formatName\")", MediaProbe.isImageFormat(formatName))
 }
