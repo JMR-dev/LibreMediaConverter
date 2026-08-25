@@ -13,6 +13,17 @@ on:
 # reference amounts to running whatever that repository contains tomorrow. This matters
 # more here than on pull requests: these jobs sign nothing today, but they do publish
 # the artifacts people install.
+# Declared here rather than inherited, for the reason status_check.yml gives for its own
+# block: the token's reach should be readable in the file that uses it, and a repository
+# default that widens later should not silently widen these jobs with it. The repository
+# default is `read` today, so this changes nothing about what runs -- it fixes what a
+# reader can know without leaving the file, and it is what CodeQL alert #1 asked for.
+#
+# The `release` job below overrides this with `contents: write`, which is how job-level
+# permissions work: this is a default, not a ceiling.
+permissions:
+  contents: read
+
 env:
   GRADLE_CACHE_PATHS: |
     ~/.gradle/caches
