@@ -182,6 +182,23 @@ jobs:
           docker run --rm "$SHELLCHECK" --version
           git ls-files -z '*.sh' | xargs -0 -r docker run --rm -v "$PWD:/mnt" "$SHELLCHECK"
 
+      # actionlint closes the half shellcheck cannot see. The step above reads .sh files;
+      # a good deal of this repo's bash lives in inline `run:` blocks instead -- the release
+      # verification here, the emulator setup and teardown in this file and in
+      # api37-debug.yml. actionlint parses each workflow and runs shellcheck over every
+      # `run:`, on top of its own checks for expression syntax, `needs:` references, matrix
+      # keys and action input names.
+      #
+      # Pinned by digest for the same reason shellcheck is, and with a second reason of its
+      # own: actionlint's documented install is `bash <(curl -s .../download-actionlint.bash)`
+      # off a moving branch, which would sit badly in a repo that pins every action by SHA.
+      - name: actionlint
+        env:
+          ACTIONLINT: rhysd/actionlint@sha256:9d36088643581e728c969f35141f88139fec77280b2be23c1f66f8e40e1025e7
+        run: |
+          docker run --rm "$ACTIONLINT" -version
+          docker run --rm -v "$PWD:/repo" -w /repo "$ACTIONLINT" -color
+
       # `!cancelled()` rather than a plain sequence: a shellcheck failure above must not
       # cost the ktlint/detekt/lint lists. Same reason this step passes --continue -- one
       # round trip should produce every list, not stop at the first.
