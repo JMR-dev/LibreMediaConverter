@@ -333,9 +333,9 @@ dependencies {
     // the tests stay green.
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)
-    // For `runTest` alone, in EscapedCoroutineErrors.kt. It arrives transitively with the
-    // rule above anyway; declared because a test file imports it directly, and an import of
-    // something nobody asked for breaks the day the library that pulled it in stops.
+    // For `runTest` alone, in ConversionViewModelProbeFailureTest. It arrives transitively
+    // with the rule above anyway; declared because a test file imports it directly, and an
+    // import of something nobody asked for breaks the day the library that pulled it in stops.
     testImplementation(libs.kotlinx.coroutines.test)
 
     androidTestImplementation(platform(libs.compose.bom))

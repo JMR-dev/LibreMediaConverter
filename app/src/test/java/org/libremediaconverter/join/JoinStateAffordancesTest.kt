@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertRangeInfoEquals
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -17,7 +18,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.InputFile
-import org.libremediaconverter.createDrainedComposeRule
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.ui.TestTags
 import org.robolectric.RobolectricTestRunner
@@ -60,9 +60,8 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 class JoinStateAffordancesTest {
 
-    // Not `createComposeRule()` directly: see [org.libremediaconverter.drainEscapedCoroutineErrors].
     @get:Rule
-    val composeRule = createDrainedComposeRule()
+    val composeRule = createComposeRule()
 
     /** Which callback the screen invoked, in order, with what it passed. Empty until one fires. */
     private val events = mutableListOf<String>()
