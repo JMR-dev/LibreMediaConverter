@@ -2,13 +2,13 @@ package org.libremediaconverter.join
 
 import android.net.Uri
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.media3.common.util.UnstableApi
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.InputFile
-import org.libremediaconverter.createDrainedComposeRule
 import org.libremediaconverter.ui.TestTags
 import org.robolectric.RobolectricTestRunner
 
@@ -32,7 +32,7 @@ import org.robolectric.RobolectricTestRunner
 class JoinLeafTagsTest {
 
     @get:Rule
-    val composeRule = createDrainedComposeRule()
+    val composeRule = createComposeRule()
 
     private fun input(displayName: String) = InputFile(
         uri = Uri.parse("content://test/$displayName"),

@@ -2,14 +2,15 @@ package org.libremediaconverter.convert
 
 import android.app.Application
 import android.net.Uri
-import android.os.Looper
 import androidx.media3.common.util.UnstableApi
 import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,8 +19,6 @@ import org.libremediaconverter.model.InputProbe
 import org.libremediaconverter.work.ConversionWorker
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Shadows.shadowOf
-import java.util.concurrent.TimeUnit
 
 /**
  * That a probe which throws leaves a screen the user can act on, not a dead coroutine.
@@ -87,19 +86,35 @@ class ConversionViewModelProbeFailureTest {
      * is out of memory" into "this video looks unreadable" and let the app carry on in a
      * state it cannot honour — which is the regression a blanket `catch (Throwable)` would
      * have introduced, and the reason this defect was left open rather than fixed carelessly.
+     *
+     * **The error itself is what is asserted here, and that is what the `pickDispatcher` seam
+     * bought.** With the hop hard-coded to `Dispatchers.IO` this was impossible: the throw
+     * happened on a pool thread some time after this method had returned, so all a test could do
+     * was infer it from a card that never filled in — which is also what a probe returning null
+     * would look like. Worse, the escaped error went into kotlinx-coroutines-test's process-wide
+     * collector and was rethrown at whichever `runTest` started next, which is a *different*
+     * Compose class between runs of identical code. Putting the pick on [Dispatchers.Unconfined]
+     * runs it inline, inside a `runTest` whose scope owns the collector's callback: the error is
+     * handed to this test and consumed, rather than stored for a stranger.
+     *
+     * Note where it surfaces — at the end of `runTest`, not inside `onInputPicked`. `launch`
+     * gives an escaped error to the handler chain and never to its caller, so nothing can catch
+     * it at the call itself. This is as close as the coroutine machinery allows, and unlike the
+     * old assertion it is the real [OutOfMemoryError] instance.
      */
     @Test
     fun `an OutOfMemoryError is not swallowed`() {
         ConversionDependencies.probe = { _, _ -> throw OutOfMemoryError("Failed to allocate 512 MB") }
+        // Unconfined for the pick, so the whole of onInputPicked runs inline on this thread and
+        // has thrown before runTest can leave the scope that has to receive the error.
+        val viewModel = ConversionViewModel(app, Dispatchers.Unconfined, Dispatchers.Unconfined)
 
-        val viewModel = ConversionViewModel(app, Dispatchers.Unconfined)
-        viewModel.onInputPicked(INPUT)
+        val escaped = assertThrows(OutOfMemoryError::class.java) { runTest { viewModel.onInputPicked(INPUT) } }
 
-        // The observable difference, and the reason this is asserted on state rather than on a
-        // caught throwable: the probe hop is on Dispatchers.IO, so an error that escapes lands
-        // on that thread's handler rather than at this call. What must not happen is the card
-        // filling in with an "unreadable" verdict the app would then act on.
-        val settled = settle(viewModel)
+        assertEquals("Failed to allocate 512 MB", escaped.message)
+        // The other half of the contract, unchanged: an OOM is about the process, so the card is
+        // left as it was rather than filled in with a verdict the app would then act on.
+        val settled = viewModel.state.value
         // `sizeBytes = null`, not `0L`: no provider is registered for this authority, so the
         // metadata query returns nothing and the descriptor cannot be opened either. That is the
         // unknown, and it stopped being spelled the same way as "empty" -- see [InputQuery].
@@ -132,23 +147,7 @@ class ConversionViewModelProbeFailureTest {
         return (ready as ConversionState.Ready).input.probe
     }
 
-    /**
-     * Pumps the looper the way [awaitState] does, but for a fixed span and without requiring
-     * anything to happen — here "the pick never came back" is the expected outcome, so there
-     * is no predicate to wait on.
-     */
-    private fun settle(viewModel: ConversionViewModel): ConversionState {
-        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SETTLE_MS)
-        while (System.nanoTime() < deadline) {
-            shadowOf(Looper.getMainLooper()).idle()
-            Thread.sleep(POLL_MS)
-        }
-        return viewModel.state.value
-    }
-
     private companion object {
         val INPUT: Uri = Uri.parse("content://test/holiday.mp4")
-        const val SETTLE_MS = 500L
-        const val POLL_MS = 5L
     }
 }

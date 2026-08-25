@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertRangeInfoEquals
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -15,7 +16,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.libremediaconverter.createDrainedComposeRule
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.OutputSpec
@@ -72,9 +72,8 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 class ConverterStateAffordancesTest {
 
-    // Not `createComposeRule()` directly: see [org.libremediaconverter.drainEscapedCoroutineErrors].
     @get:Rule
-    val composeRule = createDrainedComposeRule()
+    val composeRule = createComposeRule()
 
     /**
      * Every callback the screen fired, in order, tagged with the value it carried.

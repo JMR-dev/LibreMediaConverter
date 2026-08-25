@@ -113,7 +113,14 @@ container × codec matrix — including combinations that cannot work, which it 
 offers alternatives for rather than hiding.
 
 Conversions run as durable background work, so they survive leaving the app and are
-restored after a restart.
+restored when you reopen it.
+
+One case is not restored, and it is worth knowing about. If Android refuses to let a job
+restart in the background, it is retried on an exponential backoff for about eight and a
+half hours and then given up on — and a job that has been given up on does not come back
+when you reopen the app. Reopening the app is what grants permission to run, so a
+conversion that has stalled this way is best started again from the app rather than waited
+on.
 
 ## Building
 

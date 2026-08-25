@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.media3.common.util.UnstableApi
@@ -13,7 +14,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.libremediaconverter.createDrainedComposeRule
 import org.libremediaconverter.model.EnginePreference
 import org.libremediaconverter.model.OutputFormat
 import org.libremediaconverter.model.QualityTier
@@ -48,7 +48,7 @@ import org.robolectric.RobolectricTestRunner
 class ConverterPickerSelectionTest {
 
     @get:Rule
-    val composeRule = createDrainedComposeRule()
+    val composeRule = createComposeRule()
 
     /**
      * The chip carrying [label] inside the row tagged [rowTag].
