@@ -140,4 +140,34 @@ class CodecVocabularyTest {
         assertFalse("this device has no AVC decoder, and x264 is AVC", hevcOnly.canDecode("x264"))
         assertTrue("a name nobody knows keeps the permissive answer", hevcOnly.canDecode("cinepak"))
     }
+
+    /**
+     * The other half of the null policy, at the seam it exists for — #86.
+     *
+     * `mimeFor`'s `COPY, NONE -> null` arm carries its consequence in a comment: "Returning null
+     * makes canEncode answer true, which is the right answer: a copied or absent track places no
+     * demand on the hardware." That is a product decision, and until this test nothing held it. A
+     * MIME appearing in that arm would make a device with no matching encoder refuse a stream copy
+     * — a job that never encodes anything — and the router would send it to FFmpeg to re-mux what
+     * Media3 could have re-muxed.
+     *
+     * The `H264` line is what makes the other two mean something: without it, a `canEncode` that
+     * simply returned `true` would satisfy this test. `NONE` is asserted separately from `COPY`
+     * because they are one arm today and two answers, and splitting the arm must not silently
+     * halve the coverage.
+     */
+    @Test
+    fun `a device with no video encoder at all still permits a copied or absent track`() {
+        val noEncoders = AndroidDeviceCodecs.forTesting(encoders = emptySet(), decoders = setOf("video/avc"))
+        assertTrue(
+            "a copied track is re-muxed, not encoded, so no encoder is required",
+            noEncoders.canEncode(VideoCodec.COPY),
+        )
+        assertTrue("an absent track places no demand on the hardware", noEncoders.canEncode(VideoCodec.NONE))
+        assertFalse(
+            "this device has no AVC encoder, so an H.264 target has to be refused — without this, " +
+                "a canEncode that always answered true would satisfy the two assertions above",
+            noEncoders.canEncode(VideoCodec.H264),
+        )
+    }
 }
