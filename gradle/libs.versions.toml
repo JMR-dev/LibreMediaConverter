@@ -162,8 +162,9 @@ androidx-uiautomator = { group = "androidx.test.uiautomator", name = "uiautomato
 # a TDD loop anyone here can execute.
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
-# Only for its `runTest`, and only to drain the collector kotlinx-coroutines-test installs
-# process-wide. See EscapedCoroutineErrors.kt in the JVM test source set.
+# Only for its `runTest`, and only so the one test that deliberately lets a coroutine error
+# escape owns the collector callback while it does -- otherwise the error is kept process-wide
+# and rethrown at whichever `runTest` starts next. See ConversionViewModelProbeFailureTest.
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 
 [plugins]
