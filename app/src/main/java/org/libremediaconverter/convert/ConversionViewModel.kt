@@ -120,6 +120,29 @@ class ConversionViewModel @JvmOverloads constructor(
      * the first screen.
      */
     private val cleanupDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * Where the two blocking hops behind a pick run — the metadata query and the probe.
+     *
+     * A seam for the probe above all, because that is the one call in this class that throws
+     * on purpose. [probeOrUnreadable] rethrows anything that is not a native load failure, and
+     * the `launch` it runs in has no exception handler by design: on a device the error reaches
+     * the thread's default handler and takes the process down, which is what an
+     * [OutOfMemoryError] should do.
+     *
+     * On the JVM there is no such handler. kotlinx-coroutines-test installs a process-wide
+     * collector, once and for the life of the classloader, that keeps an escaped error and
+     * hands it to whichever `runTest` starts next — so it failed a Compose test class that had
+     * nothing to do with it, and *which* class moved between runs of identical code. Naming the
+     * dispatcher is what lets a test keep the throw inside its own window, where it fails the
+     * test that caused it and is consumed rather than collected.
+     *
+     * Both hops rather than the probe alone, which is where this differs from the seam issue #66
+     * proposed: leaving the metadata query on a real [Dispatchers.IO] makes the coroutine resume
+     * on a main looper that Robolectric leaves paused, and that bounce is precisely the
+     * asynchrony that made delivery unpredictable. One dispatcher covers a whole pick, and
+     * leaves nothing about it to timing.
+     */
+    private val pickDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : AndroidViewModel(app) {
 
     private val workManager = WorkManager.getInstance(app)
@@ -241,13 +264,13 @@ class ConversionViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             // Both the metadata query and the probe touch disk, and the probe spawns FFprobe.
             // Neither belongs on the main thread.
-            val file = withContext(Dispatchers.IO) { InputQuery.describe(getApplication(), uri) }
+            val file = withContext(pickDispatcher) { InputQuery.describe(getApplication(), uri) }
             // Show the file as soon as its name and size are known. Probing now runs FFprobe on
             // every pick, which is a native process spawn, and making the whole screen wait on it
             // would read as the app having ignored the tap.
             _state.value = ConversionState.Ready(file)
 
-            val probe = withContext(Dispatchers.IO) { probeOrUnreadable(uri) }
+            val probe = withContext(pickDispatcher) { probeOrUnreadable(uri) }
             // Only fill in the probe if the user has not moved on in the meantime.
             _state.update { current ->
                 if (current is ConversionState.Ready && current.input.uri == uri) {

@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.runtime.saveable.SaveableStateRegistry
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.media3.common.util.UnstableApi
@@ -15,7 +16,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.libremediaconverter.createDrainedComposeRule
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.OutputSpec
@@ -57,9 +57,8 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class AdvancedPanelSavedStateTest {
 
-    // Not `createComposeRule()` directly: see [drainEscapedCoroutineErrors].
     @get:Rule
-    val composeRule = createDrainedComposeRule()
+    val composeRule = createComposeRule()
 
     /**
      * `canBeSaved = { true }` deliberately.
