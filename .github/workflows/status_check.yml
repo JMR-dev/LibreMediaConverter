@@ -266,7 +266,7 @@ jobs:
           # api-level must be "37.0". A bare 37 is not an SDK package and fails
           # during setup, which cost a run to discover.
           #
-          # notAnnotation removes the two tests that do not pass on this image; they
+          # notAnnotation removes the three tests that do not pass on this image; they
           # run in the advisory job below, off the same marker so they cannot end up
           # in both or neither. docs/api-37-emulator-crash.md has the measurements.
           - label: "37"
@@ -367,7 +367,7 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  # The two API 37 tests the gating row above excludes, run on their own so they
+  # The three API 37 tests the gating row above excludes, run on their own so they
   # stay visible instead of disappearing behind a notAnnotation.
   #
   # continue-on-error: it reports, it never blocks. That is the whole reason it is
@@ -375,17 +375,29 @@ jobs:
   # job's `E2E API <label>` name, and a check cannot be both required and advisory
   # under one name.
   #
-  # It is named for WHAT IT RUNS, deliberately. Both tests drive a full H.264 ->
-  # H.265 hardware transcode through Media3Engine -- which is exactly what
-  # separates them from the two Media3EngineTest cases that pass here, since those
-  # two never decode video. The current theory about why they fail is in the next
-  # paragraph, where it can be corrected without renaming a check that people have
-  # already learned to look for.
+  # It was named for WHAT IT RUNS, and that is now APPROXIMATE rather than exact.
+  # When this job was created it held two tests, both driving a full H.264 -> H.265
+  # hardware transcode through Media3Engine -- which is exactly what separated them
+  # from the two Media3EngineTest cases that pass here, since those two never decode
+  # video. Since 2026-08-25 it also holds SafPickerRoundTripTest's rotation case,
+  # which drives no transcode at all: a real rotation rebuilds every surface at once
+  # and takes the framework down on this image (INSTRUMENTATION_ABORTED), which is a
+  # different failure from the decoder one below.
+  #
+  # The name is kept anyway, and that is a decision rather than an oversight. This is
+  # not a required context, it is red on every PR by design, and it is one people
+  # have learned to look for -- renaming a check costs more than the imprecision
+  # does. **The marker is the definition, not the name:** what this job holds is the
+  # tests that cannot pass on the API 37 emulator image, whatever their subject. The
+  # theory about the Media3 pair is in the next paragraph, where it can be corrected
+  # without touching the name.
   #
   # THEORY, NOT SETTLED: the exception surfaces at `dequeueOutputBuffer` on
   # `c2.goldfish.h264.decoder`, the emulator's own codec, which gets its frames out
   # of a host-side colour buffer -- the same readback machinery that aborts
-  # surfaceflinger on this image. What is MEASURED is narrower: these two fail on
+  # surfaceflinger on this image. It is about the MEDIA3 PAIR only; the rotation
+  # case above fails for its own reason. What is MEASURED is narrower: those two
+  # fail on
   # the API 37 emulator image; pass at API 36 on this runner under the same renderer
   # AND the same SystemUI-disable path; pass at API 33-36 without that path at all,
   # since nothing below 37 needs it; and pass on a physical Pixel 10 Pro XL at 37. That the decoder is the culprit rather than something else
