@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -16,7 +17,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.libremediaconverter.createDrainedComposeRule
 import org.libremediaconverter.model.AudioCodec
 import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.ContainerCapabilities
@@ -61,9 +61,11 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class AdvancedPickerTest {
 
-    // Not `createComposeRule()` directly: see [drainEscapedCoroutineErrors].
+    // The rule is the **v2** one (`androidx.compose.ui.test.junit4.v2`) while
+    // [StateRestorationTester], which takes it below, is not. The mismatched imports are
+    // deliberate: the v2 package has no tester of its own and the two do interoperate.
     @get:Rule
-    val composeRule = createDrainedComposeRule()
+    val composeRule = createComposeRule()
 
     private val restoration = StateRestorationTester(composeRule)
 
