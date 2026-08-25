@@ -55,6 +55,15 @@ object TestTags {
         /** The determinate bar in `Converting`. It carries no text, so nothing else can find it. */
         const val PROGRESS: String = "converter.progress"
 
+        /**
+         * The chip on `Converted` that says which engine ran the job and why.
+         *
+         * Conditional on `routeReason` being non-blank, and that condition is what the tag is for:
+         * its text comes from the finished job, so a text matcher looking for it would have to
+         * name a routing explanation the screen does not own.
+         */
+        const val ROUTE_REASON: String = "converter.routeReason"
+
         const val FILE_CARD: String = "converter.fileCard"
         const val FILE_CARD_NAME: String = "converter.fileCard.name"
 
