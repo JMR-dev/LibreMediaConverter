@@ -75,7 +75,13 @@ class AndroidDeviceCodecs private constructor(
             return AndroidDeviceCodecs(encoders, decoders)
         }
 
-        private fun mimeFor(codec: VideoCodec): String? = when (codec) {
+        /**
+         * `internal` rather than `private` so the cross-check test can ask what a [VideoCodec]
+         * means here and compare it with what [NAME_TO_MIME] says the same codec's names mean.
+         * The JVM test source set is a friend of `main`, so this stays invisible outside the
+         * module — the precedent is `MainActivity`'s `Destination`.
+         */
+        internal fun mimeFor(codec: VideoCodec): String? = when (codec) {
             VideoCodec.H264 -> MediaFormat.MIMETYPE_VIDEO_AVC
             VideoCodec.H265 -> MediaFormat.MIMETYPE_VIDEO_HEVC
             VideoCodec.VP8 -> MediaFormat.MIMETYPE_VIDEO_VP8
@@ -87,20 +93,62 @@ class AndroidDeviceCodecs private constructor(
             VideoCodec.COPY, VideoCodec.NONE -> null
         }
 
-        /** Maps an FFprobe-style codec name onto a MediaFormat MIME type. */
-        private fun mimeForCodecName(name: String): String? = when (name.lowercase()) {
-            "h264", "avc", "avc1" -> MediaFormat.MIMETYPE_VIDEO_AVC
-            "hevc", "h265", "hvc1" -> MediaFormat.MIMETYPE_VIDEO_HEVC
-            "vp8" -> MediaFormat.MIMETYPE_VIDEO_VP8
-            "vp9" -> MediaFormat.MIMETYPE_VIDEO_VP9
-            "av1", "av01" -> MediaFormat.MIMETYPE_VIDEO_AV1
-            "mpeg4" -> MediaFormat.MIMETYPE_VIDEO_MPEG4
-            // Unknown to us: assume the platform can handle it and let a failed export
-            // trigger the FFmpeg fallback, rather than pre-emptively refusing hardware.
-            else -> null
-        }
+        /**
+         * FFprobe-style codec names, and the MediaFormat MIME type each one asks about.
+         *
+         * This is the same vocabulary `CodecNames.VIDEO_ALIASES` holds, written out a second time
+         * because this side has to answer in platform MIME types and `model` does not depend on
+         * Android. Two copies of one vocabulary drift, and these had: `x264`, `hev1`, `x265` and
+         * `vp09` resolved for display and routing and fell through to null here, so the app ran
+         * the capability check blind on inputs it had already identified (#87). They are listed
+         * now, which **changes behaviour** for those four names — see [mimeForCodecName].
+         *
+         * A map rather than a `when` because a `when` cannot be enumerated, and `CodecVocabularyTest`
+         * has to walk both key sets to notice the next divergence.
+         */
+        internal val NAME_TO_MIME: Map<String, String> = mapOf(
+            "h264" to MediaFormat.MIMETYPE_VIDEO_AVC,
+            "avc" to MediaFormat.MIMETYPE_VIDEO_AVC,
+            "avc1" to MediaFormat.MIMETYPE_VIDEO_AVC,
+            "x264" to MediaFormat.MIMETYPE_VIDEO_AVC,
+            "hevc" to MediaFormat.MIMETYPE_VIDEO_HEVC,
+            "h265" to MediaFormat.MIMETYPE_VIDEO_HEVC,
+            "hvc1" to MediaFormat.MIMETYPE_VIDEO_HEVC,
+            "hev1" to MediaFormat.MIMETYPE_VIDEO_HEVC,
+            "x265" to MediaFormat.MIMETYPE_VIDEO_HEVC,
+            "vp8" to MediaFormat.MIMETYPE_VIDEO_VP8,
+            "vp9" to MediaFormat.MIMETYPE_VIDEO_VP9,
+            "vp09" to MediaFormat.MIMETYPE_VIDEO_VP9,
+            "av1" to MediaFormat.MIMETYPE_VIDEO_AV1,
+            "av01" to MediaFormat.MIMETYPE_VIDEO_AV1,
+            "mpeg4" to MediaFormat.MIMETYPE_VIDEO_MPEG4,
+        )
 
-        /** Test seam: lets instrumented tests build a probe from explicit sets. */
+        /**
+         * The names in [NAME_TO_MIME] that no [VideoCodec] member spells, and why.
+         *
+         * MPEG-4 Part 2 is decodable input the app never targets, so there is no enum for it and
+         * `CodecNames` is right not to carry it. That makes it the one place the two tables
+         * legitimately differ. It is listed rather than implied so the cross-check can tell a
+         * documented asymmetry from a fresh drift — and so the list itself is checked: a name here
+         * that `CodecNames` does resolve is a divergence being waved through, and the test fails on
+         * it.
+         */
+        internal val DECODE_ONLY_NAMES: Set<String> = setOf("mpeg4")
+
+        /**
+         * Maps an FFprobe-style codec name onto a MediaFormat MIME type.
+         *
+         * Null keeps its documented meaning — unknown to us: assume the platform can handle it and
+         * let a failed export trigger the FFmpeg fallback, rather than pre-emptively refusing
+         * hardware. What changed with #87 is which names are unknown. Four that FFmpeg genuinely
+         * emits used to land here and be treated as unknown while the rest of the app knew exactly
+         * what they were; a device without the matching decoder now routes them to FFmpeg up front
+         * instead of spending a doomed hardware attempt to find out.
+         */
+        internal fun mimeForCodecName(name: String): String? = NAME_TO_MIME[name.lowercase()]
+
+        /** Test seam: lets a test build a probe from explicit sets, on a device or on the JVM. */
         fun forTesting(encoders: Set<String>, decoders: Set<String>) = AndroidDeviceCodecs(encoders, decoders)
     }
 }
