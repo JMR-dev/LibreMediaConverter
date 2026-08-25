@@ -18,8 +18,10 @@ import java.util.UUID
  * the actual filesystem — the same calls `reset()` makes, without needing a ViewModel (both
  * of those construct a `WorkManager`, which is not initialised on the JVM classpath).
  *
- * The instrumented suite cannot run on the development host, so this is the only place the
- * "Start over leaks a full-size copy" defect can be caught before CI.
+ * The instrumented suite could also catch the "Start over leaks a full-size copy" defect --
+ * it runs on this host for API 33-36 (`tools/local-emulator/run-e2e.sh`) and on CI for
+ * 33-37. Here rather than there because a real `cacheDir` is all the defect needs, and
+ * finding it costs an emulator boot there and a few seconds here.
  */
 @RunWith(RobolectricTestRunner::class)
 class OutputPublisherStagingTest {

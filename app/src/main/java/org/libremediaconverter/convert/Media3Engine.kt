@@ -139,31 +139,6 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
     }
 
     /**
-     * Media3 encodes only H.264 and H.265 of the codecs this app offers.
-     *
-     * VP8/VP9/AV1 targets never reach here — the router sends them to FFmpeg because
-     * `Transformer.setVideoMimeType` rejects them — so anything unexpected returns null and lets
-     * Transformer pick, rather than silently substituting H.265 the way the old mapping did.
-     */
-    private fun videoMimeTypeFor(codec: VideoCodec): String? = when (codec) {
-        VideoCodec.H264 -> MimeTypes.VIDEO_H264
-        VideoCodec.H265 -> MimeTypes.VIDEO_H265
-        // Never reached: only an Encode plan consults this, and COPY/NONE are not Encode.
-        VideoCodec.COPY, VideoCodec.NONE -> null
-        VideoCodec.VP8, VideoCodec.VP9, VideoCodec.AV1 -> null
-    }
-
-    private fun audioMimeTypeFor(codec: AudioCodec): String? = when (codec) {
-        AudioCodec.AAC -> MimeTypes.AUDIO_AAC
-        AudioCodec.OPUS -> MimeTypes.AUDIO_OPUS
-        AudioCodec.VORBIS -> MimeTypes.AUDIO_VORBIS
-        AudioCodec.PCM -> MimeTypes.AUDIO_RAW
-        AudioCodec.COPY, AudioCodec.NONE -> null
-        // MP3 and FLAC have no Android encoder; the router routes them to FFmpeg.
-        AudioCodec.MP3, AudioCodec.FLAC -> null
-    }
-
-    /**
      * Polls export progress on the Transformer's own thread.
      *
      * Deliberately ~4x/second: the underlying value updates far more often than a UI
@@ -192,7 +167,57 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
         thread.quitSafely()
     }
 
-    private companion object {
+    /**
+     * The progress interval, and the two enum-to-MIME tables.
+     *
+     * The tables are pure functions of a codec enum, so they sit here rather than on the instance:
+     * a JVM test can then exercise every arm without constructing an engine, which would start a
+     * real [HandlerThread] to answer a lookup. `internal` rather than `private` for the reason
+     * `MainActivity`'s `Destination` records — the JVM test source set is a friend of `main`, so
+     * these stay invisible to anything outside the module.
+     */
+    internal companion object {
         const val PROGRESS_INTERVAL_MS = 250L
+
+        /**
+         * Media3 encodes only H.264 and H.265 of the codecs this app offers.
+         *
+         * VP8/VP9/AV1 targets never reach here — the router sends them to FFmpeg because
+         * `Transformer.setVideoMimeType` rejects them — so anything unexpected returns null and
+         * lets Transformer pick, rather than silently substituting H.265 as the old mapping did.
+         */
+        internal fun videoMimeTypeFor(codec: VideoCodec): String? = when (codec) {
+            VideoCodec.H264 -> MimeTypes.VIDEO_H264
+            VideoCodec.H265 -> MimeTypes.VIDEO_H265
+            // Never reached, and no longer only asserted: `Media3EngineMimeTypesTest` drives
+            // `CopyPlanner` over every spec it can be handed and shows that no Encode plan carries
+            // either, which is what turns "COPY/NONE are not Encode" into a checked claim.
+            VideoCodec.COPY, VideoCodec.NONE -> null
+            VideoCodec.VP8, VideoCodec.VP9, VideoCodec.AV1 -> null
+        }
+
+        /**
+         * Media3 encodes AAC, Opus and PCM. Three arms below are dead, not two.
+         *
+         * The comment this replaces named MP3 and FLAC as the exceptions, which reads as though
+         * every other arm were live. **Vorbis is not.** A single router rule diverts every audio
+         * codec outside {AAC, Opus, PCM} to FFmpeg, and Vorbis is outside it, so
+         * `VORBIS -> AUDIO_VORBIS` names a MIME type Transformer is never actually asked for.
+         *
+         * The arm stays because the mapping is correct — deleting a right answer out of
+         * unreachable code buys nothing — but it is an entry waiting on a routing change rather
+         * than a live one. `Media3EngineMimeTypesTest` routes all six encodable codecs and asserts
+         * which three arrive, so if that set moves, the disagreement fails rather than surprises.
+         */
+        internal fun audioMimeTypeFor(codec: AudioCodec): String? = when (codec) {
+            AudioCodec.AAC -> MimeTypes.AUDIO_AAC
+            AudioCodec.OPUS -> MimeTypes.AUDIO_OPUS
+            AudioCodec.VORBIS -> MimeTypes.AUDIO_VORBIS
+            AudioCodec.PCM -> MimeTypes.AUDIO_RAW
+            AudioCodec.COPY, AudioCodec.NONE -> null
+            // MP3 and FLAC have no Android encoder at any API level, so the router sends them to
+            // FFmpeg before an encoder is ever asked for.
+            AudioCodec.MP3, AudioCodec.FLAC -> null
+        }
     }
 }
