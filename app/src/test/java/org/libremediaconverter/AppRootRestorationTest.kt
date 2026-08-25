@@ -33,9 +33,12 @@ import org.robolectric.RobolectricTestRunner
  * representation survives a `Bundle` round trip. A JVM round-trip test on the
  * saver covers the representation.
  *
- * Robolectric rather than the instrumented suite, deliberately. The instrumented tests
- * cannot run on the development host at all (see CLAUDE.md), and a red test nobody can
- * execute is not a loop anyone can work in.
+ * Robolectric rather than the instrumented suite, deliberately -- but not because the
+ * instrumented suite is unavailable. It runs on this host for API 33-36
+ * (`tools/local-emulator/run-e2e.sh`), and CI runs 33-37. The reason is cost: this test
+ * needs a composition and a saved-state round trip, nothing a device supplies, and it runs
+ * in the same `./gradlew` invocation as every other JVM test instead of booting an
+ * emulator. A loop measured in seconds is a loop people stay inside.
  */
 @UnstableApi
 @RunWith(RobolectricTestRunner::class)
