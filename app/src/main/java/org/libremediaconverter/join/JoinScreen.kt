@@ -53,6 +53,46 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
         remember(destinationMime) { ActivityResultContracts.CreateDocument(destinationMime) },
     ) { uri -> uri?.let(viewModel::save) }
 
+    JoinScreenContent(
+        state = state,
+        actions = JoinActions(
+            onPickInputs = { pickInputs.launch(arrayOf("video/*")) },
+            onJoin = viewModel::join,
+            onCancel = viewModel::cancel,
+            onSave = { suggestedName -> chooseDestination.launch(suggestedName) },
+            onReset = viewModel::reset,
+        ),
+        modifier = modifier,
+    )
+}
+
+/**
+ * Everything [JoinScreenContent] can ask for, in one value.
+ *
+ * Five callbacks would fit under detekt's `LongParameterList` threshold, unlike the converter's
+ * twelve. It is a holder anyway, so both screens present the same shape to the state tests and
+ * neither one has to be reworked the first time a branch grows a button.
+ */
+internal data class JoinActions(
+    /** Open the multi-document picker. The `Idle` and `Ready` branches both offer it. */
+    val onPickInputs: () -> Unit,
+    val onJoin: () -> Unit,
+    val onCancel: () -> Unit,
+    /** Open the save dialog. Takes the name the job chose -- see `ConcatWorker.KEY_SUGGESTED_NAME`. */
+    val onSave: (suggestedName: String) -> Unit,
+    val onReset: () -> Unit,
+)
+
+/**
+ * The join screen, with its state handed in.
+ *
+ * The same split as [org.libremediaconverter.convert.ConverterScreenContent], for the same reason:
+ * `JoinState.Waiting` follows a denied foreground start and `JoinState.Joined` follows a completed
+ * concatenation, so neither is reachable by driving a real `JoinViewModel`.
+ */
+@UnstableApi
+@Composable
+internal fun JoinScreenContent(state: JoinState, actions: JoinActions, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -81,7 +121,7 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                     modifier = Modifier.padding(bottom = 16.dp),
                 )
                 Button(
-                    onClick = { pickInputs.launch(arrayOf("video/*")) },
+                    onClick = actions.onPickInputs,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(PrimaryButtonHeight)
@@ -99,14 +139,14 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                     is JoinState.Ready -> {
                         s.inputs.forEach { FileRow(it) }
                         Button(
-                            onClick = viewModel::join,
+                            onClick = actions.onJoin,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(PrimaryButtonHeight)
                                 .testTag(TestTags.Join.JOIN),
                         ) { Text("Join ${s.inputs.size} files") }
                         OutlinedButton(
-                            onClick = { pickInputs.launch(arrayOf("video/*")) },
+                            onClick = actions.onPickInputs,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag(TestTags.Join.CHOOSE_DIFFERENT_FILES),
@@ -124,7 +164,7 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                                 .testTag(TestTags.Join.PROGRESS),
                         )
                         OutlinedButton(
-                            onClick = viewModel::cancel,
+                            onClick = actions.onCancel,
                             modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
@@ -138,7 +178,7 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(
-                            onClick = viewModel::cancel,
+                            onClick = actions.onCancel,
                             modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
@@ -157,14 +197,14 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Button(
-                            onClick = { chooseDestination.launch(s.suggestedName) },
+                            onClick = { actions.onSave(s.suggestedName) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(PrimaryButtonHeight)
                                 .testTag(TestTags.SAVE_FILE),
                         ) { Text("Save file") }
                         OutlinedButton(
-                            onClick = viewModel::reset,
+                            onClick = actions.onReset,
                             modifier = Modifier.fillMaxWidth().testTag(TestTags.START_OVER),
                         ) { Text("Start over") }
                     }
@@ -172,7 +212,7 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                     is JoinState.Saved -> {
                         Text("Saved ${s.displayName}.", style = MaterialTheme.typography.bodyLarge)
                         Button(
-                            onClick = viewModel::reset,
+                            onClick = actions.onReset,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(PrimaryButtonHeight)
@@ -187,7 +227,7 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Button(
-                            onClick = viewModel::reset,
+                            onClick = actions.onReset,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(PrimaryButtonHeight)

@@ -87,6 +87,89 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
         ActivityResultContracts.RequestPermission(),
     ) { viewModel.convert() }
 
+    ConverterScreenContent(
+        state = state,
+        settings = settings,
+        validation = validation,
+        actions = ConverterActions(
+            onPickInput = { pickInput.launch(arrayOf("*/*")) },
+            onPreset = viewModel::setPreset,
+            onContainer = viewModel::setContainer,
+            onVideoCodec = viewModel::setVideoCodec,
+            onAudioCodec = viewModel::setAudioCodec,
+            onSuggestion = viewModel::applySuggestion,
+            onQuality = viewModel::setQuality,
+            onEnginePreference = viewModel::setEnginePreference,
+            onConvert = { requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) },
+            onCancel = viewModel::cancel,
+            onSave = { suggestedName -> chooseDestination.launch(suggestedName) },
+            onReset = viewModel::reset,
+        ),
+        modifier = modifier,
+    )
+}
+
+/**
+ * Everything [ConverterScreenContent] can ask for, in one value.
+ *
+ * A holder rather than twelve parameters because detekt's `LongParameterList` sits at its default
+ * threshold of six and `config/detekt/detekt.yml` does not relax it for `@Composable` the way it
+ * relaxes `LongMethod` and `CyclomaticComplexMethod` -- `AdvancedPicker` already sits exactly on
+ * that threshold. The rule exempts data classes, so the callbacks travel together.
+ *
+ * In production every one of these is a launcher or a `ConversionViewModel` call. Naming them here
+ * instead of handing the content a ViewModel is the whole point of the seam: a test can render a
+ * [ConversionState] no ViewModel can be driven into, since `Waiting` needs a denied foreground
+ * start and `Converted` needs a worker run that has already succeeded.
+ */
+internal data class ConverterActions(
+    /** Open the document picker. The `Idle` and `Ready` branches both offer it. */
+    val onPickInput: () -> Unit,
+    val onPreset: (OutputFormat) -> Unit,
+    val onContainer: (Container) -> Unit,
+    val onVideoCodec: (VideoCodec) -> Unit,
+    val onAudioCodec: (AudioCodec) -> Unit,
+    val onSuggestion: (OutputSpec) -> Unit,
+    val onQuality: (QualityTier) -> Unit,
+    val onEnginePreference: (EnginePreference) -> Unit,
+    /**
+     * Start the job. It asks for the notification permission first, which is why the screen never
+     * calls `convert` directly -- the launcher's result callback does, whichever way it went.
+     */
+    val onConvert: () -> Unit,
+    val onCancel: () -> Unit,
+    /**
+     * Open the save dialog for the finished output.
+     *
+     * Takes the suggested name rather than reading it back off the state, because the name comes
+     * from the job -- see `ConversionWorker.KEY_SUGGESTED_NAME` -- and the branch that renders the
+     * button is the only place that has it.
+     */
+    val onSave: (suggestedName: String) -> Unit,
+    val onReset: () -> Unit,
+)
+
+/**
+ * The converter screen, with its state handed in.
+ *
+ * Split from [ConverterScreen] so that state has somewhere to come from other than a live
+ * `ConversionViewModel`. Driving the screen through a real one needs a `WorkManager` and a media
+ * probe in the constructor, and even then two of the six states are unreachable: `Waiting` follows
+ * a denied foreground start and `Converted` follows a completed worker.
+ *
+ * `internal` rather than private, because `src/test` is a friend of `main` and this is what the
+ * state tests compose. The leaves below stay exactly where they were -- this function is a move,
+ * not a redesign, and the tests that already pin those leaves are what says so.
+ */
+@UnstableApi
+@Composable
+internal fun ConverterScreenContent(
+    state: ConversionState,
+    settings: ConversionSettings,
+    validation: Validation,
+    actions: ConverterActions,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -115,7 +198,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                     modifier = Modifier.padding(bottom = 16.dp),
                 )
                 Button(
-                    onClick = { pickInput.launch(arrayOf("*/*")) },
+                    onClick = actions.onPickInput,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(PrimaryButtonHeight)
@@ -132,21 +215,19 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
 
                     is ConversionState.Ready -> {
                         FileCard(s.input)
-                        FormatPicker(settings.matchingPreset, viewModel::setPreset)
+                        FormatPicker(settings.matchingPreset, actions.onPreset)
                         AdvancedPicker(
                             spec = settings.spec,
                             validation = validation,
-                            onContainer = viewModel::setContainer,
-                            onVideoCodec = viewModel::setVideoCodec,
-                            onAudioCodec = viewModel::setAudioCodec,
-                            onSuggestion = viewModel::applySuggestion,
+                            onContainer = actions.onContainer,
+                            onVideoCodec = actions.onVideoCodec,
+                            onAudioCodec = actions.onAudioCodec,
+                            onSuggestion = actions.onSuggestion,
                         )
-                        QualityPicker(settings.quality, viewModel::setQuality)
-                        EnginePicker(settings.enginePreference, viewModel::setEnginePreference)
+                        QualityPicker(settings.quality, actions.onQuality)
+                        EnginePicker(settings.enginePreference, actions.onEnginePreference)
                         Button(
-                            onClick = {
-                                requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            },
+                            onClick = actions.onConvert,
                             // The Advanced picker lets an impossible combination be selected on
                             // purpose, so this is what stops it from being run.
                             enabled = validation.isValid,
@@ -156,7 +237,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                                 .testTag(TestTags.Converter.CONVERT),
                         ) { Text("Convert") }
                         OutlinedButton(
-                            onClick = { pickInput.launch(arrayOf("*/*")) },
+                            onClick = actions.onPickInput,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag(TestTags.Converter.CHOOSE_DIFFERENT_FILE),
@@ -173,7 +254,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                                 .testTag(TestTags.Converter.PROGRESS),
                         )
                         OutlinedButton(
-                            onClick = viewModel::cancel,
+                            onClick = actions.onCancel,
                             modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
@@ -192,7 +273,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedButton(
-                            onClick = viewModel::cancel,
+                            onClick = actions.onCancel,
                             modifier = Modifier.fillMaxWidth().testTag(TestTags.CANCEL),
                         ) { Text("Cancel") }
                     }
@@ -211,14 +292,14 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                             AssistChip(onClick = {}, label = { Text(s.routeReason) })
                         }
                         Button(
-                            onClick = { chooseDestination.launch(s.suggestedName) },
+                            onClick = { actions.onSave(s.suggestedName) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(PrimaryButtonHeight)
                                 .testTag(TestTags.SAVE_FILE),
                         ) { Text("Save file") }
                         OutlinedButton(
-                            onClick = viewModel::reset,
+                            onClick = actions.onReset,
                             modifier = Modifier.fillMaxWidth().testTag(TestTags.START_OVER),
                         ) { Text("Start over") }
                     }
@@ -226,7 +307,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                     is ConversionState.Saved -> {
                         Text("Saved ${s.displayName}.", style = MaterialTheme.typography.bodyLarge)
                         Button(
-                            onClick = viewModel::reset,
+                            onClick = actions.onReset,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(PrimaryButtonHeight)
@@ -241,7 +322,7 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Button(
-                            onClick = viewModel::reset,
+                            onClick = actions.onReset,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(PrimaryButtonHeight)
