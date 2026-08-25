@@ -140,10 +140,16 @@ class ConversionViewModelProbeFailureTest {
     private fun pickedProbe(): InputProbe? {
         val viewModel = ConversionViewModel(app, Dispatchers.Unconfined)
         viewModel.onInputPicked(INPUT)
+        // The predicate is the guard, and it is the only one needed. It requires `Ready`, so a
+        // pick that ended in `Failed` never satisfies it and `awaitState` fails on its timeout
+        // naming what it was waiting for -- "Ready with a probe" -- which says more than a
+        // separate assertion could. A `ready as? ConversionState.Failed` check used to sit here
+        // and was dead: `Ready` and `Failed` are sibling subtypes of one sealed interface, so
+        // the cast was always null and the assertNull could never fire. Measured, not assumed --
+        // flipping it to assertNotNull failed all three callers of this helper.
         val ready = awaitState(viewModel.state, "Ready with a probe") {
             it is ConversionState.Ready && it.input.probe != null
         }
-        assertNull("nothing here should reach a terminal failure", (ready as? ConversionState.Failed))
         return (ready as ConversionState.Ready).input.probe
     }
 

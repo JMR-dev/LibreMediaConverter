@@ -36,8 +36,20 @@ import java.io.File
  *  1. that the hardware path is worth having a second engine for at all, and
  *  2. that x264's CRF is worth the GPL licence the app carries for it.
  *
- * Skips itself when the sample files are absent, so it is harmless in CI. Populate with:
- *   adb push <file>.mp4 /sdcard/Android/data/org.libremediaconverter/files/
+ * Skips itself when the sample files are absent, so it is harmless in CI — every green E2E
+ * leg reports two skips, and these are they.
+ *
+ * The two files it looks for, by exact name:
+ *
+ *  - [H264_SAMPLE] for [hardwareVersusSoftwareOnRealVideo]
+ *  - [AV1_SAMPLE] for [av1InputRoutesAccordingToDeviceDecodeSupport]
+ *
+ * **Where they go, and how, is on [samples] — read it before staging anything.** This used to
+ * carry an `adb push` line naming the external files dir, which [samples] then explains cannot
+ * work: a pushed file stays owned by the shell user and the app reads EACCES, surfacing as an
+ * unparseable input rather than a permission error. The instruction and its own refutation sat
+ * twelve lines apart. It is named in one place now rather than restated here, because restating
+ * it is what let the two drift.
  */
 @UnstableApi
 @RunWith(AndroidJUnit4::class)
