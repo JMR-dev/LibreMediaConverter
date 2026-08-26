@@ -20,6 +20,21 @@ class ContainerCapabilitiesTest {
         container = Container.MP4,
     )
 
+    /**
+     * An MP3, and the reason several rules below need a second probe.
+     *
+     * `hasVideo = false` is the load-bearing field. Every rule that reads only the spec answers the
+     * same for this input as for a video file, which is exactly how a spec naming a video codec was
+     * called valid for a file with no video track to put in it.
+     */
+    private val mp3Source = InputProbe(
+        videoCodec = null,
+        audioCodec = "mp3",
+        hasVideo = false,
+        kind = InputKind.AUDIO_ONLY,
+        container = Container.MP3,
+    )
+
     // --- copy and encode are different questions ----------------------------
 
     /**
@@ -85,17 +100,27 @@ class ContainerCapabilitiesTest {
     /** A suggestion that is itself invalid is worse than no suggestion. */
     @Test
     fun `every suggestion is itself valid`() {
-        val broken = OutputSpec(Container.WEBM, VideoCodec.H264, AudioCodec.AAC)
-        val result = ContainerCapabilities.validate(broken, h264Source)
+        val cases = listOf(
+            OutputSpec(Container.WEBM, VideoCodec.H264, AudioCodec.AAC) to h264Source,
+            // The audio-only input. Every rejection it can reach used to hand back `None + None`
+            // — a spec validation refuses in the next breath — because these branches built their
+            // suggestion by hand instead of going through the repair-and-filter path.
+            OutputSpec(Container.MP4, VideoCodec.H265, AudioCodec.NONE) to mp3Source,
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.NONE) to mp3Source,
+            OutputSpec(Container.MP4, VideoCodec.NONE, AudioCodec.NONE) to mp3Source,
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.AAC) to mp3Source,
+        )
 
-        val invalid = result as? Validation.Invalid
-            ?: throw AssertionError("expected H.264 in WebM to be rejected")
-        assertTrue("no alternatives offered", invalid.suggestions.isNotEmpty())
-        invalid.suggestions.forEach { suggestion ->
-            assertTrue(
-                "suggested $suggestion is itself invalid",
-                ContainerCapabilities.validate(suggestion, h264Source).isValid,
-            )
+        cases.forEach { (spec, probe) ->
+            val invalid = ContainerCapabilities.validate(spec, probe) as? Validation.Invalid
+                ?: throw AssertionError("expected $spec to be rejected")
+            assertTrue("no alternatives offered for $spec", invalid.suggestions.isNotEmpty())
+            invalid.suggestions.forEach { suggestion ->
+                assertTrue(
+                    "suggested $suggestion for $spec is itself invalid",
+                    ContainerCapabilities.validate(suggestion, probe).isValid,
+                )
+            }
         }
     }
 
@@ -125,6 +150,117 @@ class ContainerCapabilitiesTest {
 
         assertFalse(result.isValid)
         assertTrue((result as Validation.Invalid).suggestions.isNotEmpty())
+    }
+
+    /**
+     * The same rule, seen only against the probe.
+     *
+     * A video codec named for a file with no video track is dropped, not encoded — so
+     * MP4/H.265/None on an MP3 empties the output exactly as None/None does. Reading the spec
+     * alone answered "valid" because the spec names a video codec, and the job went to Media3,
+     * where `EditedMediaItem.Builder` refuses a composition with both tracks removed by throwing
+     * on Transformer's own HandlerThread.
+     */
+    @Test
+    fun `a video codec named for a file with no video track and no audio is refused`() {
+        ContainerCapabilities.encodableVideo(Container.MP4).forEach { codec ->
+            val spec = OutputSpec(Container.MP4, codec, AudioCodec.NONE)
+            val result = ContainerCapabilities.validate(spec, mp3Source)
+
+            assertFalse(
+                "MP4/${codec.label}/None on an audio-only input plans to (Drop, Drop) and would " +
+                    "produce an empty file; it must be refused. Got $result",
+                result.isValid,
+            )
+        }
+    }
+
+    /**
+     * The refusal is only worth having if it leads somewhere.
+     *
+     * The COPY form of this was already refused, but its one hand-built suggestion was
+     * `None + None` — which validation refuses in the next breath, so the Advanced picker offered
+     * a one-tap fix that fixed nothing. Every face of the rule now goes through the shared
+     * suggestion path, so the offer keeps the one track the input actually has.
+     */
+    @Test
+    fun `refusing an empty output still offers a way to keep the audio`() {
+        listOf(VideoCodec.H265, VideoCodec.H264, VideoCodec.COPY, VideoCodec.NONE).forEach { codec ->
+            val spec = OutputSpec(Container.MP4, codec, AudioCodec.NONE)
+            val invalid = ContainerCapabilities.validate(spec, mp3Source) as? Validation.Invalid
+                ?: throw AssertionError("expected MP4/${codec.label}/None to be rejected")
+
+            assertTrue(
+                "a refusal with no way out is a dead end in the Advanced picker",
+                invalid.suggestions.isNotEmpty(),
+            )
+            assertTrue(
+                "every suggestion must keep a track, got ${invalid.suggestions}",
+                invalid.suggestions.all { it.audioCodec != AudioCodec.NONE },
+            )
+        }
+    }
+
+    /**
+     * A repair must not name a track the input does not have.
+     *
+     * `repairVideo` used to fall through to "the first codec this container can encode" whenever
+     * nothing else fitted, and for an MP3 that produced the non-sequitur `MP4 · H.264 · Copy`.
+     * It validated, so nothing caught it — but [CopyPlanner] drops that video track anyway, which
+     * makes the codec in the offer a fiction.
+     */
+    @Test
+    fun `a repair for a file with no video track never names a video codec`() {
+        listOf(
+            OutputSpec(Container.MP4, VideoCodec.H265, AudioCodec.NONE),
+            OutputSpec(Container.MP4, VideoCodec.NONE, AudioCodec.NONE),
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.NONE),
+        ).forEach { spec ->
+            val invalid = ContainerCapabilities.validate(spec, mp3Source) as Validation.Invalid
+            invalid.suggestions.forEach {
+                assertEquals(
+                    "offering ${it.videoCodec.label} for a file with no video track is a fiction; " +
+                        "CopyPlanner drops it. Suggested $it for $spec",
+                    VideoCodec.NONE,
+                    it.videoCodec,
+                )
+            }
+        }
+    }
+
+    /**
+     * The rule stated as the property it is, over the whole matrix.
+     *
+     * A plan of (Drop, Drop) is precisely the composition `EditedMediaItem.Builder` refuses to
+     * build, so no non-image spec that reaches it may be called valid. Sweeping every container ×
+     * codec × codec against both probes is what stops the next container or codec from
+     * reintroducing the gap on an axis nobody thought to write a case for.
+     *
+     * Image outputs are exempt and deliberately so: GIF and PNG frames carry no codecs at all, and
+     * `None + None` is the only spec they accept — but they never reach Media3, because the router
+     * sends every image output to FFmpeg.
+     */
+    @Test
+    fun `no valid non-image spec plans to remove both tracks`() {
+        val specs = Container.entries
+            .filterNot { it == Container.GIF || it == Container.IMAGE_SEQUENCE }
+            .flatMap { container -> VideoCodec.entries.map { container to it } }
+            .flatMap { (container, video) -> AudioCodec.entries.map { OutputSpec(container, video, it) } }
+        val cases = specs.flatMap { spec -> listOf(h264Source, mp3Source).map { spec to it } }
+
+        val empties = cases.filter { (spec, probe) ->
+            val plan = CopyPlanner.plan(spec, probe)
+            plan.video == VideoPlan.Drop && plan.audio == AudioPlan.Drop
+        }
+
+        assertTrue("the sweep found nothing to check — the filter has gone wrong", empties.isNotEmpty())
+        empties.forEach { (spec, probe) ->
+            assertFalse(
+                "$spec on $probe plans to (Drop, Drop) — an empty file, and the composition " +
+                    "Media3 cannot build — so it must not validate",
+                ContainerCapabilities.validate(spec, probe).isValid,
+            )
+        }
     }
 
     @Test

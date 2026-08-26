@@ -34,6 +34,13 @@ TMP="${RUNNER_TEMP:-/tmp}"
 LOGCAT_LOG="$TMP/logcat-api${LABEL}.txt"
 DIAG_LOG="$TMP/diagnostics-api${LABEL}.txt"
 WEDGE_LOG="$TMP/wedge-diagnostics-api${LABEL}.txt"
+# Gradle's own output, captured to a file as well as the step log, because the run-shape report
+# below has to parse it. Uploaded with the diagnostics, so a report that reads wrong can be
+# checked against what it read.
+GRADLE_LOG="$TMP/gradle-api${LABEL}.txt"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 
 # ~5 min is a healthy leg (measured across API 33-36), and this wraps only the gradle client,
 # a subset of that. 20 min is generous enough never to trip on a slow-but-working run, and far
@@ -214,11 +221,39 @@ status=0
 # script rather than forking it: that runs several API levels back to back against one checkout
 # and passes `--rerun`, so a level cannot be skipped as up-to-date and report the previous
 # level's results as its own. CI gets a fresh runner per level and does not need it.
+#
+# `2>&1 | tee`, and the `2>&1` is the load-bearing half. The step log merges both streams, so
+# reading one cannot tell you which stream a line came from -- and the single line the report
+# below needs most, `Test run failed to complete. ... INSTRUMENTATION_ABORTED`, is not on
+# stdout. Capturing stdout alone would leave the report saying "completed cleanly: yes" forever,
+# which is precisely the comparison that cannot fire. pipefail is already set and tee exits 0,
+# so the pipeline's status is still gradle's -- including the 124 that means the wrapper fired.
+#
+# `tee` and not `tee -a`, unlike the logcat above: CI gets a fresh runner per leg, but
+# tools/local-emulator/run-e2e.sh reuses one machine, and an appended log would have the report
+# reading the PREVIOUS run of the same API level. The console goes plain rather than showing
+# gradle's live progress bar, which is what it already did in CI.
 # shellcheck disable=SC2086
 timeout -k 30s "$WEDGE_TIMEOUT" \
   ./gradlew :app:connectedDebugAndroidTest -PabiFilters=x86_64 --stacktrace \
-  ${E2E_EXTRA_GRADLE_ARGS:-} || status=$?
+  ${E2E_EXTRA_GRADLE_ARGS:-} 2>&1 | tee "$GRADLE_LOG" || status=$?
 echo "::endgroup::"
+
+# The run-shape report: expected/received/failed and whether the run finished, every time,
+# green or red. It never changes `status` -- it is a diagnostic, and the header's rule about
+# diagnostics applies to it as much as to every probe below.
+#
+# The baseline argument, and only it, turns on the comparison, and only the advisory API 37 job
+# passes E2E_ADVISORY=1. Comparing on the gating legs would announce a deviation on all five of
+# them every run, since they run the whole suite rather than the marked three. They still get
+# the report: a truncated run reporting fewer results than it ran is what #108 looks like, and
+# `completed cleanly` is the field that shows it.
+if [ "${E2E_ADVISORY:-}" = "1" ]; then
+  bash "$SCRIPT_DIR/e2e-report-shape.sh" "$LABEL" "$GRADLE_LOG" \
+    "$REPO_ROOT/app/src/androidTest/java/org/libremediaconverter/FailsOnEmulatorApi37.kt" || true
+else
+  bash "$SCRIPT_DIR/e2e-report-shape.sh" "$LABEL" "$GRADLE_LOG" || true
+fi
 
 if [ "$status" -eq 0 ]; then
   kill "$LOGCAT_PID" 2>/dev/null || true

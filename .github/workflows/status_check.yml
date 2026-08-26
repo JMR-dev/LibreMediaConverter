@@ -377,6 +377,7 @@ jobs:
           path: |
             ${{ runner.temp }}/logcat-api${{ matrix.label }}.txt
             ${{ runner.temp }}/diagnostics-api${{ matrix.label }}.txt
+            ${{ runner.temp }}/gradle-api${{ matrix.label }}.txt
           if-no-files-found: warn
 
       # Only exists when the wrapper timeout tripped, so `ignore` keeps healthy runs quiet
@@ -467,6 +468,12 @@ jobs:
           # The complement of the gating row's notAnnotation, off the same marker,
           # so a test can never be excluded from both jobs or run in both.
           E2E_EXTRA_GRADLE_ARGS: "-Pandroid.testInstrumentationRunnerArguments.annotation=org.libremediaconverter.FailsOnEmulatorApi37"
+          # Turns on the baseline comparison in the run-shape report, and only here. Every leg
+          # prints the shape; this is the one that also says whether it matches
+          # FAILS_ON_EMULATOR_API37_BASELINE, because this is the one whose test list is the
+          # marker. A deviation is a `::notice::` -- this job stays continue-on-error and stays
+          # out of the required contexts, so nothing the report finds can change a conclusion.
+          E2E_ADVISORY: "1"
         with:
           # Every device pin below matches the gating row exactly, so a difference
           # between the two jobs is the test selection and nothing else.
@@ -499,6 +506,7 @@ jobs:
           path: |
             ${{ runner.temp }}/logcat-api${{ env.E2E_LABEL }}.txt
             ${{ runner.temp }}/diagnostics-api${{ env.E2E_LABEL }}.txt
+            ${{ runner.temp }}/gradle-api${{ env.E2E_LABEL }}.txt
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
