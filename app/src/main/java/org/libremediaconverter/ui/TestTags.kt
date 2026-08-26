@@ -45,6 +45,17 @@ object TestTags {
 
     const val SAVE_FILE: String = "action.saveFile"
 
+    /**
+     * The retry a `Failed` offers after a save that threw, on both screens.
+     *
+     * Its own tag rather than [SAVE_FILE], because the two are different claims about the screen.
+     * [SAVE_FILE] is the first attempt from a finished job; this one may appear only where a staged
+     * file survived a failed save. Sharing a tag would collapse "a transcode failure offers nothing
+     * to save" and "a failed save offers the file again" into one query, and that first assertion
+     * is the one stopping a Save button from appearing where there is nothing to save.
+     */
+    const val RETRY_SAVE: String = "action.retrySave"
+
     /** `ConverterScreen`. */
     object Converter {
         const val CHOOSE_FILE: String = "converter.chooseFile"
