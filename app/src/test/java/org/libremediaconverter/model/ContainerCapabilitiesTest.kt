@@ -11,6 +11,11 @@ import org.junit.Test
  * `OutputFormat` used to be twelve hand-picked triples, and its KDoc defended that on the grounds
  * that a closed set was what made routing decidable. Opening it up moves that burden here, so this
  * is where decidability now has to be proven.
+ *
+ * That includes what a refusal offers instead. `Validation.Invalid` promises every suggestion is
+ * itself valid and names this class as the proof, so a branch that assembles its own suggestion
+ * list rather than going through `suggestions()` is only checked here if some row happens to reach
+ * it — which is how a dead-end chip survived two widenings of that table.
  */
 class ContainerCapabilitiesTest {
 
@@ -33,6 +38,29 @@ class ContainerCapabilitiesTest {
         hasVideo = false,
         kind = InputKind.AUDIO_ONLY,
         container = Container.MP3,
+    )
+
+    /**
+     * An audio-only input carrying a codec MP4 has no place for at all.
+     *
+     * Vorbis lives in Ogg and Matroska; MP4 carries AAC, MP3, Opus and FLAC. That gap is what turns
+     * a suggestion which merely drops the video track into a second refusal.
+     */
+    private val vorbisSource = InputProbe(
+        videoCodec = null,
+        audioCodec = "vorbis",
+        hasVideo = false,
+        kind = InputKind.AUDIO_ONLY,
+        container = Container.OGG,
+    )
+
+    /** The same shape, for the other codec MP4 refuses. One case is a coincidence; two is the rule. */
+    private val pcmSource = InputProbe(
+        videoCodec = null,
+        audioCodec = "pcm_s16le",
+        hasVideo = false,
+        kind = InputKind.AUDIO_ONLY,
+        container = Container.WAV,
     )
 
     // --- copy and encode are different questions ----------------------------
@@ -97,7 +125,17 @@ class ContainerCapabilitiesTest {
         }
     }
 
-    /** A suggestion that is itself invalid is worse than no suggestion. */
+    /**
+     * A suggestion that is itself invalid is worse than no suggestion.
+     *
+     * Only a branch that assembles its own suggestion list can break that promise: [suggestions]
+     * ends by filtering on `validate(...).isValid`, so everything routed through it is valid by
+     * construction. Those branches are what this table has to cover — the image output, and copy
+     * the video from a file that has none, which built its list by hand and came back refused for
+     * a Vorbis or PCM source into MP4 and an MP3 into WebM. The Advanced picker showed a one-tap
+     * fix that led straight to a second error, through two widenings of this table that never
+     * reached the branch.
+     */
     @Test
     fun `every suggestion is itself valid`() {
         val cases = listOf(
@@ -109,15 +147,31 @@ class ContainerCapabilitiesTest {
             OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.NONE) to mp3Source,
             OutputSpec(Container.MP4, VideoCodec.NONE, AudioCodec.NONE) to mp3Source,
             OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.AAC) to mp3Source,
+            // Copy-the-video-from-a-file-with-no-video, the last branch that built its offer by
+            // hand. It escaped the five rows above because `spec.copy(videoCodec = NONE)` is valid
+            // exactly when the audio axis happens to be fine — true for the AAC and MP3 sources
+            // used there, false for any audio the target container cannot carry.
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY) to vorbisSource,
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY) to pcmSource,
+            OutputSpec(Container.WEBM, VideoCodec.COPY, AudioCodec.COPY) to mp3Source,
+            // The same branch with audio the container *can* hold, which is the half that already
+            // worked and must keep working: the repair here is a copy, so the offer is the very
+            // spec the caller handed to `suggestions`. It survives only because the exclusion is
+            // against what the user asked for rather than against the repair.
+            OutputSpec(Container.MP4, VideoCodec.COPY, AudioCodec.COPY) to mp3Source,
+            // The one branch that still builds its list by hand, so that it is asserted rather
+            // than merely reasoned about: an image container takes `None + None` and nothing else,
+            // which makes its single offer valid by construction.
+            OutputSpec(Container.GIF, VideoCodec.H264, AudioCodec.AAC) to h264Source,
         )
 
         cases.forEach { (spec, probe) ->
             val invalid = ContainerCapabilities.validate(spec, probe) as? Validation.Invalid
                 ?: throw AssertionError("expected $spec to be rejected")
-            assertTrue("no alternatives offered for $spec", invalid.suggestions.isNotEmpty())
+            assertTrue("no alternatives offered for $spec on $probe", invalid.suggestions.isNotEmpty())
             invalid.suggestions.forEach { suggestion ->
                 assertTrue(
-                    "suggested $suggestion for $spec is itself invalid",
+                    "suggested $suggestion for $spec on $probe is itself invalid",
                     ContainerCapabilities.validate(suggestion, probe).isValid,
                 )
             }
