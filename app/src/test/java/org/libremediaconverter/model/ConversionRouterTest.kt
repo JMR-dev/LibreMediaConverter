@@ -350,6 +350,34 @@ class ConversionRouterTest {
         }
     }
 
+    /**
+     * Why `Media3Engine` still needs a guard of its own.
+     *
+     * `ContainerCapabilities.validate` now refuses "a video codec with the audio off" for an input
+     * with no video track, so neither the picker nor `ConversionWorker` will start one. Routing is
+     * a separate question and still answers MEDIA3 — nothing about a dropped track makes the job
+     * un-hardware-able — so a request that skips validation, from a direct
+     * `ConversionWorker.request(...)` or a job queued before the settings changed, arrives at the
+     * engine with a plan Media3 cannot build. That has to fail the job, not the process.
+     */
+    @Test
+    fun `a plan that drops both tracks still routes to media3`() {
+        val audioOnly = InputProbe(
+            videoCodec = null,
+            audioCodec = "mp3",
+            hasVideo = false,
+            container = Container.MP3,
+            kind = InputKind.AUDIO_ONLY,
+        )
+        val spec = OutputSpec(Container.MP4, VideoCodec.H265, AudioCodec.NONE)
+
+        val plan = CopyPlanner.plan(spec, audioOnly)
+        assertEquals(VideoPlan.Drop, plan.video)
+        assertEquals(AudioPlan.Drop, plan.audio)
+
+        assertEquals(Engine.MEDIA3, route(spec, probe = audioOnly).engine)
+    }
+
     @Test
     fun `audio-only formats are flagged as such`() {
         assertEquals(true, OutputFormat.MP3.isAudioOnly)
