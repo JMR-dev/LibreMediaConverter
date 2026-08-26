@@ -32,8 +32,12 @@ reached* is not. Re-measured on 2026-08-22, seven runs, one variable at a time:
 | r06 | `android-37.1` rev 8 | `swangle_indirect` | ANGLE | **yes, 285 s** | 23 |
 | r07 | `android-37.0` rev 6 | `host` + `-feature -HostComposition` | host | **no**, wedged adb at 208 s | not readable |
 
-The discriminator is exact across all seven: **a run boots if and only if the emulator log says
-something other than `gles_mode_selected:host`.**
+The discriminator is exact across the **six runs that reported**: a run boots if and only if the
+emulator log says something other than `gles_mode_selected:host`. r07 is excluded on purpose — it
+wedged adb at 208 s and is recorded below as inconclusive rather than ruled out, and a row this
+page calls inconclusive cannot also be counted as evidence. Excluding it costs nothing: r07 is a
+`host` row, so the discriminator predicts it would not boot, and confirming a prediction with the
+one run whose evidence did not come back would add no information either way.
 
 One caveat about how independent those rows are, because the table flatters itself. `-gpu
 angle_indirect` (r05) and `-gpu swangle_indirect` (r03) both logged `gles_mode_selected:swangle`
@@ -509,8 +513,9 @@ API 37", not "is that codec broken".
 
 `.github/workflows/api37-debug.yml` carried "roughly every 20 s" for the kill cycle in its own
 comments. That number was the watchdog's **sampling** interval, not the cadence, and the two got
-conflated. Measured across the seven runs above, gaps between successive `hasReadColorBufferDma`
-aborts run **20 s to 90 s, median 60–70 s — three to five aborts in a four-minute window**.
+conflated. Measured across the **six runs whose crash buffer could be read** — r07 wedged adb
+before one could be taken, so it contributes no gaps — successive `hasReadColorBufferDma` aborts
+run **20 s to 90 s, median 60–70 s — three to five aborts in a four-minute window**.
 Slower than assumed, and still not slow enough: install, data-directory creation and
 instrumentation start-up do not fit inside one gap.
 
