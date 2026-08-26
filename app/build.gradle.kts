@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.testing.jacoco.tasks.JacocoReport
 
 plugins {
@@ -206,6 +207,16 @@ detekt {
 // `excludes` is not optional. Without it JaCoCo walks JDK-internal classes that Robolectric has
 // no location for either, and the test JVM dies rather than reporting a number.
 tasks.withType<Test>().configureEach {
+    // ReleasePermissionTest reads .github/workflows/build.yml, and Gradle cannot infer that a
+    // test depends on a file outside the source set. Without this the task stays UP-TO-DATE
+    // when the workflow changes, so the guard goes stale exactly when it matters. Measured:
+    // deleting the release job's `contents: write` and re-running gave "BUILD SUCCESSFUL in
+    // 614ms" with the test never executing; the same mutation under --rerun-tasks failed it.
+    // A guard that does not re-run when its subject changes is not a guard.
+    inputs.file(rootProject.file(".github/workflows/build.yml"))
+        .withPropertyName("releaseWorkflow")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+
     extensions.configure<JacocoTaskExtension> {
         isIncludeNoLocationClasses = true
         excludes = listOf("jdk.internal.*")
