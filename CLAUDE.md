@@ -89,6 +89,15 @@ days. Read it as the current answer, and see the git history if you need the old
   not read a green run as evidence those three tests pass.
   `docs/api-37-emulator-crash.md` has the measurements.
 
+  **That instruction is also why nobody looks, so the job now reports its own shape** — expected,
+  received, failed, and whether the run completed — to the job summary, and compares it against
+  `FAILS_ON_EMULATOR_API37_BASELINE`, committed beside the marker. A deviation is a `::notice::`;
+  the job stays advisory and its conclusion is untouched. **Add or remove a `@FailsOnEmulatorApi37`
+  and that number changes in the same diff**, or the next run says so. A bare failure count would
+  not have worked: the run is usually truncated by an `INSTRUMENTATION_ABORTED`, and the test XML
+  is written anyway and says nothing about it — `.github/scripts/e2e-report-shape.sh` is where that
+  is measured and explained.
+
 Still true, and the reason the advisory job is not simply deleted: **API 37 needs a manual check on
 the Pixel 10 Pro XL before each release.** Those three tests are the one thing CI cannot answer
 for.

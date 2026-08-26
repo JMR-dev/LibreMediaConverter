@@ -18,7 +18,38 @@ package org.libremediaconverter
  * Removing it is the goal, and the trigger is written down: a new API 37.x system image, or an
  * ATD image for 37. Delete the annotation from the tests, and the advisory job goes empty and
  * the gating one grows by two.
+ *
+ * **How many tests carry it is committed below**, as [FAILS_ON_EMULATOR_API37_BASELINE], and the
+ * advisory job checks the run against it. Adding or removing a marker means changing that number
+ * in the same diff.
  */
 @Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
 annotation class FailsOnEmulatorApi37
+
+/**
+ * How many tests carry [FailsOnEmulatorApi37] — the advisory API 37 job's committed baseline.
+ *
+ * **No Kotlin reads this, and it is not stray config.** `.github/scripts/e2e-report-shape.sh`
+ * parses it out of this file by name, with a line-anchored pattern, and the advisory job compares
+ * the run it just did against it: this many tests should start, and all of them should fail.
+ * Deleting it, renaming it, or indenting it into a class stops the comparison — the report would
+ * keep printing with nothing to compare to, so it announces that it could not read the baseline
+ * rather than falling quiet. If you see that notice, this line is what it means.
+ *
+ * **One number, both checks, and that is what the marker means.** A test carrying it cannot pass
+ * on this image, so the count is simultaneously how many the advisory leg runs and how many fail.
+ * A *smaller* failure count is the interesting direction: it means one of them now passes, which
+ * is the trigger the KDoc above names for deleting the annotation.
+ *
+ * So: adding or removing a [FailsOnEmulatorApi37] means changing this number, in this file, in
+ * the same diff. The report says so on the run itself if you forget — it prints the tree's own
+ * `grep` count beside this one.
+ *
+ * Why a baseline at all (#83): that job is `continue-on-error` and red on every PR by design, so
+ * a red X cannot distinguish the known failures from the known failures plus a new one. Counting
+ * failures alone does not fix it either — the run is usually truncated by an
+ * `INSTRUMENTATION_ABORTED`, so the count is a number taken from a partial run. The report
+ * records the truncation next to the counts for that reason.
+ */
+const val FAILS_ON_EMULATOR_API37_BASELINE = 3
