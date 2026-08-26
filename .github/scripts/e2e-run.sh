@@ -239,9 +239,23 @@ timeout -k 30s "$WEDGE_TIMEOUT" \
   ${E2E_EXTRA_GRADLE_ARGS:-} 2>&1 | tee "$GRADLE_LOG" || status=$?
 echo "::endgroup::"
 
+# Whether the wrapper timeout fired, decided ONCE. 124 is `timeout` saying it killed the
+# command, and two places downstream need that fact: capture_wedge below, and the report, which
+# otherwise calls a killed leg `completed cleanly: yes` (#118). Deriving it twice is how those
+# two would drift apart -- the report would keep printing after someone changed what a wedge
+# means here. It stays a string: empty on every other path, so those legs pass an empty
+# E2E_WEDGED_AFTER and the report behaves exactly as before.
+wedged=""
+[ "$status" -eq 124 ] && wedged="$WEDGE_TIMEOUT"
+
 # The run-shape report: expected/received/failed and whether the run finished, every time,
 # green or red. It never changes `status` -- it is a diagnostic, and the header's rule about
 # diagnostics applies to it as much as to every probe below.
+#
+# E2E_WEDGED_AFTER is the wedge, told to the report rather than left for it to infer. It cannot
+# be inferred: a wedge is gradle never returning, so gradle printed no verdict at all, and the
+# log the report reads looks like a run that simply stopped. Only this script knows the
+# difference, because only this script saw the exit status.
 #
 # The baseline argument, and only it, turns on the comparison, and only the advisory API 37 job
 # passes E2E_ADVISORY=1. Comparing on the gating legs would announce a deviation on all five of
@@ -249,10 +263,10 @@ echo "::endgroup::"
 # the report: a truncated run reporting fewer results than it ran is what #108 looks like, and
 # `completed cleanly` is the field that shows it.
 if [ "${E2E_ADVISORY:-}" = "1" ]; then
-  bash "$SCRIPT_DIR/e2e-report-shape.sh" "$LABEL" "$GRADLE_LOG" \
+  E2E_WEDGED_AFTER="$wedged" bash "$SCRIPT_DIR/e2e-report-shape.sh" "$LABEL" "$GRADLE_LOG" \
     "$REPO_ROOT/app/src/androidTest/java/org/libremediaconverter/FailsOnEmulatorApi37.kt" || true
 else
-  bash "$SCRIPT_DIR/e2e-report-shape.sh" "$LABEL" "$GRADLE_LOG" || true
+  E2E_WEDGED_AFTER="$wedged" bash "$SCRIPT_DIR/e2e-report-shape.sh" "$LABEL" "$GRADLE_LOG" || true
 fi
 
 if [ "$status" -eq 0 ]; then
@@ -260,7 +274,7 @@ if [ "$status" -eq 0 ]; then
   exit 0
 fi
 
-if [ "$status" -eq 124 ]; then
+if [ -n "$wedged" ]; then
   capture_wedge "api${LABEL}"
 else
   echo "::error::E2E api${LABEL} failed (exit $status)"
