@@ -263,9 +263,12 @@ tasks.withType<Test>().configureEach {
     // a named lock-order inversion, and `Task.timeout` on its own would have thrown it away.
     //
     // It is deliberately incapable of failing a build: it reads a live process and writes a file.
-    // Nothing here kills, interrupts or signals anything, so the worst a misfire can do -- and the
-    // one misfire it has is dumping a *later* build's test worker if this task's worker lived and
-    // died inside a single poll -- is to leave a stack trace nobody needed.
+    // Nothing here kills, interrupts or signals anything, so the worst a misfire can do is leave a
+    // stack trace nobody needed. It has one, and it is the ordinary CI shape rather than an exotic
+    // case: the worker is found by scanning this daemon's descendants for GradleWorkerMain, which
+    // cannot tell one invocation's worker from the next, and the Unit tests job runs
+    // testDebugUnitTest and jacocoTestReport back to back against the same daemon. If this task's
+    // own worker lived and died inside a single poll, the watchdog can adopt the following one.
     //
     // Everything it needs is read here, at configuration time, and captured by value. Reaching
     // back through the task or the project from inside the action would not survive the
