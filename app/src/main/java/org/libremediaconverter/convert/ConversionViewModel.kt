@@ -101,7 +101,42 @@ sealed interface ConversionState {
         val mimeType: String = "",
     ) : ConversionState
     data class Saved(val displayName: String) : ConversionState
-    data class Failed(val message: String) : ConversionState
+
+    /**
+     * The job, or the save that followed it, could not be finished.
+     *
+     * [retry] is non-null for exactly one cause: a [ConversionViewModel.save] whose copy to the
+     * user's destination threw. That save deliberately keeps the staged file -- it can be the only
+     * copy of an hour of transcoding -- and this is what lets the screen offer it again. Every
+     * other failure leaves it null, because there is nothing staged to offer: a transcode that
+     * died produced no output, and a save that found the file gone has nothing left to save.
+     *
+     * Nullable rather than a `SaveFailed` state of its own. What the screen does with the message
+     * is identical either way, so a second variant would make every exhaustive `when` grow an arm
+     * that duplicates this one.
+     *
+     * A view of the file, not a second owner of it -- see [PendingSave].
+     */
+    data class Failed(val message: String, val retry: PendingSave? = null) : ConversionState
+}
+
+/**
+ * The staged output a save would target from this state, or null when there is nothing to save.
+ *
+ * One function for two callers that have to agree. [ConversionViewModel.save] picks the file to
+ * copy with it, and `ConverterScreen` registers its `CreateDocument` contract with the MIME type
+ * it returns; when those two read the state separately, a retry offered after a failed save opened
+ * the dialog with the *picker's* current type instead of the finished job's -- wrong for any job
+ * whose spec has been edited since, and for every reattached job, whose spec was never in these
+ * settings at all.
+ *
+ * Top-level and `internal` rather than a member of the ViewModel, so the screen can call it
+ * without one -- which is also what makes the derivation testable on the JVM.
+ */
+internal fun ConversionState.pendingSave(): PendingSave? = when (this) {
+    is ConversionState.Converted -> PendingSave(staged, suggestedName, mimeType)
+    is ConversionState.Failed -> retry
+    else -> null
 }
 
 @UnstableApi
@@ -161,10 +196,12 @@ class ConversionViewModel @JvmOverloads constructor(
     /**
      * The staged output this ViewModel is responsible for deleting.
      *
-     * A field rather than something read back out of [_state], because the state machine
-     * cannot answer the question on the path that needs it most: a failed [save] lands on
-     * [ConversionState.Failed], which carries a message and no file at all. By then the
-     * only remaining reference would have been lost.
+     * A field rather than something read back out of [_state], and still one now that
+     * [ConversionState.Failed] carries a [PendingSave] after a failed [save]. That handle is a
+     * view for the screen to offer a retry through; this one is the single reference [reset]
+     * deletes through, and keeping the two apart is what stops a second owner appearing. Reading
+     * the file back out of the state machine instead would mean trusting every state that has no
+     * file -- `Idle`, `Saved`, a transcode failure -- to say so.
      */
     private var pendingStaged: File? = null
 
@@ -426,35 +463,50 @@ class ConversionViewModel @JvmOverloads constructor(
     /**
      * Copies the staged result out to the destination the user picked.
      *
+     * Reached from [ConversionState.Converted] and again from a [ConversionState.Failed] that an
+     * earlier save left carrying its file. [pendingSave] is what makes those one call rather than
+     * two, so a retry cannot drift from the first attempt in what it copies or what it calls it.
+     *
      * The existence check is not redundant with the one reattachment already made. That one ran
      * inside a tag query which, for a result offered on launch, can be hours older than the tap —
      * and `cacheDir` is exactly the directory the OS empties when it wants space, which is also
      * what the sweep does to anything a day old. Without it the file's absence arrived as
-     * `staged.inputStream()` throwing, and `e.message` put a raw ENOENT path on screen.
+     * `staged.inputStream()` throwing, and `e.message` put a raw ENOENT path on screen. A retry
+     * meets that same check a second time, which is the point of reusing it here.
      */
     fun save(destination: Uri) {
-        val converted = _state.value as? ConversionState.Converted ?: return
-        if (!converted.staged.isFile) {
+        val pending = _state.value.pendingSave() ?: return
+        if (!pending.staged.isFile) {
+            // No retry handle: the file such a state would offer again is exactly the one that
+            // has gone, so carrying it would put a button on screen that cannot do anything.
             _state.value = ConversionState.Failed(STAGED_FILE_GONE_MESSAGE)
             return
         }
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    publisher.publish(converted.staged, destination)
-                    converted.staged.delete()
+                    publisher.publish(pending.staged, destination)
+                    pending.staged.delete()
                 }
             }.onSuccess {
                 // publish() already deleted it; nothing left to clean up.
                 pendingStaged = null
-                _state.value = ConversionState.Saved(converted.suggestedName)
+                _state.value = ConversionState.Saved(pending.suggestedName)
             }.onFailure { e ->
                 // Deliberately NOT cleared. A failed save may mean the staged file is the
                 // only copy of an hour of transcoding, and the user's destination did not
                 // receive it -- deleting here would destroy the work to tidy up a cache
                 // directory. It stays collectable: by a later reset(), or by the sweep once
                 // it is old enough to be certain nobody is coming back for it.
-                _state.value = ConversionState.Failed(e.message ?: "Could not save the file.")
+                //
+                // `pending` rides on the state so the screen can offer that file again. It used
+                // to live only in `pendingStaged`, where nothing on screen could reach it -- so
+                // the single button this branch rendered was "Start over", which deletes the very
+                // file the paragraph above goes out of its way to keep. It is `pending` rather
+                // than a fresh handle for the second failure's sake: a retry that fails again
+                // lands back here still carrying the file, not on a bare Failed that would take
+                // the offer away.
+                _state.value = ConversionState.Failed(e.message ?: "Could not save the file.", pending)
             }
         }
     }
@@ -468,6 +520,12 @@ class ConversionViewModel @JvmOverloads constructor(
      * cancelled with [viewModelScope] if the Activity finishes first, so it is a best
      * effort rather than a guarantee. `OutputPublisher.sweepStaging` is the backstop for
      * the times it does not run.
+     *
+     * **It still deletes from a [ConversionState.Failed] carrying a [PendingSave], and that is a
+     * decision rather than something inherited.** Deletion is acceptable there only because the
+     * alternative was offered first: the screen puts "Try saving again" directly above this
+     * button, so reaching it is the user saying the work is not worth keeping. Until that button
+     * existed, this delete was the only thing a failed save could lead to — which was the defect.
      */
     fun reset() {
         observer?.cancel()

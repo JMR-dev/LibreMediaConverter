@@ -53,10 +53,11 @@ import java.io.File
  *   it -- so it is unobservable from a JVM test, the same limit `FileCardTest` records for
  *   `HorizontalDivider`. The message text itself is asserted; the colour would need a screenshot.
  * - **The three `assertDoesNotExist` checks on [TestTags.Converter.FILE_CARD] are compile-guarded,
- *   not guarded by this file.** `Idle` is a `data object`, and `Saved` and `Failed` carry only a
- *   `displayName` and a `message`; none of the three has an `input`, so `FileCard(s.input)` does not
- *   compile in those arms. The lines stay because they state the intent cheaply, but they are not
- *   what stops a `FileCard` appearing there and this file does not claim they are.
+ *   not guarded by this file.** `Idle` is a `data object`, `Saved` carries a `displayName`, and
+ *   `Failed` carries a message and -- after a failed save only -- the staged file it left behind;
+ *   none of the three has an `input`, so `FileCard(s.input)` does not compile in those arms. The
+ *   lines stay because they state the intent cheaply, but they are not what stops a `FileCard`
+ *   appearing there and this file does not claim they are.
  * - **Which constant each chip hands back** belongs to `ConverterPickerSelectionTest`, and **what
  *   the file card says about an unknown size** to `FileCardTest`. This file asserts that `Ready`
  *   puts those leaves on screen at all, not what they then do.
@@ -326,9 +327,69 @@ class ConverterStateAffordancesTest {
         composeRule.onNodeWithTag(TestTags.Converter.FILE_CARD).assertDoesNotExist()
     }
 
+    /**
+     * **The assertion that bounds #30's whole change**, and the one worth breaking things to keep.
+     *
+     * A transcode that died staged nothing, so its `Failed` carries no [PendingSave] and there is
+     * nothing for a save dialog to be handed. Making the retry unconditional -- or making the
+     * `WorkInfo.State.FAILED` arm of `ConversionViewModel.observe` carry a handle it has no file
+     * for -- puts a button on screen that can only fail, and this is what notices.
+     */
+    @Test
+    fun `a transcode failure offers no way to save`() {
+        setContent(ConversionState.Failed(message = "Ran out of space while writing the output."))
+
+        composeRule.onNodeWithTag(TestTags.RETRY_SAVE).assertDoesNotExist()
+        composeRule.onNodeWithTag(TestTags.SAVE_FILE).assertDoesNotExist()
+    }
+
     @Test
     fun `tapping start over after a failure resets and does nothing else`() {
         setContent(ConversionState.Failed(message = "Ran out of space while writing the output."))
+
+        composeRule.onNodeWithTag(TestTags.START_OVER).performScrollTo().performClick()
+
+        assertEquals(listOf("reset"), fired)
+    }
+
+    // ----------------------------------------------------- Failed, carrying a file
+
+    /**
+     * The defect in #30, stated as what the branch must render.
+     *
+     * `save()` keeps the staged file on a failure deliberately -- it can be the only copy of an
+     * hour of transcoding -- and before this the only control here was "Start over", wired to
+     * `reset()`, which deletes exactly that file. Both buttons, not one: the restart has to stay
+     * reachable, because leaving a full-size file in cache is the outcome it exists to avoid.
+     */
+    @Test
+    fun `a failed save offers the file again as well as a restart`() {
+        setContent(failedSave())
+
+        composeRule.onNodeWithTag(TestTags.RETRY_SAVE).assertExists()
+        composeRule.onNodeWithTag(TestTags.START_OVER).assertExists()
+    }
+
+    /**
+     * The name, not just that something fired: it comes from the finished job, and a retry wired to
+     * a literal or to the picker's current guess would hand the dialog a name the job never chose.
+     */
+    @Test
+    fun `tapping try saving again hands back the name the job chose`() {
+        setContent(failedSave())
+
+        composeRule.onNodeWithTag(TestTags.RETRY_SAVE).performScrollTo().performClick()
+
+        assertEquals(listOf("save:holiday.mp4"), fired)
+    }
+
+    /**
+     * Start over from here still resets, and resetting still deletes -- see `reset()`'s KDoc for
+     * why that is acceptable now and was not before. What it must not do is save on the way past.
+     */
+    @Test
+    fun `tapping start over after a failed save resets and does not save`() {
+        setContent(failedSave())
 
         composeRule.onNodeWithTag(TestTags.START_OVER).performScrollTo().performClick()
 
@@ -348,6 +409,21 @@ class ConverterStateAffordancesTest {
      * missing file rather than throwing, so the size line reads `0 B` and no temporary folder is
      * needed to render the arm.
      */
+    /**
+     * A `Failed` an earlier save left carrying its file, which is the only way [retry] is non-null.
+     *
+     * The same missing `staged` path as [converted], and for the same reason: this arm renders no
+     * size line at all, so nothing here ever touches the filesystem.
+     */
+    private fun failedSave() = ConversionState.Failed(
+        message = "There was not enough room on the destination.",
+        retry = PendingSave(
+            staged = File("no-such-staged-output.mp4"),
+            suggestedName = "holiday.mp4",
+            mimeType = "video/mp4",
+        ),
+    )
+
     private fun converted(routeReason: String = "") = ConversionState.Converted(
         input = input(),
         staged = File("no-such-staged-output.mp4"),

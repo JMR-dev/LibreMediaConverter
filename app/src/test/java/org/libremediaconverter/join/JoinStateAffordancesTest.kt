@@ -18,6 +18,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.InputFile
+import org.libremediaconverter.convert.PendingSave
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.ui.TestTags
 import org.robolectric.RobolectricTestRunner
@@ -219,6 +220,51 @@ class JoinStateAffordancesTest {
         assertEquals(listOf("reset"), events)
     }
 
+    /**
+     * The negative that bounds #30 on this screen. A join that died staged nothing, so its `Failed`
+     * carries no [PendingSave] and there is nothing a save dialog could be handed. A retry button
+     * rendered unconditionally here could only fail, and this is what notices.
+     */
+    @Test
+    fun `a failed join offers no way to save`() {
+        setContent(JoinState.Failed(message = "The second file has no audio track, so joining stopped."))
+
+        composeRule.onNodeWithTag(TestTags.RETRY_SAVE).assertDoesNotExist()
+        composeRule.onNodeWithTag(TestTags.SAVE_FILE).assertDoesNotExist()
+    }
+
+    /**
+     * #30 on this screen: `save()` keeps the staged file when the copy out throws, and until this
+     * branch grew a second button the only control it rendered was "Start over" -- `reset()`, which
+     * deletes exactly that file. Both, not one: the restart still has to be reachable.
+     */
+    @Test
+    fun `a failed join save offers the file again as well as a restart`() {
+        setContent(failedSave())
+
+        composeRule.onNodeWithTag(TestTags.RETRY_SAVE).assertExists()
+        composeRule.onNodeWithTag(TestTags.START_OVER).assertExists()
+    }
+
+    /** The name comes from the job, so a retry wired to a literal would hand back the wrong one. */
+    @Test
+    fun `tapping try saving again hands back the name the join chose`() {
+        setContent(failedSave())
+
+        composeRule.onNodeWithTag(TestTags.RETRY_SAVE).performScrollTo().performClick()
+
+        assertEquals(listOf("save:joined.mp4"), events)
+    }
+
+    @Test
+    fun `tapping start over after a failed join save resets and does not save`() {
+        setContent(failedSave())
+
+        composeRule.onNodeWithTag(TestTags.START_OVER).performScrollTo().performClick()
+
+        assertEquals(listOf("reset"), events)
+    }
+
     /** Anything `FileRow` tagged, whichever file it is showing. The prefix comes from the table. */
     private val isFileRow = SemanticsMatcher("is a join file row") { node ->
         node.config.getOrNull(SemanticsProperties.TestTag)?.startsWith(TestTags.Join.fileRow("")) == true
@@ -228,6 +274,19 @@ class JoinStateAffordancesTest {
         uri = Uri.parse("content://test/$displayName"),
         displayName = displayName,
         sizeBytes = 4_000_000L,
+    )
+
+    /**
+     * A `Failed` an earlier save left carrying its file, which is the only way `retry` is non-null.
+     * `staged` names a missing file for the same reason [joined] does -- this arm reads no length.
+     */
+    private fun failedSave() = JoinState.Failed(
+        message = "There was not enough room on the destination.",
+        retry = PendingSave(
+            staged = File("no-such-staged-output.mp4"),
+            suggestedName = "joined.mp4",
+            mimeType = "video/mp4",
+        ),
     )
 
     /** `staged` names a missing file deliberately -- see the same helper in `JoinScreenContentTest`. */

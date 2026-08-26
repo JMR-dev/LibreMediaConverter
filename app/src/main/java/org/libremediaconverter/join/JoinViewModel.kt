@@ -18,6 +18,7 @@ import kotlinx.coroutines.withContext
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.InputFile
 import org.libremediaconverter.convert.InputQuery
+import org.libremediaconverter.convert.PendingSave
 import org.libremediaconverter.convert.STAGED_FILE_GONE_MESSAGE
 import org.libremediaconverter.model.ConcatStrategy
 import org.libremediaconverter.work.ConcatWorker
@@ -44,7 +45,30 @@ sealed interface JoinState {
         val mimeType: String,
     ) : JoinState
     data class Saved(val displayName: String) : JoinState
-    data class Failed(val message: String) : JoinState
+
+    /**
+     * The join, or the save that followed it, could not be finished.
+     *
+     * [retry] is non-null for exactly one cause, and for the same reason as on
+     * `ConversionState.Failed`: a [JoinViewModel.save] whose copy to the user's destination threw
+     * keeps the staged file, and this is what lets the screen offer it again. Every other failure
+     * leaves it null — a join that died produced no output, and a save that found the file gone
+     * has nothing left to save.
+     */
+    data class Failed(val message: String, val retry: PendingSave? = null) : JoinState
+}
+
+/**
+ * The staged output a save would target from this state, or null when there is nothing to save.
+ *
+ * The join tab's half of `ConversionState.pendingSave`, and it exists for the same reason: `save`
+ * and `JoinScreen`'s `CreateDocument` registration both have to answer this question, and answering
+ * it twice is how a retry ends up opening the dialog with a type the finished job never chose.
+ */
+internal fun JoinState.pendingSave(): PendingSave? = when (this) {
+    is JoinState.Joined -> PendingSave(staged, suggestedName, mimeType)
+    is JoinState.Failed -> retry
+    else -> null
 }
 
 @UnstableApi
@@ -70,9 +94,10 @@ class JoinViewModel @JvmOverloads constructor(
      * The staged output this ViewModel is responsible for deleting.
      *
      * Held here rather than read back out of [_state] for the same reason as in
-     * `ConversionViewModel`: a failed [save] lands on [JoinState.Failed], which carries a
-     * message and no file, so the state machine cannot answer this on the one path that
-     * most needs it.
+     * `ConversionViewModel`, and still held here now that [JoinState.Failed] carries a
+     * [PendingSave] after a failed [save]: that handle is a view for the screen to offer a retry
+     * through, this one is the single reference [reset] deletes through, and keeping the two
+     * apart is what stops a second owner of the file appearing.
      */
     private var pendingStaged: File? = null
 
@@ -229,29 +254,38 @@ class JoinViewModel @JvmOverloads constructor(
      * join offered by reattachment was last seen during a tag query that may be hours old, and
      * `cacheDir` is reclaimed by the OS and swept by this app. Without it the file's absence
      * reached the screen as a raw ENOENT path.
+     *
+     * Reached from [JoinState.Joined] and again from a [JoinState.Failed] an earlier save left
+     * carrying its file; [pendingSave] is what makes those the same call.
      */
     fun save(destination: Uri) {
-        val joined = _state.value as? JoinState.Joined ?: return
-        if (!joined.staged.isFile) {
+        val pending = _state.value.pendingSave() ?: return
+        if (!pending.staged.isFile) {
+            // No retry handle -- the file it would offer again is the one that has gone.
             _state.value = JoinState.Failed(STAGED_FILE_GONE_MESSAGE)
             return
         }
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    publisher.publish(joined.staged, destination)
-                    joined.staged.delete()
+                    publisher.publish(pending.staged, destination)
+                    pending.staged.delete()
                 }
             }.onSuccess {
                 // publish() already deleted it; nothing left to clean up.
                 pendingStaged = null
-                _state.value = JoinState.Saved(joined.suggestedName)
+                _state.value = JoinState.Saved(pending.suggestedName)
             }.onFailure { e ->
                 // Deliberately NOT cleared -- see the same branch in ConversionViewModel.
                 // A failed save can leave the staged file as the only copy of the work, so
                 // it is left for a later reset() or for the sweep to collect once its age
                 // makes it certain nobody is coming back for it.
-                _state.value = JoinState.Failed(e.message ?: "Could not save the file.")
+                //
+                // `pending` travels on the state so the screen can offer the file again rather
+                // than leaving "Start over" -- which deletes it -- as the only thing on offer.
+                // Passing `pending` rather than rebuilding it is what keeps a retry that fails
+                // again on a carrying Failed instead of a bare one.
+                _state.value = JoinState.Failed(e.message ?: "Could not save the file.", pending)
             }
         }
     }
@@ -261,6 +295,10 @@ class JoinViewModel @JvmOverloads constructor(
      *
      * Best effort, not a guarantee: the delete is cancelled with [viewModelScope] if the
      * Activity finishes first. `OutputPublisher.sweepStaging` is the backstop.
+     *
+     * It deletes from a [JoinState.Failed] carrying a [PendingSave] too, deliberately and for the
+     * reason `ConversionViewModel.reset` writes out: the screen offers "Try saving again" above
+     * this button, so deletion is what the user chose rather than all this state could do.
      */
     fun reset() {
         observer?.cancel()

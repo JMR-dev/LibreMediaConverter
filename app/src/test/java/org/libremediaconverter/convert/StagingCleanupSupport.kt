@@ -83,12 +83,44 @@ class SucceedingWorkerFactory(private val outputData: Data) : WorkerFactory() {
 }
 
 /**
+ * Stands in for a worker that died, reporting [outputData] on the way out.
+ *
+ * The counterpart to [SucceedingWorkerFactory], and needed for the same reason: the real workers
+ * cannot run on the JVM, so the only way to ask what a ViewModel does with a `FAILED` `WorkInfo` is
+ * to produce one. A `Result.failure` carrying `KEY_ERROR` is exactly what both real workers report
+ * when their engine gives up, and it is the one path where nothing has ever been staged.
+ *
+ * `runAttemptCount` is irrelevant here: `Result.failure` is terminal, so WorkManager does not retry
+ * it and the state goes straight to `Failed` rather than through `Waiting`.
+ */
+class FailingWorkerFactory(private val outputData: Data) : WorkerFactory() {
+
+    override fun createWorker(
+        appContext: Context,
+        workerClassName: String,
+        workerParameters: WorkerParameters,
+    ): ListenableWorker = object : Worker(appContext, workerParameters) {
+        override fun doWork(): Result = Result.failure(outputData)
+    }
+}
+
+/**
  * Installs a synchronous test WorkManager whose workers succeed with [outputData].
  *
  * @return the factory, so a caller that cares can read back what was enqueued.
  */
 fun installTestWorkManager(context: Context, outputData: Data): SucceedingWorkerFactory {
     val factory = SucceedingWorkerFactory(outputData)
+    installWorkManager(context, factory)
+    return factory
+}
+
+/** Installs a synchronous test WorkManager whose workers fail, reporting [outputData]. */
+fun installFailingTestWorkManager(context: Context, outputData: Data) {
+    installWorkManager(context, FailingWorkerFactory(outputData))
+}
+
+private fun installWorkManager(context: Context, factory: WorkerFactory) {
     WorkManagerTestInitHelper.initializeTestWorkManager(
         context,
         Configuration.Builder()
@@ -98,7 +130,6 @@ fun installTestWorkManager(context: Context, outputData: Data): SucceedingWorker
             .setWorkerFactory(factory)
             .build(),
     )
-    return factory
 }
 
 /**
