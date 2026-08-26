@@ -123,10 +123,10 @@ install for code that can never run — and on API 37 the full APK does not fit 
 - The `model` package is excluded from `ReturnCount` and `CyclomaticComplexMethod` only. It is the
   decision layer, where one branch is one documented user-visible outcome and the metric counts
   answers rather than complexity. Every other rule still applies there.
-- **Coverage is reported, not gated** — **69.2% of lines (1519/2194), 53.2% of branches**,
-  measured 2026-08-24 with `./gradlew :app:jacocoTestReport`.
+- **Coverage is reported, not gated** — **81.4% of lines (1847/2268), 60.2% of branches**,
+  measured 2026-08-25 with `./gradlew :app:jacocoTestReport`, against 417 JVM tests in 60 classes.
 
-  **Every figure this file carried before that date was an artifact, roughly half the real one.**
+  **Every figure this file carried before 2026-08-24 was an artifact, roughly half the real one.**
   Robolectric loads classes through its own sandbox classloader with no source location, JaCoCo
   skips no-location classes by default, and nothing told it otherwise — so **not one Robolectric
   test counted**, and Robolectric is what exercises the framework edge here. The
@@ -140,9 +140,11 @@ install for code that can never run — and on API 37 the full APK does not fit 
   disproportionately Robolectric, so each one added denominator and no numerator — the measurement
   was punishing exactly the tests that were hardest to write.
 
-  Two things still hold. A floor needs a baseline that has settled, and this one has now moved by
-  39 points in a single build change, so it has not. And **re-measure before quoting** — that
-  instruction is the only reason this was caught.
+  Two things still hold. A floor needs a baseline that has settled, and this one has not: it moved
+  39 points in a single build change on 2026-08-24, then another 12 as the #52 test push landed —
+  69.2% -> 81.4% line, 53.2% -> 60.2% branch — while the denominator grew 2194 -> 2268, because the
+  same push added production code of its own. And **re-measure before quoting** — that instruction
+  is the only reason either move was caught.
 - **Testable code is not done until it is tested.** If a piece is unit testable, it gets unit
   tests before it counts as done. If it is e2e testable, it gets e2e tests. Both clauses apply —
   a change that is both needs both.
