@@ -283,6 +283,12 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     fi
     echo
   } >> "$GITHUB_STEP_SUMMARY"
+  # The summary page is the deliverable -- "readable without opening a log" is what #83 asked
+  # for -- and GitHub exposes no API for reading a job summary back, so a write that silently
+  # did not happen would be invisible. This line is in the step log, which can be read.
+  echo "  (the table above is also on the job summary page)"
+else
+  echo "  (GITHUB_STEP_SUMMARY is unset -- step log only)"
 fi
 
 exit 0
