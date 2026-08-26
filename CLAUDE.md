@@ -236,3 +236,12 @@ Because versions float, a build can change without a commit. `./gradlew :app:dep
   `@OptIn`. Android lint's `UnsafeOptInUsageError` catches a missed one.
 - **Release builds ship both ABIs.** `-PabiFilters` is a test-run override only; `build.yml`
   verifies the released APK carries every ABI and that all native libraries are 16 KB aligned.
+- **A JUnit `Timeout` — rule or `@Test(timeout=)` — cannot be used in the JVM suite.** Both run the
+  test body on a separate thread, and every Compose test here goes through Robolectric's paused
+  main looper: `UnsupportedOperationException: main looper can only be controlled from main
+  thread`, from `ShadowPausedLooper` under `RobolectricIdlingStrategy.runUntilIdle`. The identical
+  tests pass with the timeout removed, so it is the mechanism, not the test. What bounds a hung
+  run instead is `timeout` on the `Test` tasks plus the jstack watchdog beside it in
+  `app/build.gradle.kts`, neither of which moves a thread. `HangBoundTest` guards both numbers,
+  and **a timed-out run writes no XML for the class that hung** — the dump is its only
+  attribution, so do not delete the watchdog as stray config.
