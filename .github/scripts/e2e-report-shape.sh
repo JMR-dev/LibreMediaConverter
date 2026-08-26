@@ -30,16 +30,31 @@
 #
 # Usage:
 #   e2e-report-shape.sh <label> <gradle-log> [<baseline-file>]
+#   E2E_WEDGED_AFTER=<seconds>   the wrapper timeout killed gradle after that many seconds
 #
 # With a third argument the run is compared against the baseline in that file (advisory mode)
 # and a `::notice::` is emitted per deviation. NEVER `::error::`: the advisory job is
 # `continue-on-error: true` and stays that way, and an error annotation would be a new way for
 # a diagnostic to change a conclusion.
+#
+# WHY THE WEDGE ARRIVES AS AN ENV VAR (#118) rather than being read out of the log like every
+# other field: there is nothing in the log to read. A wedge is gradle never returning, so gradle
+# never printed a verdict, never printed a truncation line, and never aborted instrumentation --
+# the log of a wedged leg is the log of a run that simply stops. Measured on job 98035980326:
+# `expected: 59`, `received: 59`, `completed cleanly: yes`, six seconds before the wedge warning,
+# for a leg that the timeout had killed 22 minutes in. Only e2e-run.sh knows, because only it
+# saw `timeout` exit 124, so it says so. Guessing it from a log that ends abruptly would call
+# every cancelled run a wedge.
+#
+# It is read as a STRING and only ever interpolated into one. `[ -n ... ]`, never `-gt`: it
+# crosses a process boundary from a shell that deliberately sets it EMPTY on every non-wedge
+# path, and an arithmetic test on an empty string is the header's rule four paragraphs up.
 set -uo pipefail
 
 LABEL="${1:-unknown}"
 LOG="${2:-}"
 BASELINE_FILE="${3:-}"
+WEDGED_AFTER="${E2E_WEDGED_AFTER:-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
@@ -115,6 +130,13 @@ elif [ -n "$abort_received" ]; then
 elif [ -n "$expected" ] && [ -z "$abort_line" ]; then
   received="$expected"
   received_src="the run was not truncated, so every expected test reported"
+  # ... unless it was killed, in which case "not truncated" is only "gradle never got as far as
+  # saying so". This is the branch the wedged leg in #118 took -- with no XML written yet, the
+  # number is what the runner was TOLD to run, and the source line said the opposite in the same
+  # table that called the leg clean. The number is deliberately left alone: it is still the best
+  # available answer, and only the claim about where it came from was wrong.
+  [ -n "$WEDGED_AFTER" ] \
+    && received_src="no test XML was written and gradle never printed a truncation line — but the leg was killed mid-run, so this is what it was told to run, not what reported"
 fi
 
 failed="unknown"
@@ -152,6 +174,12 @@ elif [ "$no_run" = "nothing" ]; then
   # "cleanly" would be a lie about a run that left no evidence it happened.
   completed="unknown"
   completed_src="no runner output to read"
+elif [ -n "$WEDGED_AFTER" ]; then
+  # The wedge is checked LAST of the four, so it only ever overrides the `yes`. The two "no"s
+  # above are already right and name the abort, which the wedge row does not; `unknown` is
+  # already right too. A wedge on top of an abort is both facts, and both get printed.
+  completed="**no**"
+  completed_src="the wrapper timeout killed gradle after ${WEDGED_AFTER}s — instrumentation itself was never aborted, which is why nothing in the log says so"
 else
   completed="yes"
   completed_src="no truncation line and no \`INSTRUMENTATION_ABORTED\`"
@@ -217,6 +245,11 @@ echo "----- RUN SHAPE (api${LABEL}) -----"
 echo "  expected:          $expected"
 echo "  received:          $received"
 echo "  failed:            $failed"
+# Above `completed cleanly`, because it is the line that says what happened to the leg and the
+# other one only qualifies it. A reader who stops after three rows still sees it.
+if [ -n "$WEDGED_AFTER" ]; then
+  echo "  wedged:            yes -- gradle was killed after ${WEDGED_AFTER}s and never returned"
+fi
 echo "  completed cleanly: ${completed//\*/}"
 if [ -n "$abort_received" ]; then
   echo "  received before the abort: $abort_received"
@@ -249,6 +282,9 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo "| expected | $expected | $expected_src |"
     echo "| received | $received | $received_src |"
     echo "| failed | $failed | $failed_src |"
+    if [ -n "$WEDGED_AFTER" ]; then
+      echo "| wedged | **yes** | \`timeout\` fired after ${WEDGED_AFTER}s and killed gradle (exit 124), which is what e2e-run.sh then captured the wedge diagnostics for |"
+    fi
     echo "| completed cleanly | $completed | $completed_src |"
     if [ -n "$abort_received" ]; then
       echo "| received before the abort | $abort_received | the same line — the XML above counts the truncated test as a failure, this number does not |"

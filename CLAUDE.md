@@ -98,6 +98,13 @@ days. Read it as the current answer, and see the git history if you need the old
   is written anyway and says nothing about it — `.github/scripts/e2e-report-shape.sh` is where that
   is measured and explained.
 
+  Every leg prints that table, advisory or not, and **on the wedge path it also carries a `wedged:`
+  row** (#118). `completed cleanly` only ever meant "instrumentation was not aborted", which stays
+  true of a leg the `WEDGE_TIMEOUT` killed 22 minutes in — so without that row the table read
+  `received: 59, completed cleanly: yes` for a leg that had just died. The wedge is passed to the
+  report as `E2E_WEDGED_AFTER` by `e2e-run.sh`, which is the only thing that can know it: a wedge
+  is gradle never returning, so the log it left says nothing about it.
+
 Still true, and the reason the advisory job is not simply deleted: **API 37 needs a manual check on
 the Pixel 10 Pro XL before each release.** Those three tests are the one thing CI cannot answer
 for.
