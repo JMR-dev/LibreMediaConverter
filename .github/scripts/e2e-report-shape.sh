@@ -165,17 +165,31 @@ fi
 # the advisory leg should run and how many should fail. A smaller `failed` means one now passes
 # -- which is the trigger to delete the annotation, written down in FailsOnEmulatorApi37.kt.
 # ---------------------------------------------------------------------------
+#
+# `advisory` and `baseline` are two variables on purpose. "A comparison was asked for" and "a
+# number was found to compare against" are different facts, and collapsing them is how this
+# report would go quietly back to being the thing #83 filed: the `sed` below is anchored, so
+# indenting the const into an object -- or renaming it, or moving it to another file -- empties
+# `baseline`, and a single flag would take the whole comparison down with it while the table
+# kept printing. An unreadable baseline is itself a deviation, and is announced as one.
+advisory="no"
 baseline=""
 marked=""
 deviations=()
-if [ -n "$BASELINE_FILE" ] && [ -f "$BASELINE_FILE" ]; then
-  baseline="$(sed -nE 's/^const val FAILS_ON_EMULATOR_API37_BASELINE = ([0-9]+).*/\1/p' "$BASELINE_FILE" | head -1)"
+if [ -n "$BASELINE_FILE" ]; then
+  advisory="yes"
+  [ -f "$BASELINE_FILE" ] \
+    && baseline="$(sed -nE 's/^const val FAILS_ON_EMULATOR_API37_BASELINE = ([0-9]+).*/\1/p' "$BASELINE_FILE" | head -1)"
   # The #81 check, verbatim: what the tree actually carries. Reported next to the baseline so a
   # stale baseline shows up here rather than only once the emulator disagrees with it.
   if [ -d "$REPO_ROOT/app/src/androidTest" ]; then
     marked="$(grep -rn "@FailsOnEmulatorApi37" "$REPO_ROOT/app/src/androidTest" --include='*.kt' \
       | grep -v import | grep -c FailsOn || true)"
   fi
+fi
+
+if [ "$advisory" = "yes" ] && [ -z "$baseline" ]; then
+  deviations+=("the committed baseline could not be read from \`$(basename -- "$BASELINE_FILE")\` — has \`FAILS_ON_EMULATOR_API37_BASELINE\` been renamed, indented into a class, or moved? Nothing was compared")
 fi
 
 if [ -n "$baseline" ]; then
@@ -211,7 +225,7 @@ if [ -n "$failed_names" ]; then
   echo "  failed tests:"
   printf '%s\n' "$failed_names" | sed -e 's/^/    /'
 fi
-if [ -n "$baseline" ]; then
+if [ "$advisory" = "yes" ]; then
   if [ "${#deviations[@]}" -eq 0 ]; then
     echo "  baseline: matches ($baseline expected, $baseline failed)"
   else
@@ -250,9 +264,13 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
       echo "> $xml_count test XML files were present; the counts above come from the first."
       echo
     fi
-    if [ -n "$baseline" ]; then
+    if [ "$advisory" = "yes" ]; then
       if [ "${#deviations[@]}" -eq 0 ]; then
         echo "**Matches the committed baseline of $baseline** — $baseline tests carry \`@FailsOnEmulatorApi37\` and all $baseline failed, which is what this job is for."
+      elif [ -z "$baseline" ]; then
+        echo "**The committed baseline could not be read, so nothing was compared.** Announced as a notice, not an error: this job is advisory and its conclusion is unchanged by anything here."
+        echo
+        printf -- '- %s\n' "${deviations[@]}"
       else
         echo "**DEVIATION from the committed baseline of $baseline.** Announced as a notice, not an error: this job is advisory and its conclusion is unchanged by anything here."
         echo

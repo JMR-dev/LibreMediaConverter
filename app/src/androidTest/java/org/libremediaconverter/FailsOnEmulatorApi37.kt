@@ -31,9 +31,11 @@ annotation class FailsOnEmulatorApi37
  * How many tests carry [FailsOnEmulatorApi37] — the advisory API 37 job's committed baseline.
  *
  * **No Kotlin reads this, and it is not stray config.** `.github/scripts/e2e-report-shape.sh`
- * parses it out of this file by name, and the advisory job compares the run it just did against
- * it: this many tests should start, and all of them should fail. Deleting it makes that
- * comparison silently stop happening — the report keeps printing, with nothing to compare to.
+ * parses it out of this file by name, with a line-anchored pattern, and the advisory job compares
+ * the run it just did against it: this many tests should start, and all of them should fail.
+ * Deleting it, renaming it, or indenting it into a class stops the comparison — the report would
+ * keep printing with nothing to compare to, so it announces that it could not read the baseline
+ * rather than falling quiet. If you see that notice, this line is what it means.
  *
  * **One number, both checks, and that is what the marker means.** A test carrying it cannot pass
  * on this image, so the count is simultaneously how many the advisory leg runs and how many fail.
