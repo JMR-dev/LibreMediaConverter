@@ -24,6 +24,24 @@ const val STAGED_FILE_GONE_MESSAGE: String =
         "Start over to make it again."
 
 /**
+ * A staged file that is still there to be saved, and everything the save dialog needs to offer it.
+ *
+ * The three travel together because a save cannot be repeated without all of them: the file to
+ * copy, the name to suggest, and the MIME type `CreateDocument` has to be registered with. None of
+ * them can be rederived from the pickers once the job is over -- they come from the job's own
+ * output `Data`, and a reattached job's spec was never in the current settings at all.
+ *
+ * Kept next to [STAGED_FILE_GONE_MESSAGE] for the same reason it is: both ViewModels need it and
+ * staging is what it is about.
+ *
+ * **A view of the staged file, never an owner of it.** The delete still runs through each
+ * ViewModel's own `pendingStaged` field, so a state carrying one of these can be dropped without
+ * losing the only reference -- which is what keeps "a `Failed` that carries a file" from being a
+ * new way to leak one.
+ */
+data class PendingSave(val staged: File, val suggestedName: String, val mimeType: String)
+
+/**
  * Staging and publication of conversion output.
  *
  * Conversions never write directly to the destination the user picked. FFmpeg and the
