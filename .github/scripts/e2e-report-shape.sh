@@ -208,11 +208,34 @@ if [ -n "$BASELINE_FILE" ]; then
   advisory="yes"
   [ -f "$BASELINE_FILE" ] \
     && baseline="$(sed -nE 's/^const val FAILS_ON_EMULATOR_API37_BASELINE = ([0-9]+).*/\1/p' "$BASELINE_FILE" | head -1)"
-  # The #81 check, verbatim: what the tree actually carries. Reported next to the baseline so a
-  # stale baseline shows up here rather than only once the emulator disagrees with it.
+  # What the tree actually carries. Reported next to the baseline so a stale baseline shows up
+  # here rather than only once the emulator disagrees with it.
+  #
+  # ANCHORED AT LINE START, AND WHITESPACE-OR-END-OF-LINE AFTER THE NAME (#120). The #81 check
+  # this replaces matched the string anywhere on any line, so #113's KDoc reading `Deliberately
+  # not @FailsOnEmulatorApi37` counted as a fourth marked test and the report announced a
+  # deviation on every PR. That is worse than a wrong number: #83 built this so a new failure
+  # could not be invisible, and a notice that is wrong every time teaches everyone to skim past
+  # deviation notices.
+  #
+  # THE OBVIOUS REPAIR IS A TRAP, and the reason for the second half of the pattern.
+  # `^[[:space:]]*@NAME[[:space:]]*$` -- "the annotation on a line of its own" -- also stops
+  # counting `@FailsOnEmulatorApi37 @Test`, which is legal Kotlin, and UNDERcounting is the
+  # dangerous direction: it hides a genuine new marker, which is the one thing this exists to
+  # catch. Measured against `testdata/marker-shapes`, a fixture carrying every shape at once:
+  # the old matcher says 5, own-line-only says 2, this one says 3. On the real tree, 4 / 3 / 3.
+  # e2e-report-shape-test.sh runs that fixture through this whole script.
+  #
+  # `^[[:space:]]*@` cannot match an `import` line, so the old `grep -v import` goes with it
+  # rather than staying to imply a filter is still doing work.
+  #
+  # This is a regex over source text and not a parser. An annotation inside a multi-line string,
+  # or inside a `/* */` block that opened mid-line, would still be counted. Neither exists here;
+  # if one ever does, this check wants a different tool rather than a longer regex.
   if [ -d "$REPO_ROOT/app/src/androidTest" ]; then
-    marked="$(grep -rn "@FailsOnEmulatorApi37" "$REPO_ROOT/app/src/androidTest" --include='*.kt' \
-      | grep -v import | grep -c FailsOn || true)"
+    marked="$(grep -rhcE '^[[:space:]]*@FailsOnEmulatorApi37([[:space:]]|$)' \
+      "$REPO_ROOT/app/src/androidTest" --include='*.kt' \
+      | awk '{ total += $1 } END { print total + 0 }' || true)"
   fi
 fi
 
