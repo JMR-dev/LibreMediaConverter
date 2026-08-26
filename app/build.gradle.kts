@@ -1,5 +1,7 @@
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.testing.jacoco.tasks.JacocoReport
+import java.io.File
+import java.time.Duration
 
 plugins {
     // Applied by id: these two come from the root buildscript classpath, which is what
@@ -216,6 +218,115 @@ tasks.withType<Test>().configureEach {
     inputs.file(rootProject.file(".github/workflows/build.yml"))
         .withPropertyName("releaseWorkflow")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // Same reasoning, same trap: HangBoundTest reads the two numbers below out of this file, and
+    // they are the one part of the change that does not compile. Without this the task stays
+    // UP-TO-DATE when the build script changes, so the guard would go stale on exactly the edit
+    // it exists to catch.
+    inputs.file(project.file("build.gradle.kts"))
+        .withPropertyName("moduleBuildScript")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // --- Bounding a hung run (#125) -----------------------------------------------------------
+    //
+    // This suite had no timeout of any kind, so a hang ran until something outside it gave up.
+    // #125 is a real Java-level deadlock -- a lock-order inversion between Room's
+    // TransactionExecutor and WorkManager's SerialExecutorImpl, reached through the WorkInfo flow
+    // -- and one local run sat in it for 47 minutes. On CI it would burn the Unit tests job's
+    // 30-minute cap and report as a job timeout with no cause at all.
+    //
+    // WHY NOT A JUnit `Timeout` RULE, which is the obvious answer: it runs the test body on a
+    // separate thread, and this suite is thread-affine. Measured here, `@Rule Timeout` and
+    // `@Test(timeout = ...)` against a `createComposeRule()` Robolectric test both give:
+    //
+    //     java.lang.UnsupportedOperationException: main looper can only be controlled from main
+    //       at org.robolectric.shadows.ShadowPausedLooper.executeOnLooper
+    //       at androidx.compose.ui.test.RobolectricIdlingStrategy.runUntilIdle
+    //
+    // The same two tests with the timeout removed pass, so that is the mechanism and not the
+    // probe. Nothing that moves a test off its own thread can be used here.
+    //
+    // `Task.timeout` moves nothing -- it stops the forked test JVM from outside. Its weakness is
+    // that it kills without a thread dump, and the jstack is the only reason #125 could be named
+    // at all; the watchdog below is what answers that, and it only dumps.
+    //
+    // THE NUMBER, against the slowest observed *pass* rather than the typical one. Eight CI runs
+    // sampled 2026-08-26, whole `./gradlew :app:testDebugUnitTest` invocation with compilation in
+    // it and this task a subset: 62, 76, 77, 79, 81, 84, 86 and 90 seconds. Locally the task
+    // itself is ~11 s over 454 tests. Ten minutes is ~6.7x the slowest of those and a third of
+    // the job's 30-minute cap, so a fired timeout still has room to be reported and uploaded. It
+    // is deliberately nowhere near the observed duration: a timeout that fires on a healthy slow
+    // runner turns a real signal into noise and teaches people to re-run reflexively.
+    timeout.set(Duration.ofMinutes(10))
+
+    // The dump, two minutes before the kill. jstack is what turned #125 from "CI timed out" into
+    // a named lock-order inversion, and `Task.timeout` on its own would have thrown it away.
+    //
+    // It is deliberately incapable of failing a build: it reads a live process and writes a file.
+    // Nothing here kills, interrupts or signals anything, so the worst a misfire can do is leave a
+    // stack trace nobody needed. It has one, and it is the ordinary CI shape rather than an exotic
+    // case: the worker is found by scanning this daemon's descendants for GradleWorkerMain, which
+    // cannot tell one invocation's worker from the next, and the Unit tests job runs
+    // testDebugUnitTest and jacocoTestReport back to back against the same daemon. If this task's
+    // own worker lived and died inside a single poll, the watchdog can adopt the following one.
+    //
+    // Everything it needs is read here, at configuration time, and captured by value. Reaching
+    // back through the task or the project from inside the action would not survive the
+    // configuration cache, which `gradle.properties` turns on for every build.
+    val threadDump = layout.buildDirectory.file("reports/hang/$name-threads.txt").get().asFile
+    val taskPath = path
+    val dumpAfterNanos = Duration.ofMinutes(8).toNanos()
+    val captureWindowNanos = Duration.ofMinutes(1).toNanos()
+    val pollMillis = 1_000L
+    doFirst {
+        val watchdog = Thread {
+            val startedAt = System.nanoTime()
+            var worker: ProcessHandle? = null
+            while (true) {
+                Thread.sleep(pollMillis)
+                val elapsed = System.nanoTime() - startedAt
+                val watched = worker
+                if (watched == null) {
+                    // Gradle forks the worker moments after this task starts. If none has shown
+                    // up by the end of the capture window there is nothing to watch, and going on
+                    // polling would only risk adopting some other build's.
+                    if (elapsed > captureWindowNanos) return@Thread
+                    worker = ProcessHandle.current().descendants()
+                        .filter { it.info().commandLine().orElse("").contains("GradleWorkerMain") }
+                        .findFirst().orElse(null)
+                } else if (!watched.isAlive) {
+                    return@Thread // the run finished; this is the healthy exit
+                } else if (elapsed >= dumpAfterNanos) {
+                    val jstack = File(File(System.getProperty("java.home"), "bin"), "jstack")
+                    threadDump.parentFile.mkdirs()
+                    if (jstack.canExecute()) {
+                        ProcessBuilder(jstack.absolutePath, "-l", watched.pid().toString())
+                            .redirectErrorStream(true)
+                            .redirectOutput(threadDump)
+                            .start()
+                            .waitFor()
+                    } else {
+                        threadDump.writeText("no jstack at ${jstack.absolutePath}\n")
+                    }
+                    // To stdout as well as to the file, and that is the half that matters on CI:
+                    // the Unit tests job uploads app/build/reports/tests/ and nothing else, so a
+                    // dump that only ever existed under reports/hang/ would be unreachable from a
+                    // red run -- which is the "timed out with no cause" this exists to end. The
+                    // step log always survives, and needs no workflow edit to say so.
+                    println(
+                        "$taskPath is still running after ${Duration.ofNanos(elapsed).toMinutes()} " +
+                            "minutes and is about to be timed out. Thread dump of pid " +
+                            "${watched.pid()}, also written to $threadDump -- look for 'Found one " +
+                            "Java-level deadlock' (that is #125).\n" + threadDump.readText(),
+                    )
+                    return@Thread
+                }
+            }
+        }
+        watchdog.isDaemon = true
+        watchdog.name = "hang-watchdog"
+        watchdog.start()
+    }
 
     extensions.configure<JacocoTaskExtension> {
         isIncludeNoLocationClasses = true
