@@ -27,10 +27,10 @@ import java.io.File
  * second, which is the same defect the ticket reported against reattachment with a different
  * coroutine on the losing side.
  *
- * Both cases below existed before the fix and neither was reported, because a pick that loses to
- * another pick still shows *a* file the user chose. That is what made this worth closing in the
- * same change: one rule covering every deferred write is checkable, where "the observer checks and
- * the pick does not" is a rule nobody can hold in their head.
+ * Both cases below were measured rather than assumed: deleting either guard turns the matching
+ * test red, and deleting the probe one turns nine other tests red with it. Neither was ever
+ * reported, because a pick that loses to another pick still shows *a* file the user chose -- which
+ * is what made it worth closing alongside #49 rather than leaving as a second thing to find.
  */
 @UnstableApi
 @RunWith(RobolectricTestRunner::class)

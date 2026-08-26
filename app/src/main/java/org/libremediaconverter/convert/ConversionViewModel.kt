@@ -207,8 +207,8 @@ class ConversionViewModel @JvmOverloads constructor(
      * land on top of a [reset] taken while its copy was in flight, putting `Saved` on a screen the
      * user has just cleared. Guarding it would drop that write instead, reporting nothing for a
      * file that may genuinely have reached the user's destination. Which of those two is right is
-     * a question about what the screen should offer during a save, not about this race, and it is
-     * left open rather than answered in passing.
+     * a question about what the screen should offer during a save, not about this race, so it is
+     * filed as issue #123 rather than decided here in passing.
      */
     private val ownership = ScreenOwnership()
 

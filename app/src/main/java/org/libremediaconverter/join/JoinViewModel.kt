@@ -109,8 +109,8 @@ class JoinViewModel @JvmOverloads constructor(
      * lands after a suspension point is guarded: the one in [onInputsPicked] and the one in
      * [observe]. [save] is the one left out, deliberately and with the same limit its counterpart
      * in `ConversionViewModel` spells out: nothing can overwrite what it writes, but it can still
-     * land on top of a [reset] taken while its copy was in flight, and which way that should go is
-     * a question about the save screen rather than about this race.
+     * land on top of a [reset] taken while its copy was in flight. Which way that should go is a
+     * question about the save screen rather than about this race -- issue #123.
      */
     private val ownership = ScreenOwnership()
 

@@ -21,10 +21,11 @@ import java.io.File
  * Issue #49, on the JVM and without the race.
  *
  * `ReattachOnLaunchTest.doesNotOverwriteAPickTheUserHasAlreadyMade` has been catching this on
- * devices since 2026-08-24 — four times in 400 gating leg-attempts, on API 33, 35 and 36 — and
- * every occurrence passed on re-run, which is why it was read as flaky infrastructure for two
- * days. It is not. The assertion it fails on is `expected null, but was:<Converted>`: a finished
- * job from an earlier session taking a screen the user had already picked a file on.
+ * devices since 2026-08-24 — four occurrences, spread across API 33, 35 and 36, which is what
+ * ruled out an emulator-image quirk. Every one was on attempt 1 and every one passed on re-run,
+ * which is why it was read as flaky infrastructure for two days. It is not. The assertion it fails
+ * on is `expected null, but was:<Converted>`: a finished job from an earlier session taking a
+ * screen the user had already picked a file on.
  *
  * The defect is a check-then-act whose act is deferred into another coroutine. `reattach()` reads
  * `_state.value` and then calls `observe()`, which *launches* a collector that has to suspend on
@@ -92,7 +93,7 @@ class ReattachmentOwnershipTest {
      * as a message posted to the main looper — and that looper is paused, so it cannot run until
      * something pumps it. `onInputPicked` is an ordinary synchronous call from this thread. The
      * pick is therefore *always* issued before the guard runs; none of it is left to timing, which
-     * is the whole point of writing this here rather than relying on the 1-in-130 device sighting.
+     * is the whole point of writing it here rather than relying on the rare device sighting.
      */
     @Test
     fun `a conversion found while the user was picking never reaches the screen`() {

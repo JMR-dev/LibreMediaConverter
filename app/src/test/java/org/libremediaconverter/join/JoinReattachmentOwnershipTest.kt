@@ -41,9 +41,9 @@ import java.io.File
  * assignment below, so nothing can interleave". There is no assignment below, and the two lines
  * are in different coroutines.
  *
- * The convert side has been failing this on CI for two days at roughly 1-in-130 and was read as
- * flaky infrastructure. `JoinViewModel` has the identical shape and no test at all, which is why
- * this one was written before the fix rather than after it.
+ * The convert side has been failing this on CI for two days — four occurrences across three API
+ * levels, each read as flaky infrastructure. `JoinViewModel` has the identical shape and no test
+ * at all, which is why this one was written before the fix rather than after it.
  */
 @UnstableApi
 @RunWith(RobolectricTestRunner::class)
