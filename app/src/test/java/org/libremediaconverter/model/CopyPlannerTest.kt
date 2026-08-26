@@ -146,6 +146,33 @@ class CopyPlannerTest {
         assertTrue("copying the only track is still a remux", plan.isPureRemux)
     }
 
+    /**
+     * The one plan `Media3Engine` cannot be handed.
+     *
+     * `EditedMediaItem.Builder` refuses a composition with both tracks removed —
+     * checkState("Audio and video cannot both be removed") — and this is how an ordinary-looking
+     * spec reaches it: a video codec named for a file that has no video, with the audio switched
+     * off. Neither half is unusual on its own, which is why validation could read the spec, see a
+     * video codec, and call it fine.
+     */
+    @Test
+    fun `an audio-only source with the audio dropped removes both tracks`() {
+        val audioOnly = InputProbe(
+            videoCodec = null,
+            audioCodec = "mp3",
+            hasVideo = false,
+            container = Container.MP3,
+            kind = InputKind.AUDIO_ONLY,
+        )
+        val plan = CopyPlanner.plan(
+            OutputSpec(Container.MP4, VideoCodec.H265, AudioCodec.NONE),
+            audioOnly,
+        )
+        assertEquals(VideoPlan.Drop, plan.video)
+        assertEquals(AudioPlan.Drop, plan.audio)
+        assertTrue("an empty plan is not a remux", !plan.isPureRemux)
+    }
+
     @Test
     fun `copying one track and encoding the other is not a pure remux`() {
         val plan = CopyPlanner.plan(
