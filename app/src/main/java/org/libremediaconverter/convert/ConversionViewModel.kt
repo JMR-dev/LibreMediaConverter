@@ -194,6 +194,19 @@ class ConversionViewModel @JvmOverloads constructor(
     private var activeWorkId: UUID? = null
 
     /**
+     * Who is allowed to write to this screen — see [ScreenOwnership] for the rule and why
+     * cancelling the superseded coroutine is not one.
+     *
+     * Every write below that lands after a suspension point is guarded by it: the two in
+     * [onInputPicked] and the one in [observe]. [save] is the one deferred write that is not, and
+     * deliberately: it is only reachable from [ConversionState.Converted] or a
+     * [ConversionState.Failed] carrying its file, so the only observation that could overwrite
+     * what it writes belongs to a job that has already reached a terminal state and will not emit
+     * again.
+     */
+    private val ownership = ScreenOwnership()
+
+    /**
      * The staged output this ViewModel is responsible for deleting.
      *
      * A field rather than something read back out of [_state], and still one now that
@@ -244,6 +257,10 @@ class ConversionViewModel @JvmOverloads constructor(
      * `Data` — see [ConversionState.Converted].
      */
     private fun reattach() {
+        // Read before the launch, and before the query it is about to suspend in. This is the
+        // claim the answer will belong to: anything the user does from here on supersedes it, and
+        // reading it on the far side of the query would read whatever superseded it instead.
+        val token = ownership.current
         viewModelScope.launch {
             val reattachment = Reattachment.choose(
                 workManager.jobSnapshots(
@@ -254,8 +271,17 @@ class ConversionViewModel @JvmOverloads constructor(
 
             // The query suspends, so by now the user may have picked a file or started a
             // conversion of their own. Either owns the screen; reattaching over it would throw
-            // away what they just did. Both this check and the assignment below run on the main
-            // dispatcher with no suspension point between them, so nothing can interleave.
+            // away what they just did.
+            //
+            // This catches a pick that has already *landed*, and only that. It used to claim that
+            // "both this check and the assignment below run on the main dispatcher with no
+            // suspension point between them, so nothing can interleave" — which was the exact
+            // opposite of what happens. There is no assignment below. There is observe(), which
+            // launches a *separate* coroutine that must suspend on `collect` before it can write
+            // anything, so the check happens at one moment and the write lands at another with a
+            // whole pick able to fit in between. That was issue #49, and believing this comment is
+            // why it read as flaky CI for two days. What actually holds the line is the token
+            // observe() carries: see [ScreenOwnership].
             if (_state.value !is ConversionState.Idle || activeWorkId != null) return@launch
 
             // Only a job that is the sole explanation for its staged file gets to name the input.
@@ -281,7 +307,7 @@ class ConversionViewModel @JvmOverloads constructor(
             activeWorkId = reattachment.job.id
             // No initial state of our own: the flow's first emission carries the job's real
             // state, so observe() maps it exactly as it would for a conversion started here.
-            observe(reattachment.job.id, input, cancelled = ConversionState.Idle)
+            observe(reattachment.job.id, input, cancelled = ConversionState.Idle, token = token)
         }
     }
 
@@ -297,25 +323,34 @@ class ConversionViewModel @JvmOverloads constructor(
     fun setQuality(quality: QualityTier) = _settings.update { it.copy(quality = quality) }
     fun setEnginePreference(preference: EnginePreference) = _settings.update { it.copy(enginePreference = preference) }
 
+    /**
+     * The tap is the claim, which is why [ScreenOwnership.claim] is called here and not inside the
+     * `launch`. A claim made in the coroutine would only be immediate for as long as
+     * `Dispatchers.Main.immediate` happened to run it inline, and a deferred claim leaves the same
+     * gap this closes: it is the difference between the user owning the screen from the moment
+     * they tapped and owning it from whenever their coroutine got around to running.
+     */
     fun onInputPicked(uri: Uri) {
+        val token = ownership.claim()
         viewModelScope.launch {
             // Both the metadata query and the probe touch disk, and the probe spawns FFprobe.
             // Neither belongs on the main thread.
             val file = withContext(pickDispatcher) { InputQuery.describe(getApplication(), uri) }
+            // Every write below the hop above is guarded, this one included: two picks in quick
+            // succession suspend here together, and without this the slower one would land last
+            // and put the file the user did not choose on screen.
+            if (!ownership.stillHeldBy(token)) return@launch
             // Show the file as soon as its name and size are known. Probing now runs FFprobe on
             // every pick, which is a native process spawn, and making the whole screen wait on it
             // would read as the app having ignored the tap.
             _state.value = ConversionState.Ready(file)
 
             val probe = withContext(pickDispatcher) { probeOrUnreadable(uri) }
-            // Only fill in the probe if the user has not moved on in the meantime.
-            _state.update { current ->
-                if (current is ConversionState.Ready && current.input.uri == uri) {
-                    ConversionState.Ready(file.copy(probe = probe))
-                } else {
-                    current
-                }
-            }
+            // Only fill in the probe if the user has not moved on in the meantime. The claim is
+            // what says whether they have -- it covers a second pick of the same URI, which a
+            // comparison of URIs cannot, and every state a later claim could have written.
+            if (!ownership.stillHeldBy(token)) return@launch
+            _state.value = ConversionState.Ready(file.copy(probe = probe))
         }
     }
 
@@ -366,10 +401,13 @@ class ConversionViewModel @JvmOverloads constructor(
             quality = settings.quality,
             enginePreference = settings.enginePreference,
         )
+        // Tapping Convert claims the screen for this job, which is what supersedes the pick's
+        // still-in-flight probe and any reattachment that has not finished asking.
+        val token = ownership.claim()
         activeWorkId = request.id
         workManager.enqueue(request)
         _state.value = ConversionState.Converting(input, 0)
-        observe(request.id, input)
+        observe(request.id, input, token = token)
     }
 
     /**
@@ -377,12 +415,27 @@ class ConversionViewModel @JvmOverloads constructor(
      *   picked file, ready to convert again. For one picked up by [reattach] there is no picked
      *   file — the URI that job holds belongs to a process that no longer exists — so it lands
      *   on Idle instead, rather than offering a Convert button over a file nothing can open.
+     * @param token the claim this observation belongs to. Nothing here can write until `collect`
+     *   has resumed with a `WorkInfo`, which is some time after the caller decided to observe, so
+     *   the claim is checked again at the last possible moment rather than trusted from then. This
+     *   is issue #49's fix and the only thing standing between a superseded observation and the
+     *   user's screen — see [ScreenOwnership].
      */
-    private fun observe(id: UUID, input: InputFile, cancelled: ConversionState = ConversionState.Ready(input)) {
+    private fun observe(
+        id: UUID,
+        input: InputFile,
+        cancelled: ConversionState = ConversionState.Ready(input),
+        token: Long,
+    ) {
         observer?.cancel()
         observer = viewModelScope.launch {
             workManager.getWorkInfoByIdFlow(id).collect { info ->
                 if (info == null) return@collect
+                // Ahead of the `when`, not merely ahead of the assignment: the SUCCEEDED branch
+                // takes ownership of the staged file, and a superseded observation must not do
+                // that either. The state and `pendingStaged` are meant to refer to the same file
+                // or to no file, and this is where that stays true.
+                if (!ownership.stillHeldBy(token)) return@collect
                 _state.value = when (info.state) {
                     WorkInfo.State.RUNNING -> ConversionState.Converting(
                         input,
@@ -528,6 +581,10 @@ class ConversionViewModel @JvmOverloads constructor(
      * existed, this delete was the only thing a failed save could lead to — which was the defect.
      */
     fun reset() {
+        // Start over is a claim like any other. The cancel below is a request honoured at the next
+        // suspension point, so a collector already on its way to a write has nothing left to
+        // honour it at; the claim is what actually stops that write landing on top of Idle.
+        ownership.claim()
         observer?.cancel()
         observer = null
         activeWorkId = null
