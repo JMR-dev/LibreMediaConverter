@@ -129,9 +129,25 @@ object ContainerCapabilities {
             }
         }
 
-        if (spec.videoCodec == VideoCodec.NONE && spec.audioCodec == AudioCodec.NONE) {
+        // Two faces of one rule: the output would carry no tracks at all.
+        //
+        // The first is visible in the spec alone — NONE on both axes. The second only emerges once
+        // the spec meets the probe, because [CopyPlanner] drops a video track the *input* does not
+        // have no matter which codec was named for it, so "H.265 + no audio" on an MP3 plans to
+        // (Drop, Drop) exactly as "None + None" does. Asking the spec alone answered the first and
+        // missed the second, and the miss was not cosmetic: `EditedMediaItem.Builder` refuses that
+        // composition with IllegalStateException("Audio and video cannot both be removed"), on
+        // Transformer's own thread, where the user would have seen a dead app rather than a reason.
+        if (spec.audioCodec == AudioCodec.NONE && (spec.videoCodec == VideoCodec.NONE || !probe.hasVideo)) {
             return Validation.Invalid(
-                "This would produce an empty file — keep at least one track.",
+                if (spec.videoCodec == VideoCodec.NONE) {
+                    "This would produce an empty file — keep at least one track."
+                } else {
+                    // Names both halves. "No video track" alone reads as though the video setting
+                    // were the only thing wrong, and the user would fix that and still be stuck.
+                    "This file has no video track, so turning the audio off too would produce an " +
+                        "empty file."
+                },
                 suggestions(
                     // Ask for both tracks back, then let repair settle what this container and
                     // this input can actually give.
@@ -284,8 +300,12 @@ object ContainerCapabilities {
     private fun repairVideo(spec: OutputSpec, probe: InputProbe): VideoCodec {
         val container = spec.container
         if (spec.videoCodec == VideoCodec.NONE || !container.canHoldVideo) return VideoCodec.NONE
+        // There is no video track to make one out of, so naming a codec would be a suggestion
+        // [CopyPlanner] drops on the floor. It also read as a non-sequitur: before this line, the
+        // repair offered for an MP3 was "H.264", the first codec MP4 happens to encode.
+        if (!probe.hasVideo) return VideoCodec.NONE
 
-        val source = CodecNames.videoFromName(probe.videoCodec).takeIf { probe.hasVideo }
+        val source = CodecNames.videoFromName(probe.videoCodec)
         val copyable = source != null && accepts(container, source, CodecMode.COPY)
 
         return when {

@@ -76,11 +76,11 @@ days. Read it as the current answer, and see the git history if you need the old
   `angle_indirect` and `swangle_indirect` all boot, while `auto`, `off`, `guest` and
   `swiftshader_indirect` do not. `docs/local-emulator.md` has the evidence and the per-API renderer
   table.
-- **CI runs API 37, and it gates.** The matrix is 33/34/35/36/37. **Three** of the 59 instrumented
+- **CI runs API 37, and it gates.** The matrix is 33/34/35/36/37. **Three** of the 60 instrumented
   tests cannot pass on that image, for two unrelated reasons: two Media3 hardware transcodes fail
   inside the emulator's own `c2.goldfish.h264.decoder`, and one SAF test takes the framework down
   when it rotates the display. All three carry `@FailsOnEmulatorApi37` and run in a separate
-  `continue-on-error` job; the gating leg runs the other 56.
+  `continue-on-error` job; the gating leg runs the other 57.
 
   That job is still called `E2E API 37 Media3 hardware transcode (advisory)`, which no longer
   describes everything in it. The name is kept deliberately — it is not a required context and
