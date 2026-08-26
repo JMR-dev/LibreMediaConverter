@@ -68,40 +68,62 @@ class Media3Engine(private val context: Context) : HardwareTranscoder {
     ): Unit = suspendCancellableCoroutine { cont ->
         val plan = CopyPlanner.plan(request.spec, request.probe)
         handler.post {
-            val transformer = runCatching { buildTransformer(plan, cont) }
-                .getOrElse {
-                    cont.resumeWithException(it)
-                    return@post
-                }
-
-            // Dropping the tracks the target does not have is what stops an audio-only export
-            // from carrying a re-encoded video track. Without setRemoveVideo, asking for M4A
-            // produced an HEVC stream in a file named .m4a.
-            val item = EditedMediaItem.Builder(MediaItem.fromUri(input))
-                .setRemoveVideo(plan.video == VideoPlan.Drop)
-                .setRemoveAudio(plan.audio == AudioPlan.Drop)
-                .build()
-
-            // A Composition is the only way to ask for transmuxing; the plain
-            // start(EditedMediaItem, path) overload always re-encodes. This is the remux path.
-            val composition = Composition.Builder(EditedMediaItemSequence.Builder(item).build())
-                .setTransmuxVideo(plan.video == VideoPlan.Copy)
-                .setTransmuxAudio(plan.audio == AudioPlan.Copy)
-                .build()
-
-            cont.invokeOnCancellation {
-                // cancel() has the same single-thread requirement as start().
-                handler.post { runCatching { transformer.cancel() } }
-            }
-
-            runCatching { transformer.start(composition, output.absolutePath) }
-                .onFailure {
-                    cont.resumeWithException(it)
-                    return@post
-                }
-
-            pollProgress(transformer, cont, onProgress)
+            // One guard around the whole body, deliberately.
+            //
+            // This used to be two narrow ones — around `buildTransformer` and around
+            // `transformer.start` — with the two Media3 builders sitting unguarded between them.
+            // On this thread that is not a small gap: nothing here has a caller to throw back to,
+            // so an escaping exception reaches the HandlerThread's uncaught handler and takes the
+            // process down, while [cont] is never resumed either way. `EditedMediaItem.Builder`
+            // does exactly that for a plan that drops both tracks
+            // ("Audio and video cannot both be removed"), which a queued job can still carry.
+            // Widening the guard costs nothing on success and turns every such refusal into a
+            // failed job with a reason.
+            runCatching { startExport(input, output, plan, cont, onProgress) }
+                .onFailure { if (cont.isActive) cont.resumeWithException(it) }
         }
+    }
+
+    /**
+     * Builds the export and hands it to Transformer. Runs on the HandlerThread; may throw.
+     *
+     * Everything Transformer's single-thread contract covers lives here, so that the caller has
+     * exactly one place to catch. Returning normally means the export is running and [cont] belongs
+     * to the listener; throwing means it never started and the caller owns resuming.
+     */
+    private fun startExport(
+        input: Uri,
+        output: File,
+        plan: ConversionPlan,
+        cont: CancellableContinuation<Unit>,
+        onProgress: (Int) -> Unit,
+    ) {
+        val transformer = buildTransformer(plan, cont)
+
+        // Dropping the tracks the target does not have is what stops an audio-only export
+        // from carrying a re-encoded video track. Without setRemoveVideo, asking for M4A
+        // produced an HEVC stream in a file named .m4a.
+        val item = EditedMediaItem.Builder(MediaItem.fromUri(input))
+            .setRemoveVideo(plan.video == VideoPlan.Drop)
+            .setRemoveAudio(plan.audio == AudioPlan.Drop)
+            .build()
+
+        // A Composition is the only way to ask for transmuxing; the plain
+        // start(EditedMediaItem, path) overload always re-encodes. This is the remux path.
+        val composition = Composition.Builder(EditedMediaItemSequence.Builder(item).build())
+            .setTransmuxVideo(plan.video == VideoPlan.Copy)
+            .setTransmuxAudio(plan.audio == AudioPlan.Copy)
+            .build()
+
+        // Registered before start(), so a cancellation racing the export always finds a
+        // transformer to cancel.
+        cont.invokeOnCancellation {
+            // cancel() has the same single-thread requirement as start().
+            handler.post { runCatching { transformer.cancel() } }
+        }
+
+        transformer.start(composition, output.absolutePath)
+        pollProgress(transformer, cont, onProgress)
     }
 
     /**

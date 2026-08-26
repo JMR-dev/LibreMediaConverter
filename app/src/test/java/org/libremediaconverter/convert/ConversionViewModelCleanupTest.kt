@@ -93,8 +93,12 @@ class ConversionViewModelCleanupTest {
         assertTrue("a failed save must not destroy the only copy", staged.exists())
         assertEquals(emptyList<File>(), publisher.discarded)
 
-        // Failed carries no file reference at all, so this only works because the handle is
-        // a ViewModel field rather than something read back out of the state machine.
+        // The handle is a ViewModel field rather than something read back out of the state
+        // machine, and stays one now that a save-failed `Failed` also carries a `PendingSave`:
+        // that is a view for the screen to offer a retry through, never a second owner of the
+        // file. This delete goes through the field, which is what keeps a state that is dropped
+        // rather than read from taking the only reference with it. What the state carries, and
+        // what the screen then does with it, are `FailedSaveRetryTest`'s.
         viewModel.reset()
 
         assertEquals(listOf(staged), publisher.discarded)

@@ -76,11 +76,11 @@ days. Read it as the current answer, and see the git history if you need the old
   `angle_indirect` and `swangle_indirect` all boot, while `auto`, `off`, `guest` and
   `swiftshader_indirect` do not. `docs/local-emulator.md` has the evidence and the per-API renderer
   table.
-- **CI runs API 37, and it gates.** The matrix is 33/34/35/36/37. **Three** of the 59 instrumented
+- **CI runs API 37, and it gates.** The matrix is 33/34/35/36/37. **Three** of the 60 instrumented
   tests cannot pass on that image, for two unrelated reasons: two Media3 hardware transcodes fail
   inside the emulator's own `c2.goldfish.h264.decoder`, and one SAF test takes the framework down
   when it rotates the display. All three carry `@FailsOnEmulatorApi37` and run in a separate
-  `continue-on-error` job; the gating leg runs the other 56.
+  `continue-on-error` job; the gating leg runs the other 57.
 
   That job is still called `E2E API 37 Media3 hardware transcode (advisory)`, which no longer
   describes everything in it. The name is kept deliberately — it is not a required context and
@@ -97,6 +97,13 @@ days. Read it as the current answer, and see the git history if you need the old
   not have worked: the run is usually truncated by an `INSTRUMENTATION_ABORTED`, and the test XML
   is written anyway and says nothing about it — `.github/scripts/e2e-report-shape.sh` is where that
   is measured and explained.
+
+  Every leg prints that table, advisory or not, and **on the wedge path it also carries a `wedged:`
+  row** (#118). `completed cleanly` only ever meant "instrumentation was not aborted", which stays
+  true of a leg the `WEDGE_TIMEOUT` killed 22 minutes in — so without that row the table read
+  `received: 59, completed cleanly: yes` for a leg that had just died. The wedge is passed to the
+  report as `E2E_WEDGED_AFTER` by `e2e-run.sh`, which is the only thing that can know it: a wedge
+  is gradle never returning, so the log it left says nothing about it.
 
 Still true, and the reason the advisory job is not simply deleted: **API 37 needs a manual check on
 the Pixel 10 Pro XL before each release.** Those three tests are the one thing CI cannot answer

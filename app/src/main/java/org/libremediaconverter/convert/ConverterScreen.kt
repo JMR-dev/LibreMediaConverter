@@ -73,8 +73,11 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
     // stands: some providers rewrite a document's extension to match it, so an MP3 offered as
     // video/webm can arrive with the wrong one. Read straight off the collected state, so this
     // recomposes because it depends on that rather than because an unrelated line happens to.
+    // Through pendingSave() rather than a cast to Converted, so a retry offered after a failed
+    // save opens the dialog with the type its first attempt used -- the cast answered null for a
+    // Failed, and the fallback below is the current picker, which a reattached job never set.
     // Remembered against the type so the launcher re-registers only when it actually changes.
-    val destinationMime = (state as? ConversionState.Converted)?.mimeType ?: settings.spec.mimeType
+    val destinationMime = state.pendingSave()?.mimeType ?: settings.spec.mimeType
     val chooseDestination = rememberLauncherForActivityResult(
         remember(destinationMime) { ActivityResultContracts.CreateDocument(destinationMime) },
     ) { uri -> uri?.let(viewModel::save) }
@@ -325,13 +328,36 @@ internal fun ConverterScreenContent(
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyMedium,
                         )
-                        Button(
-                            onClick = actions.onReset,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(PrimaryButtonHeight)
-                                .testTag(TestTags.START_OVER),
-                        ) { Text("Start over") }
+                        val retry = s.retry
+                        if (retry == null) {
+                            // Nothing was staged, so "Start over" is the whole of what is on
+                            // offer and stays the primary button.
+                            Button(
+                                onClick = actions.onReset,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(PrimaryButtonHeight)
+                                    .testTag(TestTags.START_OVER),
+                            ) { Text("Start over") }
+                        } else {
+                            Button(
+                                onClick = { actions.onSave(retry.suggestedName) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(PrimaryButtonHeight)
+                                    .testTag(TestTags.RETRY_SAVE),
+                            ) { Text("Try saving again") }
+                            // Start over still deletes the file this state is carrying, and that
+                            // is deliberate: `reset()` is what stops a full-size output sitting in
+                            // cache until the sweep. What makes the delete acceptable is the
+                            // button above it. Deletion is the user's choice only once the
+                            // alternative has been offered -- and until that button existed, this
+                            // one was the only thing a failed save could lead to.
+                            OutlinedButton(
+                                onClick = actions.onReset,
+                                modifier = Modifier.fillMaxWidth().testTag(TestTags.START_OVER),
+                            ) { Text("Start over") }
+                        }
                     }
                 }
             }

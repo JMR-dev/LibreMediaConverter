@@ -46,9 +46,10 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
 
     // The contract's MIME type comes from the finished job rather than from a literal: some
     // providers rewrite a document's extension to match it, so naming MP4 for a join that is not
-    // one can hand the user a file the extension lies about. Remembered against that type so the
-    // launcher re-registers only when it actually changes.
-    val destinationMime = (state as? JoinState.Joined)?.mimeType ?: ConcatWorker.DEFAULT_FORMAT.mimeType
+    // one can hand the user a file the extension lies about. Through pendingSave() rather than a
+    // cast to Joined, so a retry after a failed save opens with the type its first attempt used.
+    // Remembered against that type so the launcher re-registers only when it actually changes.
+    val destinationMime = state.pendingSave()?.mimeType ?: ConcatWorker.DEFAULT_FORMAT.mimeType
     val chooseDestination = rememberLauncherForActivityResult(
         remember(destinationMime) { ActivityResultContracts.CreateDocument(destinationMime) },
     ) { uri -> uri?.let(viewModel::save) }
@@ -226,13 +227,32 @@ internal fun JoinScreenContent(state: JoinState, actions: JoinActions, modifier:
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyMedium,
                         )
-                        Button(
-                            onClick = actions.onReset,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(PrimaryButtonHeight)
-                                .testTag(TestTags.START_OVER),
-                        ) { Text("Start over") }
+                        val retry = s.retry
+                        if (retry == null) {
+                            // Nothing staged, so "Start over" is all there is and stays primary.
+                            Button(
+                                onClick = actions.onReset,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(PrimaryButtonHeight)
+                                    .testTag(TestTags.START_OVER),
+                            ) { Text("Start over") }
+                        } else {
+                            Button(
+                                onClick = { actions.onSave(retry.suggestedName) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(PrimaryButtonHeight)
+                                    .testTag(TestTags.RETRY_SAVE),
+                            ) { Text("Try saving again") }
+                            // Start over still deletes the carried file, for the reason the
+                            // converter screen writes out next to the same pair of buttons:
+                            // the delete is a choice only once the alternative is on screen.
+                            OutlinedButton(
+                                onClick = actions.onReset,
+                                modifier = Modifier.fillMaxWidth().testTag(TestTags.START_OVER),
+                            ) { Text("Start over") }
+                        }
                     }
                 }
             }
