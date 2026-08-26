@@ -107,9 +107,10 @@ class JoinViewModel @JvmOverloads constructor(
      * The convert side had issue #49 reported against it four times in two days; this side has the
      * identical shape and was never reported, because nothing was watching. Every write below that
      * lands after a suspension point is guarded: the one in [onInputsPicked] and the one in
-     * [observe]. [save] is the deferred write that is not, deliberately and for the reason
-     * `ConversionViewModel` writes out -- it is reachable only from a job that has already reached
-     * a terminal state and will not emit again.
+     * [observe]. [save] is the one left out, deliberately and with the same limit its counterpart
+     * in `ConversionViewModel` spells out: nothing can overwrite what it writes, but it can still
+     * land on top of a [reset] taken while its copy was in flight, and which way that should go is
+     * a question about the save screen rather than about this race.
      */
     private val ownership = ScreenOwnership()
 

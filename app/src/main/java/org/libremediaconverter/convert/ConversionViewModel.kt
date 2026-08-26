@@ -198,11 +198,17 @@ class ConversionViewModel @JvmOverloads constructor(
      * cancelling the superseded coroutine is not one.
      *
      * Every write below that lands after a suspension point is guarded by it: the two in
-     * [onInputPicked] and the one in [observe]. [save] is the one deferred write that is not, and
-     * deliberately: it is only reachable from [ConversionState.Converted] or a
-     * [ConversionState.Failed] carrying its file, so the only observation that could overwrite
-     * what it writes belongs to a job that has already reached a terminal state and will not emit
-     * again.
+     * [onInputPicked] and the one in [observe].
+     *
+     * [save] is the one left out, deliberately — and not because it is safe in both directions.
+     * Nothing can overwrite what it writes: it is reachable only from [ConversionState.Converted]
+     * or a [ConversionState.Failed] carrying its file, so the only observation that could belongs
+     * to a job already in a terminal state, which will not emit again. What it can still do is
+     * land on top of a [reset] taken while its copy was in flight, putting `Saved` on a screen the
+     * user has just cleared. Guarding it would drop that write instead, reporting nothing for a
+     * file that may genuinely have reached the user's destination. Which of those two is right is
+     * a question about what the screen should offer during a save, not about this race, and it is
+     * left open rather than answered in passing.
      */
     private val ownership = ScreenOwnership()
 
