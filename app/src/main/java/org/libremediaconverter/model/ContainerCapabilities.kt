@@ -178,7 +178,12 @@ object ContainerCapabilities {
             if (!probe.hasVideo) {
                 return Validation.Invalid(
                     "This file has no video track to copy.",
-                    listOf(spec.copy(videoCodec = VideoCodec.NONE)),
+                    // Dropping the video is the right shape of answer, but it is only half of one:
+                    // `spec.copy(videoCodec = NONE)` is valid exactly when the audio axis already
+                    // happened to be fine, and refused otherwise — a Vorbis or PCM source into MP4,
+                    // an MP3 into WebM. Handing it to the shared path repairs both axes and drops
+                    // anything that still fails, so the chip cannot lead to a second error.
+                    suggestions(spec.copy(videoCodec = VideoCodec.NONE), probe, exclude = spec),
                 )
             }
             val source = CodecNames.videoFromName(probe.videoCodec)
