@@ -27,9 +27,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.ExecutionException
-import java.util.concurrent.Executor
-import java.util.concurrent.TimeUnit
 
 /**
  * That a refused foreground-service start does not end the job.
@@ -125,6 +122,40 @@ class DeniedForegroundStartTest {
         )
     }
 
+    @Test
+    fun `a join denied past the attempt bound fails with a message the user can act on`() {
+        // The join twin of the conversion case above. ConcatWorker reaches the same FailureOutcome
+        // through its own `when`, and that arm was the only one of its three with no test -- so a
+        // join that gave up silently, or gave up with an empty Data, would have looked identical to
+        // one that retried.
+        val worker = concatWorker(runAttemptCount = FailureOutcome.MAX_FOREGROUND_START_ATTEMPTS)
+
+        val result = runBlocking { worker.doWork() }
+
+        assertEquals(
+            ListenableWorker.Result.failure(
+                workDataOf(ConcatWorker.KEY_ERROR to FailureOutcome.FOREGROUND_DENIED_MESSAGE),
+            ),
+            result,
+        )
+    }
+
+    @Test
+    fun `a join that gives up collects the partial it had already staged`() {
+        // The delete lives on ConcatWorker's `catch (e: Throwable)` path, which every give-up goes
+        // through. Written first so a missing delete cannot pass by asking whether a file nobody
+        // wrote is absent.
+        concatStagedFile().writeBytes(ByteArray(PARTIAL_BYTES))
+
+        runBlocking { concatWorker(runAttemptCount = FailureOutcome.MAX_FOREGROUND_START_ATTEMPTS).doWork() }
+
+        assertEquals(
+            "a join that gave up must not orphan what it staged",
+            emptyList<String>(),
+            stagedNames(),
+        )
+    }
+
     private fun conversionWorker(runAttemptCount: Int = 0): ConversionWorker =
         TestListenableWorkerBuilder<ConversionWorker>(
             context = app,
@@ -141,17 +172,21 @@ class DeniedForegroundStartTest {
             .setForegroundUpdater(DenyingForegroundUpdater)
             .build()
 
-    private fun concatWorker(): ConcatWorker = TestListenableWorkerBuilder<ConcatWorker>(
+    private fun concatWorker(runAttemptCount: Int = 0): ConcatWorker = TestListenableWorkerBuilder<ConcatWorker>(
         context = app,
         inputData = workDataOf(
             ConcatWorker.KEY_INPUT_URIS to arrayOf(INPUT.toString(), "content://test/second.mp4"),
             ConcatWorker.KEY_TOTAL_BYTES to INPUT_BYTES,
-            ConcatWorker.KEY_FORMAT to OutputFormat.MP4_H264.name,
+            ConcatWorker.KEY_FORMAT to CONCAT_FORMAT.name,
         ),
-        runAttemptCount = 0,
+        runAttemptCount = runAttemptCount,
     ).setId(CONCAT_ID)
         .setForegroundUpdater(DenyingForegroundUpdater)
         .build()
+
+    /** The staging path the join will compute, asked for rather than spelled out here. */
+    private fun concatStagedFile(): File =
+        publisher.createStagingFile(StagingNames.forJob(CONCAT_ID, CONCAT_FORMAT.extension))
 
     /** The staging path the worker will compute, asked for rather than spelled out here. */
     private fun stagedFile(): File = publisher.createStagingFile(StagingNames.forJob(CONVERSION_ID, SPEC.extension))
@@ -164,6 +199,7 @@ class DeniedForegroundStartTest {
         const val INPUT_BYTES = 1024L
         const val PARTIAL_BYTES = 2048
         val SPEC = OutputFormat.MP4_H265.spec
+        val CONCAT_FORMAT = OutputFormat.MP4_H264
         val CONVERSION_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000001")
         val CONCAT_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000002")
     }
@@ -181,19 +217,4 @@ private object DenyingForegroundUpdater : ForegroundUpdater {
                 "org.libremediaconverter/androidx.work.impl.foreground.SystemForegroundService",
         ),
     )
-}
-
-/**
- * An already-failed future, written out rather than pulled from a futures library.
- *
- * `await()` takes the `isDone` fast path and unwraps the `ExecutionException`, which is what puts
- * the platform's own exception in front of the worker's catch rather than a wrapper.
- */
-private class FailedFuture(private val failure: Throwable) : ListenableFuture<Void> {
-    override fun addListener(listener: Runnable, executor: Executor): Unit = executor.execute(listener)
-    override fun cancel(mayInterruptIfRunning: Boolean): Boolean = false
-    override fun isCancelled(): Boolean = false
-    override fun isDone(): Boolean = true
-    override fun get(): Void = throw ExecutionException(failure)
-    override fun get(timeout: Long, unit: TimeUnit): Void = throw ExecutionException(failure)
 }
