@@ -1,10 +1,14 @@
 package org.libremediaconverter.work
 
 import android.content.Context
+import com.google.common.util.concurrent.ListenableFuture
 import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.model.ConversionRequest
 import java.io.File
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 
 /**
  * Scaffolding more than one worker test needs.
@@ -67,4 +71,26 @@ object WritingTranscoder : SoftwareTranscoder {
     }
 
     private const val OUTPUT_BYTES = 512
+}
+
+/**
+ * An already-failed future, written out rather than pulled from a futures library.
+ *
+ * `await()` takes the `isDone` fast path and unwraps the `ExecutionException`, which is what puts
+ * the original exception in front of the worker's `catch` rather than a wrapper. That is the whole
+ * mechanism behind driving a `ForegroundUpdater` to fail: `WorkForegroundUpdater` propagates
+ * whatever the future failed with rather than swallowing it, so `setForeground()` throws exactly
+ * what is handed here.
+ *
+ * Shared because two tests inject two different failures through it -- a denied foreground start
+ * and a cancellation -- and Kotlin will not take two file-private top-level classes of one name in
+ * one package.
+ */
+internal class FailedFuture(private val failure: Throwable) : ListenableFuture<Void> {
+    override fun addListener(listener: Runnable, executor: Executor): Unit = executor.execute(listener)
+    override fun cancel(mayInterruptIfRunning: Boolean): Boolean = false
+    override fun isCancelled(): Boolean = false
+    override fun isDone(): Boolean = true
+    override fun get(): Void = throw ExecutionException(failure)
+    override fun get(timeout: Long, unit: TimeUnit): Void = throw ExecutionException(failure)
 }
