@@ -242,10 +242,27 @@ observations. This document holds only what a test would not fix. #133 also reco
 **`ConversionForegroundType.current()`**, which looked like the sharpest gap in the read and is not.
 Its API 33 and 34 arms are cold on the JVM, but issue **#88** already established that the class is
 covered by `ConversionWorkerTest.foregroundTypeMatchesTheRunningApiLevel` across the CI matrix, and
-that its 0% is the `testDebugUnitTest`-only measurement boundary. The one premise worth re-checking
-was whether the 33/34 legs still complete, given #122's wedge — they do: the API 33 leg on the most
-recent `status_check` run reports **expected 60, received 60, failed 0, completed cleanly: yes**,
-with no `wedged:` row. Recorded because that check is the whole reason this is not a ticket.
+that its 0% is the `testDebugUnitTest`-only measurement boundary.
+
+The premise worth re-checking was whether the 33/34 legs still complete, given #122's wedge.
+**They mostly do, and #122 is not resolved** — this entry said "they do" on first writing, from a
+single green run, and the PR carrying this very document proved that wrong:
+
+| run | API 33 leg | shape |
+|---|---|---|
+| `32933262839` (#127) | success, 7m16s | `expected 60, received 60, failed 0, completed cleanly: yes` |
+| `33033036857` (PR #131, docs-only) | **failure, 23m08s** | `expected 60, received 60, failed unknown, wedged: yes — gradle killed after 1200s` |
+
+Five of the last six completed API 33 legs passed in about seven minutes, so the wedge is
+intermittent rather than systematic. **What it costs is the verdict, not the execution**: `received:
+60` on the wedged run means all sixty tests still reported, so the API 33 regime *was* exercised —
+but `failed:` reads `unknown`, so that leg could not have told anyone if it had broken.
+
+That is why this stays a note and not a ticket, and also why it is not simply deleted: #88's
+reasoning holds, but the leg it rests on cannot be relied on to report a failure. A
+`@Config(sdk = 33)` / `@Config(sdk = 34)` JVM test would pin all three arms deterministically in one
+run for about three lines. Small, and worth doing the next time this file is opened — but it is
+insurance against a flaky leg, not the uncovered behaviour it first looked like.
 
 **The Compose screens' branch coverage.** `ConverterScreenKt` reports 110 of 200 branches missed and
 `JoinScreenKt` 60 of 82, which looks alarming and is not a signal: the Compose compiler synthesises
