@@ -2,7 +2,7 @@
 
 **Status:** four findings, none fixed, none urgent. Every entry here is a *code* observation —
 something a test would document rather than repair. The test gaps found in the same read are
-tickets, not entries here; see [Not covered here](#not-covered-here).
+tickets #132 and #133, not entries here; see [Not covered here](#not-covered-here).
 **Scope:** what a JaCoCo read on 2026-08-26 turned up that writing a test would not fix. This is
 a survey, not a work order. Acting on any entry is a separate decision and would be its own commit.
 **Last verified:** `main` at `dc8b7c3`, 2026-08-26. Coverage re-measured that day with
@@ -234,9 +234,10 @@ tidying and belong in one commit with each other, not with F1. F4 is finished by
 
 ## Not covered here
 
-**The test gaps from the same read.** Ten JVM-side gaps and three seam questions came out of this
-coverage read and are tracked as tickets, because they are work rather than observations. This
-document holds only what a test would not fix.
+**The test gaps from the same read.** Seven JVM-side gaps (**#132**) and three seam questions
+(**#133**) came out of this coverage read and are tracked there, because they are work rather than
+observations. This document holds only what a test would not fix. #133 also records why
+`AndroidDeviceCodecs.probe()` was considered and left out, so that spike is not run a third time.
 
 **`ConversionForegroundType.current()`**, which looked like the sharpest gap in the read and is not.
 Its API 33 and 34 arms are cold on the JVM, but issue **#88** already established that the class is
