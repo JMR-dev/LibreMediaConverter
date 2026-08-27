@@ -80,6 +80,16 @@ internal enum class RowShape {
      * absence is wrong about one of them.
      */
     NO_ROWS,
+
+    /**
+     * The query itself throws.
+     *
+     * A resolver call is a call into another app, and that app can have been uninstalled, revoked
+     * its grant, or simply crashed. `InputQuery.firstRow`'s KDoc is explicit that "a file picker is
+     * not a place to bring the process down from", so this is the shape that proves the guard is
+     * one.
+     */
+    QUERY_THROWS,
 }
 
 /**
@@ -105,6 +115,7 @@ internal open class FakeSafProvider : ContentProvider() {
         selectionArgs: Array<out String>?,
         sortOrder: String?,
     ): Cursor? {
+        if (rowShape == RowShape.QUERY_THROWS) throw SecurityException("provider revoked the grant")
         val file = backingFile(uri)
         if (!file.exists()) return null
         return MatrixCursor(columnsFor(rowShape)).apply {
