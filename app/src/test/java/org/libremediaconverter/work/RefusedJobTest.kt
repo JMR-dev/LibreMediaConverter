@@ -130,6 +130,50 @@ class RefusedJobTest {
         assertEquals(listOf(OutputFormat.MP4_H265.spec), engine.invocations)
     }
 
+    // --- the same refusal, on the join side ----------------------------------
+
+    @Test
+    fun `a join of a single file is refused with a message rather than joined`() {
+        // The arm beside it -- a job with no URI array at all -- is covered on the device by
+        // `UnopenableUriTest.aJoinWithNoInputArrayFailsWithAMessage`. This one was covered by
+        // nothing in either source set, which a coverage report cannot say because it cannot see
+        // androidTest: the two arms are adjacent lines and only one of them had a test.
+        //
+        // Reachable for the reason this file's header gives, plus one of its own: `request(...)`
+        // takes a `List<Uri>` and checks nothing about its length, so a single-item join is a
+        // well-formed call, not a corrupted queue entry.
+        val result = runBlocking { joinWorker(INPUT).doWork() }
+
+        assertEquals(
+            ListenableWorker.Result.failure(
+                workDataOf(ConcatWorker.KEY_ERROR to "Pick at least two files to join."),
+            ),
+            result,
+        )
+    }
+
+    @Test
+    fun `a join of two files is not refused for its count`() {
+        // The control, and the half that makes the test above bite on the boundary rather than on
+        // the message: without it, `uris.size < 3` passes everything here.
+        //
+        // It refuses the space instead of letting the job run, because the next thing past the
+        // count guard is `ConcatEngine`, which is native -- `NamingPublisher`'s KDoc records that
+        // no JVM test gets past it. A refusal with the *space* message is proof that execution
+        // reached line 57, which is proof it got past line 42, and it costs no engine to say so.
+        val noRoom = NamingPublisher(app).apply { refuseSpace = true }
+        ConversionDependencies.publisher = { noRoom }
+
+        val result = runBlocking { joinWorker(INPUT, SECOND_INPUT).doWork() }
+
+        assertEquals(
+            ListenableWorker.Result.failure(
+                workDataOf(ConcatWorker.KEY_ERROR to "Not enough free space to join these files."),
+            ),
+            result,
+        )
+    }
+
     /** [ListenableWorker.Result.Success] compares its output data, which these tests do not pin. */
     private fun stripOutput(result: ListenableWorker.Result): ListenableWorker.Result =
         if (result is ListenableWorker.Result.Success) ListenableWorker.Result.success() else result
@@ -171,6 +215,23 @@ class RefusedJobTest {
             .setId(JOB_ID)
             .build()
 
+    /**
+     * A join job carrying [inputs], a declared total, and a format.
+     *
+     * The total is declared so `hasRoomFor` takes its `hasSpaceFor` branch: the other branch is
+     * `hasSpaceForUnknownSize`, which `NamingPublisher` does not override and which would measure
+     * this machine's real disk.
+     */
+    private fun joinWorker(vararg inputs: Uri): ConcatWorker = TestListenableWorkerBuilder<ConcatWorker>(
+        context = app,
+        inputData = workDataOf(
+            ConcatWorker.KEY_INPUT_URIS to inputs.map(Uri::toString).toTypedArray(),
+            ConcatWorker.KEY_TOTAL_BYTES to INPUT_BYTES * inputs.size,
+            ConcatWorker.KEY_FORMAT to OutputFormat.MP4_H264.name,
+        ),
+        runAttemptCount = 0,
+    ).setId(JOB_ID).build()
+
     private fun stagedNames(): List<String> =
         publisher.createStagingFile("anything").parentFile?.listFiles().orEmpty().map { it.name }.sorted()
 
@@ -178,6 +239,9 @@ class RefusedJobTest {
         val INPUT: Uri = Uri.parse("file:///tmp/holiday.mp4")
         const val DISPLAY_NAME = "holiday.mp4"
         const val INPUT_BYTES = 1024L
+
+        /** A join needs two, and "two" is the boundary the count guard is about. */
+        val SECOND_INPUT: Uri = Uri.parse("file:///tmp/holiday-2.mp4")
 
         /** WAV carries PCM and nothing else, so AAC in WAV has nowhere to go. */
         val REFUSED_SPEC = OutputSpec(
