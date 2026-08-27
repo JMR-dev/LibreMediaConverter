@@ -22,6 +22,7 @@ import org.libremediaconverter.model.DeviceCodecs
 import org.libremediaconverter.model.EnginePreference
 import org.libremediaconverter.model.InputProbe
 import org.libremediaconverter.model.OutputFormat
+import org.libremediaconverter.model.OutputSpec
 import org.libremediaconverter.model.QualityTier
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -109,6 +110,50 @@ class WorkerEnumFallbackTest {
         )
     }
 
+    @Test
+    fun `a container this build does not define falls back to the default spec`() {
+        assertFallsBackToDefault(container = "HOLOTAPE")
+    }
+
+    @Test
+    fun `a video codec this build does not define falls back to the default spec`() {
+        assertFallsBackToDefault(video = "H267")
+    }
+
+    @Test
+    fun `an audio codec this build does not define falls back to the default spec`() {
+        assertFallsBackToDefault(audio = "SUPER_AAC")
+    }
+
+    /**
+     * Drives a job whose spec is [NOT_THE_FALLBACK] on every axis but the one named, and asserts the
+     * whole spec came back as [DEFAULT_SPEC].
+     *
+     * **The baseline is the point.** `readSpec` returns the *entire* fallback spec the moment any
+     * one axis fails to resolve, so a test starting from `MP4_H265` -- which is itself the fallback
+     * -- could not tell a worker that read the spec correctly from one that gave up on it. Starting
+     * from MKV/H.264 makes the difference visible on two axes at once.
+     *
+     * Asserting the spec that *ran*, rather than only that a `Result` came back, is the other half:
+     * the defect these three are written for threw out of `doWork` entirely, so "a Result at all"
+     * would pass against a fallback to something arbitrary.
+     */
+    private fun assertFallsBackToDefault(
+        container: String = NOT_THE_FALLBACK.container.name,
+        video: String = NOT_THE_FALLBACK.videoCodec.name,
+        audio: String = NOT_THE_FALLBACK.audioCodec.name,
+    ) {
+        val transcoder = RequestRecordingTranscoder()
+        ConversionDependencies.software = { transcoder }
+
+        val result = runBlocking {
+            conversionWorker(container = container, video = video, audio = audio).doWork()
+        }
+
+        assertEquals(ListenableWorker.Result.success(), stripOutput(result))
+        assertEquals(listOf(DEFAULT_SPEC), transcoder.specs)
+    }
+
     /** [ListenableWorker.Result.Success] compares its output data, which these tests do not pin. */
     private fun stripOutput(result: ListenableWorker.Result): ListenableWorker.Result =
         if (result is ListenableWorker.Result.Success) ListenableWorker.Result.success() else result
@@ -116,15 +161,18 @@ class WorkerEnumFallbackTest {
     private fun conversionWorker(
         quality: String = QualityTier.FAST.name,
         preference: String = EnginePreference.FORCE_SOFTWARE.name,
+        container: String = SPEC.container.name,
+        video: String = SPEC.videoCodec.name,
+        audio: String = SPEC.audioCodec.name,
     ): ConversionWorker = TestListenableWorkerBuilder<ConversionWorker>(
         context = app,
         inputData = workDataOf(
             ConversionWorker.KEY_INPUT_URI to INPUT.toString(),
             ConversionWorker.KEY_DISPLAY_NAME to DISPLAY_NAME,
             ConversionWorker.KEY_SIZE_BYTES to INPUT_BYTES,
-            ConversionWorker.KEY_CONTAINER to SPEC.container.name,
-            ConversionWorker.KEY_VIDEO_CODEC to SPEC.videoCodec.name,
-            ConversionWorker.KEY_AUDIO_CODEC to SPEC.audioCodec.name,
+            ConversionWorker.KEY_CONTAINER to container,
+            ConversionWorker.KEY_VIDEO_CODEC to video,
+            ConversionWorker.KEY_AUDIO_CODEC to audio,
             ConversionWorker.KEY_QUALITY to quality,
             ConversionWorker.KEY_ENGINE_PREFERENCE to preference,
         ),
@@ -146,6 +194,12 @@ class WorkerEnumFallbackTest {
         const val DISPLAY_NAME = "holiday.mp4"
         const val INPUT_BYTES = 1024L
         val SPEC = OutputFormat.MP4_H265.spec
+
+        /** What `readSpec` returns when any axis fails to resolve. */
+        val DEFAULT_SPEC = OutputFormat.MP4_H265.spec
+
+        /** A spec that differs from [DEFAULT_SPEC] on container *and* video codec. See the helper. */
+        val NOT_THE_FALLBACK = OutputFormat.MKV_H264.spec
         val CONVERSION_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000021")
         val CONCAT_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000022")
     }
@@ -156,6 +210,9 @@ private class RequestRecordingTranscoder : SoftwareTranscoder {
 
     val qualities = mutableListOf<QualityTier>()
 
+    /** The spec each run was asked for. Which one ran is what the three readSpec tests assert. */
+    val specs = mutableListOf<OutputSpec>()
+
     override suspend fun run(
         request: ConversionRequest,
         inputPath: String,
@@ -164,6 +221,7 @@ private class RequestRecordingTranscoder : SoftwareTranscoder {
         onProgress: (Int) -> Unit,
     ) {
         qualities += request.quality
+        specs += request.spec
         output.writeBytes(ByteArray(OUTPUT_BYTES))
     }
 
