@@ -1,6 +1,7 @@
 package org.libremediaconverter.convert
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -98,5 +99,30 @@ class OutputPublisherStagingTest {
         File(cacheDir, "conversions").deleteRecursively()
 
         publisher.sweepStaging()
+    }
+
+    @Test
+    fun `the sweep tolerates a staging path that is not a directory`() {
+        // The other half of `listFiles() ?: return`, and not the same as the case above: a missing
+        // directory is created by `stagingDir`'s own mkdirs() and lists as empty. Only a path that
+        // cannot be a directory makes listFiles() answer null, and a sweep that dereferenced that
+        // would take the app down on a launch rather than on a conversion -- AppStartSweepTest is
+        // where this runs from.
+        File(cacheDir, "conversions").deleteRecursively()
+        File(cacheDir, "conversions").writeBytes(ByteArray(8))
+
+        publisher.sweepStaging()
+    }
+
+    @Test
+    fun `discarding a file with no parent at all is refused`() {
+        // A relative name has no parent directory, so `staged.parentFile` is null. The handle
+        // reaches the ViewModel as a path string out of WorkInfo.outputData and is turned straight
+        // into a File, so this is not a shape the caller can rule out -- and the guard has to
+        // answer false rather than dereference it.
+        val parentless = File("holiday.mp4")
+        assertNull("the fixture is supposed to have no parent", parentless.parentFile)
+
+        assertFalse("a file with no parent is not in staging", publisher.discardStaged(parentless))
     }
 }
