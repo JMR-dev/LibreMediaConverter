@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import java.io.File
+import java.io.OutputStream
 
 /**
  * What a save has to say when the staged file is not there any more.
@@ -170,7 +171,7 @@ open class OutputPublisher(private val context: Context) {
     open fun publish(staged: File, destination: Uri) {
         val destinationWasEmpty = destinationIsKnownEmpty(destination)
         try {
-            val out = context.contentResolver.openOutputStream(destination)
+            val out = openDestination(destination)
                 ?: error("Could not open destination for writing: $destination")
             out.use { sink -> staged.inputStream().use { source -> source.copyTo(sink) } }
         } catch (failure: Throwable) {
@@ -178,6 +179,22 @@ open class OutputPublisher(private val context: Context) {
             throw failure
         }
     }
+
+    /**
+     * Opens [destination] for writing, or null when the provider will not.
+     *
+     * A seam, and a narrow one: it exists because `openOutputStream` has **two** ways of refusing
+     * and only one of them is reachable from a test otherwise. A provider that has gone away throws
+     * `FileNotFoundException` from inside the call; a provider that is present and declines returns
+     * null. The two are not interchangeable here — the `?: error(...)` above is the only thing that
+     * turns the second into a failure rather than an NPE further down — and no fake provider can be
+     * asked to produce a null return on demand.
+     *
+     * `protected open` rather than injected, matching `hasSpaceFor` and `createStagingFile`:
+     * `WorkerStubs.kt`'s publishers already override one method to force one condition.
+     */
+    protected open fun openDestination(destination: Uri): OutputStream? =
+        context.contentResolver.openOutputStream(destination)
 
     /**
      * True only when the destination is *positively known* to hold no bytes yet.
@@ -256,7 +273,7 @@ open class OutputPublisher(private val context: Context) {
     open fun sweepStaging(nowMs: Long = System.currentTimeMillis()) {
         val dir = stagingDir
         val listing = dir.listFiles() ?: return
-        val entries = listing.map { StagingSweep.Entry(it.name, it.lastModified()) }
+        val entries = snapshot(listing)
         StagingSweep.collectable(entries, nowMs).forEach { name ->
             val file = File(dir, name)
             // Re-read the timestamp rather than trusting the snapshot above. Between the
@@ -267,6 +284,22 @@ open class OutputPublisher(private val context: Context) {
             if (StagingSweep.isCollectable(file.lastModified(), nowMs)) file.delete()
         }
     }
+
+    /**
+     * The name and age of everything [sweepStaging] found, read once.
+     *
+     * A seam for the *race*, not for the clock — [sweepStaging] already takes `nowMs`, so the clock
+     * is the caller's. What has no seam otherwise is the window between this snapshot and the
+     * per-file re-read below it, and that window is the entire reason the re-read exists.
+     *
+     * **It has to be here and not around `listFiles()`.** A test that changes a file before the
+     * listing, or during it, changes what `StagingSweep.collectable` is given — so the file is
+     * never proposed for deletion and the re-read is never reached. The race being modelled is a
+     * file that *was* collectable when the snapshot was taken and is not by the time the delete
+     * comes round, which is exactly one worker resuming in this same process.
+     */
+    protected open fun snapshot(listing: Array<File>): List<StagingSweep.Entry> =
+        listing.map { StagingSweep.Entry(it.name, it.lastModified()) }
 
     private fun File.canonicalOrAbsolute(): File = runCatching { canonicalFile }.getOrDefault(absoluteFile)
 
