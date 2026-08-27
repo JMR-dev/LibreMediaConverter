@@ -1,6 +1,7 @@
 package org.libremediaconverter.convert
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -98,5 +99,72 @@ class OutputPublisherStagingTest {
         File(cacheDir, "conversions").deleteRecursively()
 
         publisher.sweepStaging()
+    }
+
+    @Test
+    fun `the sweep tolerates a staging path that is not a directory`() {
+        // The other half of `listFiles() ?: return`, and not the same as the case above: a missing
+        // directory is created by `stagingDir`'s own mkdirs() and lists as empty. Only a path that
+        // cannot be a directory makes listFiles() answer null, and a sweep that dereferenced that
+        // would take the app down on a launch rather than on a conversion -- AppStartSweepTest is
+        // where this runs from.
+        val stagingPath = stagingPathAsRegularFile()
+
+        publisher.sweepStaging()
+
+        assertTrue("the sweep must not have replaced the fixture", stagingPath.isFile)
+    }
+
+    /**
+     * Makes `cacheDir/conversions` a regular file, which is the whole precondition of the test
+     * above -- and does it in a loop, because a single delete-then-write loses a race that CI
+     * caught and this machine does not reproduce.
+     *
+     * `LibreMediaConverterApp.onCreate` ends with
+     * `appScope.launch { OutputPublisher(...).sweepStaging() }` on `Dispatchers.IO`, and
+     * `sweepStaging` reads `stagingDir`, whose getter calls `mkdirs()`. Robolectric instantiates
+     * the application for every test that asks for one, so that background `mkdirs()` is in flight
+     * across the whole suite, on a thread the paused main looper does not control. Between deleting
+     * this path and writing it there is a window where the path does not exist and that `mkdirs()`
+     * can win, which is `FileNotFoundException: ... (Is a directory)` out of `writeBytes` -- run
+     * 33069641674 on #149, once, against 468 tests that pass here.
+     *
+     * Retrying closes it rather than narrowing it, because the race is not symmetric: `mkdirs()`
+     * fails on an existing regular file, so the invariant only has to survive being *established*.
+     * Once a write lands, nothing in the suite can turn this back into a directory.
+     *
+     * The wider problem -- application-scope IO work racing every Robolectric test that shares
+     * `cacheDir` -- is #159, and is deliberately not fixed here.
+     */
+    private fun stagingPathAsRegularFile(): File {
+        val stagingPath = File(cacheDir, "conversions")
+        repeat(FIXTURE_ATTEMPTS) {
+            if (stagingPath.isFile) return stagingPath
+            stagingPath.deleteRecursively()
+            runCatching { stagingPath.writeBytes(ByteArray(FIXTURE_BYTES)) }
+        }
+        check(stagingPath.isFile) {
+            "the fixture needs $stagingPath to be a regular file and it is a directory; " +
+                "something recreated it $FIXTURE_ATTEMPTS times -- see #159"
+        }
+        return stagingPath
+    }
+
+    @Test
+    fun `discarding a file with no parent at all is refused`() {
+        // A relative name has no parent directory, so `staged.parentFile` is null. The handle
+        // reaches the ViewModel as a path string out of WorkInfo.outputData and is turned straight
+        // into a File, so this is not a shape the caller can rule out -- and the guard has to
+        // answer false rather than dereference it.
+        val parentless = File("holiday.mp4")
+        assertNull("the fixture is supposed to have no parent", parentless.parentFile)
+
+        assertFalse("a file with no parent is not in staging", publisher.discardStaged(parentless))
+    }
+
+    private companion object {
+        /** Enough to outlast a burst of application-scope sweeps; one attempt is what CI lost. */
+        const val FIXTURE_ATTEMPTS = 50
+        const val FIXTURE_BYTES = 8
     }
 }
