@@ -1,17 +1,7 @@
 package org.libremediaconverter.convert
 
-import android.content.ComponentName
-import android.content.ContentProvider
-import android.content.ContentValues
 import android.content.Context
-import android.content.IntentFilter
-import android.content.pm.ProviderInfo
-import android.database.Cursor
-import android.database.MatrixCursor
 import android.net.Uri
-import android.os.Bundle
-import android.provider.DocumentsContract
-import android.provider.OpenableColumns
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,7 +10,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -30,91 +19,6 @@ import java.io.OutputStream
 
 /** What a destination volume says when it fills up mid-write. */
 private const val NO_SPACE = "No space left on device"
-
-private const val DOCUMENTS_AUTHORITY = "org.libremediaconverter.test.documents"
-private const val PLAIN_AUTHORITY = "org.libremediaconverter.test.plain"
-
-/**
- * A stand-in for the provider behind a SAF destination.
- *
- * It answers only what `publish()` asks of a destination -- how many bytes are already there,
- * and delete it -- backed by a real file so the assertions are about the filesystem rather
- * than about a mock's call log alone. The rest of the `ContentProvider` surface is stubbed.
- *
- * Writing is deliberately NOT routed through it. Robolectric's `ShadowContentResolver`
- * consults its registered-stream map before it reaches any provider, which is what lets a
- * test hand out a stream that writes some bytes and then fails -- the condition this whole
- * file exists for, and one a real provider cannot be asked to produce on demand.
- */
-internal open class FakeSafProvider : ContentProvider() {
-
-    override fun onCreate() = true
-
-    override fun query(
-        uri: Uri,
-        projection: Array<out String>?,
-        selection: String?,
-        selectionArgs: Array<out String>?,
-        sortOrder: String?,
-    ): Cursor? {
-        val file = backingFile(uri)
-        if (!file.exists()) return null
-        return MatrixCursor(arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)).apply {
-            addRow(arrayOf<Any?>(file.name, file.length()))
-        }
-    }
-
-    override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
-        if (method != METHOD_DELETE_DOCUMENT) return null
-        val target = extras?.getParcelable(EXTRA_URI, Uri::class.java) ?: return null
-        deleteRequests += target
-        deleteFailure?.let { throw it }
-        backingFile(target).delete()
-        return Bundle()
-    }
-
-    override fun getType(uri: Uri) = "video/mp4"
-
-    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
-
-    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
-
-    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
-
-    companion object {
-        // DocumentsContract.METHOD_DELETE_DOCUMENT and EXTRA_URI are hidden from the public
-        // SDK, so they cannot be referenced. These are the wire names
-        // DocumentsContract.deleteDocument() actually sends, which is what a provider sees.
-        const val METHOD_DELETE_DOCUMENT = "android:deleteDocument"
-        const val EXTRA_URI = "uri"
-
-        /** Where the "documents" really live. Set per test to a Robolectric temp path. */
-        lateinit var root: File
-
-        /** Every delete this provider was asked for, in order. Empty is an assertion too. */
-        val deleteRequests = mutableListOf<Uri>()
-
-        /** Armed by the test that needs the cleanup itself to fail. */
-        var deleteFailure: RuntimeException? = null
-
-        fun backingFile(uri: Uri) = File(root, uri.lastPathSegment.orEmpty())
-
-        fun reset(directory: File) {
-            root = directory
-            deleteRequests.clear()
-            deleteFailure = null
-        }
-    }
-}
-
-/**
- * The same provider, registered WITHOUT the documents-provider intent filter.
- *
- * A separate class because the package manager keys providers by component name, so two
- * authorities need two components. It exists to prove the guard is a guard: a content URI
- * from something that is not a documents provider must not be handed to `deleteDocument`.
- */
-internal class FakePlainProvider : FakeSafProvider()
 
 /**
  * A sink that behaves like a volume filling up.
@@ -179,8 +83,8 @@ class OutputPublisherPublishTest {
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
         FakeSafProvider.reset(File(context.cacheDir, "destinations").apply { mkdirs() })
-        register(FakeSafProvider::class.java, DOCUMENTS_AUTHORITY, asDocumentsProvider = true)
-        register(FakePlainProvider::class.java, PLAIN_AUTHORITY, asDocumentsProvider = false)
+        registerProvider(context, FakeSafProvider::class.java, DOCUMENTS_AUTHORITY, asDocumentsProvider = true)
+        registerProvider(context, FakePlainProvider::class.java, PLAIN_AUTHORITY, asDocumentsProvider = false)
 
         // SAF's CreateDocument contract hands back a document that already exists and is
         // empty, so that is the state every destination starts in here.
@@ -323,30 +227,6 @@ class OutputPublisherPublishTest {
             UnreliableOutputStream(
                 FakeSafProvider.backingFile(destination).outputStream(),
                 failAfterBytes = afterBytes,
-            )
-        }
-    }
-
-    private fun register(provider: Class<out FakeSafProvider>, authority: String, asDocumentsProvider: Boolean) {
-        val info = ProviderInfo().apply {
-            this.authority = authority
-            packageName = context.packageName
-            name = provider.name
-            exported = true
-            grantUriPermissions = true
-        }
-        Robolectric.buildContentProvider(provider).create(info)
-
-        // isDocumentUri() does not look at the URI alone: it asks the package manager whether
-        // anything answers ACTION_DOCUMENTS_PROVIDER for that authority. Registering the
-        // provider with the resolver is not enough, which is the whole reason the negative
-        // case above can exist.
-        val packageManager = shadowOf(context.packageManager)
-        packageManager.addOrUpdateProvider(info)
-        if (asDocumentsProvider) {
-            packageManager.addIntentFilterForProvider(
-                ComponentName(context.packageName, provider.name),
-                IntentFilter(DocumentsContract.PROVIDER_INTERFACE),
             )
         }
     }

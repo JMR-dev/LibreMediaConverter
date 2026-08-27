@@ -358,4 +358,120 @@ class ContainerCapabilitiesTest {
                 assertEquals(emptyList<VideoCodec>(), ContainerCapabilities.encodableVideo(container))
             }
     }
+
+    // --- the audio axis -----------------------------------------------------
+    //
+    // Every rule below has a video twin already tested above. The two halves of `validate` were
+    // written together and only one of them was ever checked, so these are deliberately shaped like
+    // their twins rather than as a fresh idea about what to assert.
+
+    @Test
+    fun `an unidentifiable source audio codec cannot be copied`() {
+        // The audio twin of `an unidentifiable source codec cannot be copied`. Never guess: a copy
+        // of an unidentified codec is how you ship a file that does not play.
+        val unknownAudio = InputProbe(videoCodec = "h264", audioCodec = null, container = Container.MP4)
+        val spec = OutputSpec(Container.MP4, VideoCodec.H264, AudioCodec.COPY)
+
+        val invalid = ContainerCapabilities.validate(spec, unknownAudio) as? Validation.Invalid
+            ?: throw AssertionError("copying an unidentified audio codec must be refused")
+
+        assertTrue(invalid.message, invalid.message.contains("could not be identified"))
+        assertEverySuggestionValid(invalid, unknownAudio)
+    }
+
+    @Test
+    fun `copying an audio codec the container cannot hold is refused`() {
+        // MP4 carries AAC, MP3, Opus and FLAC. Vorbis lives in Ogg and Matroska, so a stream copy
+        // out of a Vorbis source into MP4 has nowhere to put the track.
+        val vorbisAudio = InputProbe(videoCodec = "h264", audioCodec = "vorbis", container = Container.MKV)
+        val spec = OutputSpec(Container.MP4, VideoCodec.H264, AudioCodec.COPY)
+
+        val invalid = ContainerCapabilities.validate(spec, vorbisAudio) as? Validation.Invalid
+            ?: throw AssertionError("Vorbis copied into MP4 must be refused")
+
+        assertEquals("MP4 cannot hold Vorbis audio.", invalid.message)
+        assertEverySuggestionValid(invalid, vorbisAudio)
+    }
+
+    @Test
+    fun `an audio codec the container cannot hold is refused on the encode path too`() {
+        // WAV carries PCM and nothing else. The twin is `H265 in AVI is refused`.
+        val spec = OutputSpec(Container.WAV, VideoCodec.NONE, AudioCodec.AAC)
+
+        val invalid = ContainerCapabilities.validate(spec, mp3Source) as? Validation.Invalid
+            ?: throw AssertionError("AAC in WAV must be refused")
+
+        assertEquals("WAV cannot hold AAC audio.", invalid.message)
+        assertEverySuggestionValid(invalid, mp3Source)
+    }
+
+    @Test
+    fun `an audio codec this app cannot encode is refused, and copying is offered instead`() {
+        // Matroska carries Vorbis; nothing here encodes it. The refusal has to say so *and* say
+        // what would work, which is the audio twin of `copying is offered as the fix when the codec
+        // is right but unencodable`.
+        val spec = OutputSpec(Container.MKV, VideoCodec.H264, AudioCodec.VORBIS)
+
+        val invalid = ContainerCapabilities.validate(spec, h264Source) as? Validation.Invalid
+            ?: throw AssertionError("encoding Vorbis must be refused")
+
+        assertEquals(
+            "This app cannot encode Vorbis audio. It can still be copied from a Vorbis source.",
+            invalid.message,
+        )
+        assertEverySuggestionValid(invalid, h264Source)
+    }
+
+    @Test
+    fun `copying a video codec the container cannot hold is refused`() {
+        // Not the audio axis, but the one video refusal with no test: AVI predates H.265, so a
+        // stream copy out of an HEVC source into AVI has nowhere to put the track. `H265 in AVI is
+        // refused` covers the matrix; this covers what validate() does with it.
+        val h265Source = InputProbe(videoCodec = "hevc", audioCodec = "mp3", container = Container.MP4)
+        val spec = OutputSpec(Container.AVI, VideoCodec.COPY, AudioCodec.MP3)
+
+        val invalid = ContainerCapabilities.validate(spec, h265Source) as? Validation.Invalid
+            ?: throw AssertionError("H.265 copied into AVI must be refused")
+
+        assertEquals("AVI cannot hold H.265 video.", invalid.message)
+        assertEverySuggestionValid(invalid, h265Source)
+    }
+
+    @Test
+    fun `no audio track is accepted by every container in both modes`() {
+        // The audio twin of VideoCodec.NONE -> true. A container that refused "no audio" would make
+        // every video-only output invalid.
+        Container.entries.forEach { container ->
+            listOf(CodecMode.COPY, CodecMode.ENCODE).forEach { mode ->
+                assertTrue(
+                    "$container should accept no audio track ($mode)",
+                    ContainerCapabilities.accepts(container, AudioCodec.NONE, mode),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `resolving audio COPY before asking the matrix is required`() {
+        // The audio twin of `resolving COPY before asking the matrix is required`, and the reason is
+        // identical: silently answering "false" would refuse a perfectly good remux.
+        runCatching { ContainerCapabilities.accepts(Container.MP4, AudioCodec.COPY, CodecMode.COPY) }
+            .onSuccess { throw AssertionError("expected audio COPY to be rejected by the matrix") }
+    }
+
+    /**
+     * Every alternative a refusal offers has to be one the same input could actually take.
+     *
+     * `Validation.Invalid` promises exactly this and names this class as the proof. The global
+     * property test walks the presets; these paths reach `suggestions()` through `validateAudio`,
+     * which no preset does.
+     */
+    private fun assertEverySuggestionValid(invalid: Validation.Invalid, probe: InputProbe) {
+        invalid.suggestions.forEach {
+            assertTrue(
+                "suggestion $it is itself invalid, so the chip leads to a second error",
+                ContainerCapabilities.validate(it, probe).isValid,
+            )
+        }
+    }
 }
