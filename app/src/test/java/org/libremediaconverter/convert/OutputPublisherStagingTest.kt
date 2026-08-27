@@ -1,5 +1,6 @@
 package org.libremediaconverter.convert
 
+import android.app.Application
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -27,14 +28,18 @@ import java.util.UUID
 @RunWith(RobolectricTestRunner::class)
 class OutputPublisherStagingTest {
 
+    private lateinit var app: Application
     private lateinit var cacheDir: File
     private lateinit var publisher: OutputPublisher
 
     @Before
     fun setUp() {
-        val context = RuntimeEnvironment.getApplication()
-        cacheDir = context.cacheDir
-        publisher = OutputPublisher(context)
+        // Held as a field rather than a local: the race test below builds an anonymous
+        // OutputPublisher, and inside that `object` expression a bare `context` resolves to the
+        // superclass's own constructor property, which is not initialised at the super call.
+        app = RuntimeEnvironment.getApplication()
+        cacheDir = app.cacheDir
+        publisher = OutputPublisher(app)
     }
 
     @Test
@@ -148,6 +153,38 @@ class OutputPublisherStagingTest {
                 "something recreated it $FIXTURE_ATTEMPTS times -- see #159"
         }
         return stagingPath
+    }
+
+    @Test
+    fun `a file that stops being collectable between the listing and the delete survives`() {
+        // The race the second timestamp read exists for, and the only branch of it that had never
+        // run. The comment in sweepStaging states the cost precisely: a worker resumed by
+        // WorkManager -- in this same process -- could have started writing this very file, and
+        // unlinking an inode a running job still holds open ends with the job reporting success for
+        // a path that no longer exists.
+        //
+        // So: a file old enough to collect at listing time, touched to now before the delete is
+        // reached. StagingSweep.collectable already said yes; isCollectable has to say no.
+        val orphan = publisher.createStagingFile(
+            StagingNames.forJob(UUID.randomUUID(), "mp4"),
+        ).apply { writeBytes(ByteArray(4096)) }
+        assertTrue(orphan.setLastModified(System.currentTimeMillis() - StagingSweep.GRACE_PERIOD_MS - 60_000))
+
+        // Touched *after* the snapshot is taken, which is the only window that reaches the
+        // re-read. Doing it around listFiles() instead changes what StagingSweep.collectable is
+        // given, so the file is never proposed for deletion and the guard is never exercised --
+        // measured, and the reason the seam sits where it does.
+        val racing = object : OutputPublisher(app) {
+            override fun snapshot(listing: Array<File>): List<StagingSweep.Entry> =
+                super.snapshot(listing).also { orphan.setLastModified(System.currentTimeMillis()) }
+        }
+
+        racing.sweepStaging()
+
+        assertTrue(
+            "a file a live job started writing after the listing must not be unlinked",
+            orphan.exists(),
+        )
     }
 
     @Test
