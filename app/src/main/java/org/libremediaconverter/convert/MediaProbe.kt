@@ -92,7 +92,12 @@ object MediaProbe {
         else -> InputKind.UNPARSEABLE
     }
 
-    private class Extracted(
+    /**
+     * `internal` rather than `private` so [extractedFrom] can be named from a test. The JVM test
+     * source set is a friend of `main`, so this stays invisible outside the module — the precedent
+     * is `MainActivity`'s `Destination`, and [containerFrom] beside it.
+     */
+    internal class Extracted(
         val videoCodec: String?,
         val audioCodec: String?,
         val durationMs: Long,
@@ -100,33 +105,55 @@ object MediaProbe {
         val height: Int,
     )
 
+    /**
+     * What a set of track formats says about a file.
+     *
+     * Split out of [probeWithExtractor] so the rules below can be tested against tracks a test
+     * *chooses*, rather than against whatever the committed fixtures happen to contain. The device
+     * tests exercise this through real files; none of them can construct a two-video-track input,
+     * a track that omits its duration, or an audio-before-video ordering on purpose.
+     *
+     * Three rules live here, and each is a decision rather than plumbing:
+     *
+     * - **First track of a type wins.** `video == null` is the whole guard. A file with two video
+     *   tracks must report the first, because that is the one an engine will transcode.
+     * - **Duration is the maximum across tracks**, not the first one found or the last. A file
+     *   whose audio outlasts its video is ordinary, and reporting the video's length would cut the
+     *   progress bar short.
+     * - **A track that omits `KEY_DURATION` contributes nothing** rather than zero. `MediaExtractor`
+     *   omits it for plenty of real tracks — see `MediaProbeTrackFieldsTest` — and `maxOf` against a
+     *   fabricated 0 would still be correct here, but reading a key that is absent is not.
+     */
+    internal fun extractedFrom(formats: List<MediaFormat>): Extracted {
+        var video: String? = null
+        var audio: String? = null
+        var durationUs = 0L
+        var width = 0
+        var height = 0
+
+        for (format in formats) {
+            val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
+            if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                durationUs = maxOf(durationUs, format.getLong(MediaFormat.KEY_DURATION))
+            }
+            when {
+                mime.startsWith("video/") && video == null -> {
+                    video = shortName(mime)
+                    width = format.intOr(MediaFormat.KEY_WIDTH)
+                    height = format.intOr(MediaFormat.KEY_HEIGHT)
+                }
+
+                mime.startsWith("audio/") && audio == null -> audio = shortName(mime)
+            }
+        }
+        return Extracted(video, audio, durationUs / US_PER_MS, width, height)
+    }
+
     private fun probeWithExtractor(context: Context, uri: Uri): Extracted? {
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(context, uri, null)
-            var video: String? = null
-            var audio: String? = null
-            var durationUs = 0L
-            var width = 0
-            var height = 0
-
-            for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
-                if (format.containsKey(MediaFormat.KEY_DURATION)) {
-                    durationUs = maxOf(durationUs, format.getLong(MediaFormat.KEY_DURATION))
-                }
-                when {
-                    mime.startsWith("video/") && video == null -> {
-                        video = shortName(mime)
-                        width = format.intOr(MediaFormat.KEY_WIDTH)
-                        height = format.intOr(MediaFormat.KEY_HEIGHT)
-                    }
-
-                    mime.startsWith("audio/") && audio == null -> audio = shortName(mime)
-                }
-            }
-            Extracted(video, audio, durationUs / US_PER_MS, width, height)
+            extractedFrom(extractor.trackFormats())
         } catch (e: Exception) {
             Log.i(TAG, "Platform extractor could not read $uri.", e)
             null
@@ -269,25 +296,7 @@ object MediaProbe {
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(context, uri, null)
-            var video: String? = null
-            var audio: String? = null
-            var width = 0
-            var height = 0
-            var fps = 0
-
-            for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
-                if (mime.startsWith("video/") && video == null) {
-                    video = shortName(mime)
-                    width = format.intOr(MediaFormat.KEY_WIDTH)
-                    height = format.intOr(MediaFormat.KEY_HEIGHT)
-                    fps = format.intOr(MediaFormat.KEY_FRAME_RATE)
-                } else if (mime.startsWith("audio/") && audio == null) {
-                    audio = shortName(mime)
-                }
-            }
-            ConcatInput(video, audio, width, height, fps)
+            concatInputFrom(extractor.trackFormats())
         } catch (e: Exception) {
             Log.i(TAG, "Could not probe $uri for concat; will re-encode.", e)
             ConcatInput(null, null, 0, 0, 0)
@@ -295,6 +304,45 @@ object MediaProbe {
             runCatching { extractor.release() }
         }
     }
+
+    /**
+     * The join flow's read of the same track formats. See [extractedFrom] for why this is separate
+     * from the extractor.
+     *
+     * Deliberately **not** folded into [extractedFrom] despite the overlap. This one reads frame
+     * rate and does not read duration; that one reads duration and does not read frame rate. A
+     * merged version would have to compute both for every caller, and `ConcatPlanner` treats an
+     * unknown frame rate as "cannot prove a match" — so a field this flow does not need must not
+     * start arriving as a number.
+     */
+    internal fun concatInputFrom(formats: List<MediaFormat>): ConcatInput {
+        var video: String? = null
+        var audio: String? = null
+        var width = 0
+        var height = 0
+        var fps = 0
+
+        for (format in formats) {
+            val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
+            if (mime.startsWith("video/") && video == null) {
+                video = shortName(mime)
+                width = format.intOr(MediaFormat.KEY_WIDTH)
+                height = format.intOr(MediaFormat.KEY_HEIGHT)
+                fps = format.intOr(MediaFormat.KEY_FRAME_RATE)
+            } else if (mime.startsWith("audio/") && audio == null) {
+                audio = shortName(mime)
+            }
+        }
+        return ConcatInput(video, audio, width, height, fps)
+    }
+
+    /**
+     * Every track format this extractor holds, read once.
+     *
+     * The thin edge the two pure functions above leave behind: a `trackCount` and a
+     * `getTrackFormat` per index, which is the whole of what needs a real `MediaExtractor`.
+     */
+    private fun MediaExtractor.trackFormats(): List<MediaFormat> = (0 until trackCount).map(::getTrackFormat)
 
     /**
      * One track property as an Int, or [fallback] when the format has no Int to give.
