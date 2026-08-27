@@ -20,6 +20,9 @@ import java.io.OutputStream
 /** What a destination volume says when it fills up mid-write. */
 private const val NO_SPACE = "No space left on device"
 
+/** How far a failing copy gets before the volume "fills up". Any value below the payload does. */
+private const val PARTIAL_BYTES = 512
+
 /**
  * A sink that behaves like a volume filling up.
  *
@@ -74,6 +77,8 @@ class OutputPublisherPublishTest {
     private lateinit var staged: File
 
     private val payload = ByteArray(8192) { (it % 251).toByte() }
+
+    /** How far a failing copy gets before the volume "fills up". Any value below the payload does. */
 
     private val documentUri: Uri = Uri.parse("content://$DOCUMENTS_AUTHORITY/document/holiday.mp4")
     private val plainUri: Uri = Uri.parse("content://$PLAIN_AUTHORITY/document/holiday_plain.mp4")
@@ -201,6 +206,70 @@ class OutputPublisherPublishTest {
 
         assertTrue("publishing to a dead provider must not appear to succeed, got $failure", failure != null)
         assertEquals(emptyList<Uri>(), FakeSafProvider.deleteRequests)
+    }
+
+    @Test
+    fun `a destination whose size cannot be determined is never deleted`() {
+        // The three short-circuits in destinationIsKnownEmpty, and the reason its KDoc gives for
+        // each of them answering false:
+        //
+        //   "this decides whether a delete is allowed and 'I could not tell' must never authorise
+        //    one."
+        //
+        // The contrast is `a copy that fails partway leaves nothing at the destination` above: a
+        // provider that *does* say zero gets the delete. These say nothing, so they must not.
+        // Getting this backwards costs the user a file they already had, on a save that failed.
+        //
+        // Named exemption: of the three conjuncts, `size >= 0` cannot be falsified behaviourally.
+        // Measured -- getColumnIndex returns -1 for an absent column, and isNull(-1) throws
+        // CursorIndexOutOfBoundsException, which the surrounding runCatching already turns into
+        // `?: false`. So relaxing it to `size >= -1` leaves this test green: same answer, reached
+        // by the exception path instead. The guard should stay -- control flow through an exception
+        // is worse than a comparison, and another Cursor implementation need not throw -- but no
+        // assertion here pins it, and saying so beats implying the missing-column case covers it.
+        // `!row.isNull(size)` and `row.moveToFirst()` do both bite.
+        listOf(
+            RowShape.NO_SIZE_COLUMN to "a cursor with no SIZE column",
+            RowShape.NULL_SIZE to "a cursor whose SIZE cell is null",
+            RowShape.NO_ROWS to "a cursor holding no rows",
+        ).forEach { (shape, description) ->
+            FakeSafProvider.deleteRequests.clear()
+            FakeSafProvider.backingFile(documentUri).writeBytes(ByteArray(0))
+            FakeSafProvider.rowShape = shape
+            failMidCopy(documentUri, afterBytes = PARTIAL_BYTES)
+
+            assertThrows(IOException::class.java) { publisher.publish(staged, documentUri) }
+
+            assertEquals(
+                "$description must not authorise a delete",
+                emptyList<Uri>(),
+                FakeSafProvider.deleteRequests,
+            )
+            assertTrue(
+                "$description must leave the destination where it was",
+                FakeSafProvider.backingFile(documentUri).exists(),
+            )
+        }
+    }
+
+    @Test
+    fun `a provider that declines by returning null fails with the destination named`() {
+        // openOutputStream has two ways of refusing, and only one of them is otherwise reachable.
+        // `a destination the provider will not open...` above drives the throwing one -- a provider
+        // that has gone away. This is the other: a provider that is present, answers, and hands
+        // back null. Without the `?: error(...)` that becomes an NPE inside `use`, which reaches
+        // the user as "Conversion failed." with a null message.
+        val nullOpening = object : OutputPublisher(context) {
+            override fun openDestination(destination: Uri): OutputStream? = null
+        }
+
+        val failure = runCatching { nullOpening.publish(staged, documentUri) }.exceptionOrNull()
+
+        assertTrue("a null stream must not appear to succeed, got $failure", failure != null)
+        assertTrue(
+            "the failure must name the destination rather than being a bare NPE; got ${failure?.message}",
+            failure?.message?.contains("Could not open destination for writing") == true,
+        )
     }
 
     @Test
