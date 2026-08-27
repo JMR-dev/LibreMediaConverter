@@ -1,6 +1,6 @@
 # Coverage-read findings
 
-**Status:** four findings, none fixed, none urgent. Every entry here is a *code* observation —
+**Status:** five findings, none fixed, none urgent. F5 was added on 2026-08-27, found while decomposing #132 into children — it had been listed there as a test gap, and is not one. Every entry here is a *code* observation —
 something a test would document rather than repair. The test gaps found in the same read are
 tickets #132 and #133, not entries here; see [Not covered here](#not-covered-here).
 **Scope:** what a JaCoCo read on 2026-08-26 turned up that writing a test would not fix. This is
@@ -20,10 +20,11 @@ next coverage read does not re-file it.
 
 They are here rather than in that document because folding them in would inflate a sixteen-entry
 audit whose status metadata has already gone stale once, and because they share a provenance:
-all four fell out of reading a coverage report, and all four are the kind of thing a coverage
-report is *good* at surfacing and a test is bad at fixing.
+every one fell out of reading a coverage report, and every one is the kind of thing a coverage
+report is *good* at surfacing and a test is bad at fixing. F5 is the clearest case — it was filed
+as a test gap first, and only stopped being one when someone went looking for its callers.
 
-Entry ids are `F1`–`F4` so they cannot be confused with `defect-audit.md`'s `D1`–`D16`.
+Entry ids are `F1`–`F5` so they cannot be confused with `defect-audit.md`'s `D1`–`D16`.
 
 ## How to read the confidence labels
 
@@ -219,6 +220,48 @@ before the builder sees it, `FFmpegCommandBuilder.kt:167` becomes live and wants
 
 ---
 
+## F5 — `ConversionNotifications.areEnabled()` is never called
+
+**Severity: low · Confirmed by inspection · found while decomposing the test-gap ticket**
+
+```
+app/src/main/java/org/libremediaconverter/work/ConversionNotifications.kt:60-62
+```
+
+```kotlin
+fun areEnabled(): Boolean = context.getSystemService(NotificationManager::class.java)
+    .areNotificationsEnabled()
+    .also { if (!it) Log.i(TAG, "Notifications disabled; progress will not be visible.") }
+```
+
+`grep -rn 'areEnabled' app/src` returns **that declaration and nothing else**. `ConversionNotifications`
+is constructed in both workers (`ConversionWorker.kt:55`, `ConcatWorker.kt:35`) and only `build()` is
+ever called on it.
+
+**This entry exists because it was very nearly filed as a test gap.** Its three lines are cold on the
+JVM, it has a KDoc explaining real user-visible stakes — a foreground service without
+`POST_NOTIFICATIONS` shows only in the Task Manager, so progress silently vanishes — and Robolectric
+can flip that permission in one line. Everything about it reads like a cheap, worthwhile test.
+
+It is not, because **the behaviour the KDoc describes does not happen**. Nothing consults
+`areEnabled()`, so nothing warns, degrades, or logs when notifications are off. A test would assert
+that a function nobody calls returns what the platform told it — green, vacuous, and actively
+misleading, since it would imply the app handles the disabled-notification case. That is the failure
+mode `CLAUDE.md` records from the mutation review, reached from the opposite direction: not a test
+that fails to bite, but a test with nothing to bite.
+
+### What a fix has to decide
+
+Whether the app should act on this at all. The KDoc argues it should — a conversion whose progress is
+invisible is a real complaint, and `ConversionViewModel` or the worker's foreground start is where a
+check would go. If yes, that is a **feature** with a test; if no, delete the method and the KDoc's
+claim with it. What must not happen is a test that makes the current state look handled.
+
+Related: **#16** is open on an adjacent gap — a user who *can* unblock a foreground-denied retry has
+no way to make it happen now.
+
+---
+
 ## Summary
 
 | ID | Finding | Severity | Evidence | Action |
@@ -227,10 +270,17 @@ before the builder sees it, `FFmpegCommandBuilder.kt:167` becomes live and wants
 | F2 | `hardwareEncodeAvailable` written, never read; KDoc describes removed behaviour | low | confirmed by inspection; `FFmpegCommandBuilderTest:132` corroborates | **decide**: delete or mark vestigial |
 | F3 | `ConversionRequest.videoCodec` / `.audioCodec` have no callers | low | confirmed by inspection | delete, or keep for symmetry — **not** a test gap |
 | F4 | Two private guards reachable only by direct call | n/a | confirmed by inspection | **no action** — named exemption, per #88 |
+| F5 | `ConversionNotifications.areEnabled()` is never called | low | confirmed by inspection; grep returns the declaration only | **decide**: act on it or delete it — **not** a test gap |
 
-Order, if these are acted on: **F1 first and alone.** It is the only one with a possible
-user-visible answer, and answering it may make its own comment fix unnecessary. F2 and F3 are
-tidying and belong in one commit with each other, not with F1. F4 is finished by being written down.
+Order, if these are acted on: **F1 and F5 first, separately.** They are the two with a possible
+user-visible answer — a format the app can produce and does not offer, and a warning the app
+documents and does not give — and either answer changes what the tidying should look like. F2 and F3
+are tidying and belong in one commit with each other, not with F1 or F5. F4 is finished by being
+written down.
+
+**F1 and F5 share a shape worth naming:** both are places where a comment describes behaviour the
+code does not have, and in both the tempting fix (delete the dead arm, test the dead method) would
+freeze the wrong answer in place. The decision comes first.
 
 ## Not covered here
 
