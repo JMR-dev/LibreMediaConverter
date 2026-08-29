@@ -1,12 +1,16 @@
 package org.libremediaconverter.work
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import androidx.work.Data
+import androidx.work.ForegroundInfo
+import androidx.work.ForegroundUpdater
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.workDataOf
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -18,6 +22,7 @@ import org.junit.runner.RunWith
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.OutputPublisher
 import org.libremediaconverter.convert.SoftwareTranscoder
+import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.convert.installTestWorkManager
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.DeviceCodecs
@@ -108,6 +113,54 @@ class WorkerCancellationTest {
         assertEquals("a failed attempt must not leave its partial behind", emptyList<String>(), stagedNames())
     }
 
+    @Test
+    fun `a cancelled join propagates instead of being turned into a Result`() {
+        val thrown = runCatching { runBlocking { concatWorker().doWork() } }.exceptionOrNull()
+
+        assertTrue(
+            "cancellation must leave doWork as cancellation, not as a Result; got $thrown",
+            thrown is CancellationException,
+        )
+    }
+
+    @Test
+    fun `a cancelled join still deletes the partial it had already staged`() {
+        // Written first, so a missing delete cannot pass by asking whether a file nobody wrote is
+        // absent -- the same reason PartialThenFailingTranscoder writes before it throws.
+        concatStagedFile().writeBytes(ByteArray(PARTIAL_STAGED_BYTES))
+
+        runCatching { runBlocking { concatWorker().doWork() } }
+
+        assertEquals("a cancelled join must not leave its partial behind", emptyList<String>(), stagedNames())
+    }
+
+    /**
+     * A join whose foreground start is cancelled rather than denied.
+     *
+     * The conversion twin cancels *inside the engine*, which is the honest shape there because
+     * `ConversionDependencies` has a seam for it. `ConcatWorker` calls `ConcatEngine` directly and
+     * has no such seam -- it is native, and nothing here gets past it -- so the cancellation is
+     * injected at the only other point inside the `try`: `setForeground`. That is not a contrivance.
+     * A job cancelled while WorkManager is promoting it to the foreground is precisely when the
+     * window is open, and what is being tested is the `catch` arm, which cannot tell where in the
+     * `try` the cancellation came from.
+     */
+    private fun concatWorker(): ConcatWorker = TestListenableWorkerBuilder<ConcatWorker>(
+        context = app,
+        inputData = workDataOf(
+            ConcatWorker.KEY_INPUT_URIS to arrayOf(INPUT.toString(), "file:///tmp/second.mp4"),
+            ConcatWorker.KEY_TOTAL_BYTES to INPUT_BYTES,
+            ConcatWorker.KEY_FORMAT to CONCAT_FORMAT.name,
+        ),
+        runAttemptCount = 0,
+    ).setId(CONCAT_ID)
+        .setForegroundUpdater(CancellingForegroundUpdater)
+        .build()
+
+    /** The staging path the join will compute, asked for rather than spelled out here. */
+    private fun concatStagedFile(): File =
+        publisher.createStagingFile(StagingNames.forJob(CONCAT_ID, CONCAT_FORMAT.extension))
+
     /**
      * A worker routed to the software engine, which is [failure] and nothing else.
      *
@@ -142,7 +195,10 @@ class WorkerCancellationTest {
         const val DISPLAY_NAME = "holiday.mp4"
         const val INPUT_BYTES = 1024L
         val SPEC = OutputFormat.MP4_H265.spec
+        val CONCAT_FORMAT = OutputFormat.MP4_H264
+        const val PARTIAL_STAGED_BYTES = 2048
         val JOB_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000003")
+        val CONCAT_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000004")
     }
 }
 
@@ -166,4 +222,20 @@ private class PartialThenFailingTranscoder(private val failure: () -> Nothing) :
     private companion object {
         const val PARTIAL_BYTES = 2048
     }
+}
+
+/**
+ * Stands in for a job cancelled while WorkManager is promoting it to the foreground.
+ *
+ * The mechanism `DeniedForegroundStartTest` documents, carrying a different exception:
+ * `WorkForegroundUpdater` propagates whatever the future failed with, and
+ * `ListenableFuture.await()` unwraps the `ExecutionException`, so the worker meets a bare
+ * `CancellationException` exactly where a real cancellation would put one.
+ */
+private object CancellingForegroundUpdater : ForegroundUpdater {
+    override fun setForegroundAsync(
+        context: Context,
+        id: UUID,
+        foregroundInfo: ForegroundInfo,
+    ): ListenableFuture<Void> = FailedFuture(CancellationException("cancelled while going foreground"))
 }
