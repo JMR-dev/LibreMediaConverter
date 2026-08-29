@@ -130,9 +130,9 @@ install for code that can never run — and on API 37 the full APK does not fit 
 - The `model` package is excluded from `ReturnCount` and `CyclomaticComplexMethod` only. It is the
   decision layer, where one branch is one documented user-visible outcome and the metric counts
   answers rather than complexity. Every other rule still applies there.
-- **Coverage is reported, not gated** — **87.1% of lines (2025/2324), 69.1% of branches
-  (974/1410)**, measured 2026-08-27 with `./gradlew :app:jacocoTestReport`, against 502 JVM tests
-  in 71 classes.
+- **Coverage is reported, not gated** — **88.9% of lines (2087/2348), 75.4% of branches
+  (1011/1340)**, measured 2026-08-29 with `./gradlew :app:jacocoTestReport`, against 546 JVM tests
+  in 76 classes.
 
   **Every figure this file carried before 2026-08-24 was an artifact, roughly half the real one.**
   Robolectric loads classes through its own sandbox classloader with no source location, JaCoCo
@@ -159,6 +159,21 @@ install for code that can never run — and on API 37 the full APK does not fit 
   chooses a branch the suite had never taken. Line coverage barely notices; branch coverage is the
   whole point.
 
+  Then #153's five children on 2026-08-29 — 87.1% -> 88.9% line, 69.1% -> **75.4%** branch, 502 ->
+  546 tests.
+
+  **That last branch figure moved for two reasons, and only one of them is new tests.** The
+  numerator rose 974 -> 1011; the denominator *fell* 1410 -> 1340. Both are the seam work. Pulling
+  a `when` out of a lambda inside a `collect` deletes the coroutine state machine's synthesized
+  branches around it, and what is left is a plain function whose branches a test can choose:
+  `ConversionViewModel$observe$1$1` went from carrying the whole mapping to 6 branches, while the
+  extracted `ConversionViewModelKt` covers 41 of 42 and `JoinViewModelKt` 38 of 39. So a seam is
+  worth more than the tests it enables — it also stops the measurement counting scaffolding.
+
+  Be careful quoting a branch move on its own for that reason. A percentage that rises because the
+  denominator shrank is not the same claim as one that rises because more branches are tested, and
+  this entry has a history of explaining its own numbers wrongly.
+
   And **re-measure before quoting**: this entry was once written quoting 81.4%, measured four hours
   earlier, and was already three points stale by the time it was ready to merge.
 - **Testable code is not done until it is tested.** If a piece is unit testable, it gets unit
@@ -181,6 +196,32 @@ install for code that can never run — and on API 37 the full APK does not fit 
   Name what you did not cover and why. Genuine exemptions exist; implied coverage is the problem.
 
 - `kotlin.code.style=official`. Gradle stays Kotlin DSL.
+
+- **A stacked PR does not merge with `gh pr merge`, and `MERGED` is not proof it reached `main`.**
+  Two separate traps, both measured on 2026-08-27 while landing #144-#151.
+
+  `gh pr merge` uses the GraphQL mutation, which refuses a stacked PR outright: *"This pull request
+  is part of a stack and must be merged using the asynchronous merge REST API."* So does
+  `PUT .../pulls/{n}/merge`. The one that works is
+  `gh api -X PUT repos/OWNER/REPO/pulls/N/merge-async -f merge_method=merge`, which returns a uuid
+  to poll at `.../merge-async/{uuid}` until `status` is `merged` or `failed`.
+
+  **The second trap is worse, because nothing looks wrong.** GitHub retargets a stacked PR's base
+  to `main` when the PR below it merges, but *asynchronously*. Merge a stack faster than that
+  settles — five PRs about thirty seconds apart, in the case that found this — and each one merges
+  into its own base branch, which has itself already been merged and left behind. Every call
+  returns `status: merged` and every one is true. `gh pr list --state open` comes back empty, every
+  PR shows `MERGED`, and **none of the content is on `main`**.
+
+  What caught it was a coverage re-measure reading two points lower than the same tree had measured
+  an hour earlier; a fresh `git pull` changed nothing, which is what turned it into a question.
+  `git merge-base --is-ancestor <merge-sha> origin/main` answers it in one line. Do that after
+  merging a stack, or merge one at a time and re-read `baseRefName` between. #160 is what the
+  recovery cost.
+
+  The auto-retarget belongs to the stacking feature specifically. A PR opened with a plain
+  `gh pr create --base some-branch` does **not** retarget when that branch merges — it is left
+  pointing at a dead base and has to be moved by hand.
 
 - **File one-off issues with `tools/github/file-issue.sh`, not `gh issue create`.** `gh issue
   create` does not touch the project board, so the issue exists, carries its labels, and is
