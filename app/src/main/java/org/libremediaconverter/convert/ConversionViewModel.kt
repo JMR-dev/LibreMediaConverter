@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
+import androidx.work.Data
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineDispatcher
@@ -70,6 +71,119 @@ data class InputFile(
      */
     val probe: InputProbe? = null,
 )
+
+/**
+ * One update about a running conversion, as WorkManager last reported it.
+ *
+ * Only the fields [conversionStateFrom] reads — the same shape, and for the same reason, as
+ * `JobSnapshot` beside `Reattachment.choose`: the rule stays testable on the JVM because nothing
+ * in it needs a `WorkInfo`, which a test cannot readily build.
+ *
+ * [outputData] stays a `Data` rather than being unpacked into five nullable strings. It is what a
+ * test already builds with `workDataOf` everywhere in this suite, so unpacking would move the same
+ * reads without making anything easier to drive.
+ */
+internal data class ConversionUpdate(
+    val state: WorkInfo.State,
+    val progressPercent: Int,
+    val runAttemptCount: Int,
+    val outputData: Data,
+)
+
+/**
+ * What the screen should show, given what WorkManager last said about the job.
+ *
+ * ## Why this is a function rather than the body of a `collect`
+ *
+ * It was the body of one. `workManager` is built in the constructor from `WorkManager.getInstance`,
+ * `observe` is private, and nothing could hand either a chosen `WorkInfo` — so every arm below ran
+ * only when a real worker happened to produce it. A real worker produces a terminal state with
+ * well-formed output, which meant six of these arms had never been chosen by any test: the progress
+ * read, both sides of the retry check, a success with no file, a failure with nothing to say, and
+ * the two that map to a state the user cannot otherwise reach.
+ *
+ * That is the argument #141 made for `MediaProbe`'s track walk, against `WorkManager` instead of a
+ * media fixture, and it takes the same answer: the branch matrix is a pure function, and what is
+ * left needing the framework — the flow, the null check, the ownership check — is the thin edge.
+ *
+ * ## What is deliberately *not* in here
+ *
+ * The ownership check stays at the call site. Its comment is explicit that it guards the file
+ * ownership the `SUCCEEDED` arm takes, not merely the assignment, so moving it inside would change
+ * what it protects. And this function takes no responsibility for the staged file: it returns the
+ * state, and the caller reads the file off it. A pure function that deletes files is not a seam.
+ *
+ * @param cancelled where a cancellation lands, which differs for a reattached job — see [observe].
+ * @param fallbackSpec the current settings, read only when finished work predates the worker
+ *   reporting its own name and MIME type.
+ */
+@UnstableApi
+internal fun conversionStateFrom(
+    update: ConversionUpdate,
+    input: InputFile,
+    cancelled: ConversionState,
+    fallbackSpec: OutputSpec,
+): ConversionState = when (update.state) {
+    WorkInfo.State.RUNNING -> ConversionState.Converting(input, update.progressPercent)
+
+    // ENQUEUED after a run means a retry is pending. Either the six-hour foreground budget ran out
+    // mid-job, or the system refused to let the job start again while the app was in the background
+    // — the second being the likelier of the two, since it needs only a process restart. Nothing
+    // here can tell them apart, and nothing needs to: the answer is the same.
+    WorkInfo.State.ENQUEUED ->
+        if (update.runAttemptCount > 0) {
+            ConversionState.Waiting(input)
+        } else {
+            ConversionState.Converting(input, 0)
+        }
+
+    WorkInfo.State.SUCCEEDED -> convertedFrom(update.outputData, input, fallbackSpec)
+
+    // A worker that dies before it can report anything leaves no output data at all — a
+    // foreground-service start refused after a process restart is one way — and an exception's
+    // message can be an empty string. Both would read as a failure with nothing said, so blank
+    // falls back like missing does.
+    WorkInfo.State.FAILED -> ConversionState.Failed(
+        update.outputData.getString(ConversionWorker.KEY_ERROR)
+            ?.takeIf { it.isNotBlank() }
+            ?: ConversionWorker.GENERIC_FAILURE_MESSAGE,
+    )
+
+    WorkInfo.State.CANCELLED -> cancelled
+    WorkInfo.State.BLOCKED -> ConversionState.Converting(input, 0)
+}
+
+/**
+ * The `SUCCEEDED` arm, which is the only one that reads more than one field.
+ *
+ * Split out so [conversionStateFrom] stays a table of one line per state. A success with no output
+ * path is a failure: the job said it finished and named nothing, and there is no file to offer.
+ */
+@UnstableApi
+private fun convertedFrom(outputData: Data, input: InputFile, fallbackSpec: OutputSpec): ConversionState {
+    val path = outputData.getString(ConversionWorker.KEY_OUTPUT_PATH)
+        ?: return ConversionState.Failed(SUCCEEDED_WITHOUT_A_FILE_MESSAGE)
+    return ConversionState.Converted(
+        input = input,
+        staged = File(path),
+        engineUsed = outputData.getString(ConversionWorker.KEY_ENGINE_USED).orEmpty(),
+        routeReason = outputData.getString(ConversionWorker.KEY_ROUTE_REASON).orEmpty(),
+        // Work enqueued before the worker reported this carries nothing, and WorkManager keeps
+        // finished work for about a week -- so this branch is ordinary for a few days rather than a
+        // corner. It is the old derivation, kept because it is the same guess the app already made
+        // and there is genuinely nothing better available for such a job. New work never reaches it.
+        suggestedName = outputData.getString(ConversionWorker.KEY_SUGGESTED_NAME)
+            ?.takeIf { it.isNotBlank() }
+            ?: ConversionWorker.outputNameFor(input.displayName, fallbackSpec),
+        mimeType = outputData.getString(ConversionWorker.KEY_MIME_TYPE)
+            ?.takeIf { it.isNotBlank() }
+            ?: fallbackSpec.mimeType,
+    )
+}
+
+/** A job that reported success and named no file. There is nothing to offer the user to save. */
+internal const val SUCCEEDED_WITHOUT_A_FILE_MESSAGE: String =
+    "Conversion reported success but produced no file."
 
 sealed interface ConversionState {
     data object Idle : ConversionState
@@ -442,75 +556,24 @@ class ConversionViewModel @JvmOverloads constructor(
                 // that either. The state and `pendingStaged` are meant to refer to the same file
                 // or to no file, and this is where that stays true.
                 if (!ownership.stillHeldBy(token)) return@collect
-                _state.value = when (info.state) {
-                    WorkInfo.State.RUNNING -> ConversionState.Converting(
-                        input,
-                        info.progress.getInt(ConversionWorker.KEY_PROGRESS, 0),
-                    )
-
-                    // ENQUEUED after a run means a retry is pending. Either the six-hour
-                    // foreground budget ran out mid-job, or the system refused to let the job
-                    // start again while the app was in the background — the second being the
-                    // likelier of the two, since it needs only a process restart. Nothing here
-                    // can tell them apart, and nothing needs to: the answer is the same.
-                    WorkInfo.State.ENQUEUED ->
-                        if (info.runAttemptCount > 0) {
-                            ConversionState.Waiting(input)
-                        } else {
-                            ConversionState.Converting(input, 0)
-                        }
-
-                    WorkInfo.State.SUCCEEDED -> {
-                        val path = info.outputData.getString(ConversionWorker.KEY_OUTPUT_PATH)
-                        if (path == null) {
-                            ConversionState.Failed("Conversion reported success but produced no file.")
-                        } else {
-                            val staged = File(path)
-                            // Take responsibility for the file at the same moment the state
-                            // starts referring to it, so the two cannot disagree.
-                            pendingStaged = staged
-                            ConversionState.Converted(
-                                input = input,
-                                staged = staged,
-                                engineUsed = info.outputData
-                                    .getString(ConversionWorker.KEY_ENGINE_USED).orEmpty(),
-                                routeReason = info.outputData
-                                    .getString(ConversionWorker.KEY_ROUTE_REASON).orEmpty(),
-                                suggestedName = info.outputData
-                                    .getString(ConversionWorker.KEY_SUGGESTED_NAME)
-                                    ?.takeIf { it.isNotBlank() }
-                                    // Work enqueued before the worker reported this carries
-                                    // nothing, and WorkManager keeps finished work for about a
-                                    // week -- so this branch is ordinary for a few days rather
-                                    // than a corner. It is the old derivation, kept because it is
-                                    // the same guess the app already made and there is genuinely
-                                    // nothing better available for such a job. New work never
-                                    // reaches it.
-                                    ?: ConversionWorker.outputNameFor(
-                                        input.displayName,
-                                        _settings.value.spec,
-                                    ),
-                                mimeType = info.outputData
-                                    .getString(ConversionWorker.KEY_MIME_TYPE)
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?: _settings.value.spec.mimeType,
-                            )
-                        }
-                    }
-
-                    // A worker that dies before it can report anything leaves no output data at
-                    // all — a foreground-service start refused after a process restart is one
-                    // way — and an exception's message can be an empty string. Both would read
-                    // as a failure with nothing said, so blank falls back like missing does.
-                    WorkInfo.State.FAILED -> ConversionState.Failed(
-                        info.outputData.getString(ConversionWorker.KEY_ERROR)
-                            ?.takeIf { it.isNotBlank() }
-                            ?: ConversionWorker.GENERIC_FAILURE_MESSAGE,
-                    )
-
-                    WorkInfo.State.CANCELLED -> cancelled
-                    WorkInfo.State.BLOCKED -> ConversionState.Converting(input, 0)
-                }
+                val next = conversionStateFrom(
+                    ConversionUpdate(
+                        state = info.state,
+                        progressPercent = info.progress.getInt(ConversionWorker.KEY_PROGRESS, 0),
+                        runAttemptCount = info.runAttemptCount,
+                        outputData = info.outputData,
+                    ),
+                    input = input,
+                    cancelled = cancelled,
+                    fallbackSpec = _settings.value.spec,
+                )
+                // Take responsibility for the file at the same moment the state starts referring
+                // to it, so the two cannot disagree. Read off the result rather than assigned
+                // inside the mapping: `Converted` is the only state that carries a staged file, so
+                // "the state and `pendingStaged` refer to the same file or to no file" is now the
+                // shape of the code rather than a rule two branches have to keep.
+                if (next is ConversionState.Converted) pendingStaged = next.staged
+                _state.value = next
             }
         }
     }
