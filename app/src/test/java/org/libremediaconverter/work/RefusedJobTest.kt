@@ -146,7 +146,7 @@ class RefusedJobTest {
 
         assertEquals(
             ListenableWorker.Result.failure(
-                workDataOf(ConcatWorker.KEY_ERROR to "Pick at least two files to join."),
+                workDataOf(ConcatWorker.KEY_ERROR to ConcatWorker.TOO_FEW_INPUTS_MESSAGE),
             ),
             result,
         )

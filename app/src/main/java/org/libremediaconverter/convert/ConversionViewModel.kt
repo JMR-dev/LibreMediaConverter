@@ -505,7 +505,7 @@ class ConversionViewModel @JvmOverloads constructor(
                     WorkInfo.State.FAILED -> ConversionState.Failed(
                         info.outputData.getString(ConversionWorker.KEY_ERROR)
                             ?.takeIf { it.isNotBlank() }
-                            ?: "Conversion failed.",
+                            ?: ConversionWorker.GENERIC_FAILURE_MESSAGE,
                     )
 
                     WorkInfo.State.CANCELLED -> cancelled
@@ -565,7 +565,7 @@ class ConversionViewModel @JvmOverloads constructor(
                 // than a fresh handle for the second failure's sake: a retry that fails again
                 // lands back here still carrying the file, not on a bare Failed that would take
                 // the offer away.
-                _state.value = ConversionState.Failed(e.message ?: "Could not save the file.", pending)
+                _state.value = ConversionState.Failed(e.message ?: SAVE_FAILED_MESSAGE, pending)
             }
         }
     }

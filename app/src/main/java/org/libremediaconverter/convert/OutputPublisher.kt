@@ -25,6 +25,20 @@ const val STAGED_FILE_GONE_MESSAGE: String =
         "Start over to make it again."
 
 /**
+ * What to tell the user when the copy into their chosen destination did not finish.
+ *
+ * A fallback, not the usual message: `publish` throws with a real reason most of the time — the
+ * volume filled, the provider revoked the grant — and that reason is better than this. This is for
+ * the exception that arrives with nothing to say, which would otherwise reach the screen as an
+ * empty failure.
+ *
+ * Kept next to [STAGED_FILE_GONE_MESSAGE] for exactly the reason that one names: **both ViewModels
+ * need it**, and saving is what it is about. It was written out twice before — `ConversionViewModel`
+ * and `JoinViewModel` each carried their own copy of the literal, agreeing by coincidence.
+ */
+const val SAVE_FAILED_MESSAGE: String = "Could not save the file."
+
+/**
  * A staged file that is still there to be saved, and everything the save dialog needs to offer it.
  *
  * The three travel together because a save cannot be repeated without all of them: the file to
