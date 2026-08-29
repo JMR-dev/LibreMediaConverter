@@ -56,16 +56,37 @@ fun JoinScreen(modifier: Modifier = Modifier, viewModel: JoinViewModel = viewMod
 
     JoinScreenContent(
         state = state,
-        actions = JoinActions(
+        actions = joinActions(
+            viewModel = viewModel,
             onPickInputs = { pickInputs.launch(arrayOf("video/*")) },
-            onJoin = viewModel::join,
-            onCancel = viewModel::cancel,
             onSave = { suggestedName -> chooseDestination.launch(suggestedName) },
-            onReset = viewModel::reset,
         ),
         modifier = modifier,
     )
 }
+
+/**
+ * Which of the ViewModel's methods each affordance on the join screen calls.
+ *
+ * The join-side twin of `converterActions`, and the transposition risk here is worse: **three**
+ * `() -> Unit` bindings rather than two. `onJoin`, `onCancel` and `onReset` are mutually
+ * interchangeable as far as the compiler is concerned, so a Join button that cancels, or a Cancel
+ * button that starts the job, is a swap nothing but a test would catch.
+ *
+ * See `converterActions` for why the launcher-backed actions stay parameters.
+ */
+@UnstableApi
+internal fun joinActions(
+    viewModel: JoinViewModel,
+    onPickInputs: () -> Unit,
+    onSave: (suggestedName: String) -> Unit,
+): JoinActions = JoinActions(
+    onPickInputs = onPickInputs,
+    onJoin = viewModel::join,
+    onCancel = viewModel::cancel,
+    onSave = onSave,
+    onReset = viewModel::reset,
+)
 
 /**
  * Everything [JoinScreenContent] can ask for, in one value.

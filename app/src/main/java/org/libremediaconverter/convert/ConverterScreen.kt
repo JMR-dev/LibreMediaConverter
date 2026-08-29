@@ -94,23 +94,60 @@ fun ConverterScreen(modifier: Modifier = Modifier, viewModel: ConversionViewMode
         state = state,
         settings = settings,
         validation = validation,
-        actions = ConverterActions(
+        actions = converterActions(
+            viewModel = viewModel,
             onPickInput = { pickInput.launch(arrayOf("*/*")) },
-            onPreset = viewModel::setPreset,
-            onContainer = viewModel::setContainer,
-            onVideoCodec = viewModel::setVideoCodec,
-            onAudioCodec = viewModel::setAudioCodec,
-            onSuggestion = viewModel::applySuggestion,
-            onQuality = viewModel::setQuality,
-            onEnginePreference = viewModel::setEnginePreference,
             onConvert = { requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS) },
-            onCancel = viewModel::cancel,
             onSave = { suggestedName -> chooseDestination.launch(suggestedName) },
-            onReset = viewModel::reset,
         ),
         modifier = modifier,
     )
 }
+
+/**
+ * Which of the ViewModel's methods each affordance on the screen calls.
+ *
+ * ## Why this is a function rather than an argument list
+ *
+ * It was an argument list, inside [ConverterScreen], which no test reached: `ConverterScreenContent`
+ * builds its own [ConverterActions], so every test in the suite drove the stateless inner and none
+ * of them ever saw the wiring.
+ *
+ * Most of the list is safe without a test, and saying so is more useful than pretending otherwise:
+ * `onContainer`, `onVideoCodec`, `onAudioCodec`, `onPreset`, `onSuggestion`, `onQuality` and
+ * `onEnginePreference` each take a distinct type, so binding one to another's setter does not
+ * compile. Verified rather than assumed — swapping `onVideoCodec` and `onAudioCodec` fails with
+ * *"Inapplicable candidate(s): fun setAudioCodec(codec: AudioCodec)"*.
+ *
+ * **[ConverterActions.onCancel] and [ConverterActions.onReset] are the exception.** Both are
+ * `() -> Unit`, so swapping them compiles silently — also verified — and ships a Cancel button that
+ * throws the conversion away and a Start-over button that leaves it on screen. That pair is what
+ * `ConverterWiringTest` exists for.
+ *
+ * The three launcher-backed actions stay parameters: they need an `ActivityResultLauncher`, which
+ * is the part that genuinely needs the composition, and keeping them out means the rest can be
+ * checked without one.
+ */
+@UnstableApi
+internal fun converterActions(
+    viewModel: ConversionViewModel,
+    onPickInput: () -> Unit,
+    onConvert: () -> Unit,
+    onSave: (suggestedName: String) -> Unit,
+): ConverterActions = ConverterActions(
+    onPickInput = onPickInput,
+    onPreset = viewModel::setPreset,
+    onContainer = viewModel::setContainer,
+    onVideoCodec = viewModel::setVideoCodec,
+    onAudioCodec = viewModel::setAudioCodec,
+    onSuggestion = viewModel::applySuggestion,
+    onQuality = viewModel::setQuality,
+    onEnginePreference = viewModel::setEnginePreference,
+    onConvert = onConvert,
+    onCancel = viewModel::cancel,
+    onSave = onSave,
+    onReset = viewModel::reset,
+)
 
 /**
  * Everything [ConverterScreenContent] can ask for, in one value.
