@@ -39,7 +39,7 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val uris = inputData.getStringArray(KEY_INPUT_URIS)?.map(Uri::parse)
             ?: return Result.failure(workDataOf(KEY_ERROR to "No input files."))
         if (uris.size < 2) {
-            return Result.failure(workDataOf(KEY_ERROR to "Pick at least two files to join."))
+            return Result.failure(workDataOf(KEY_ERROR to TOO_FEW_INPUTS_MESSAGE))
         }
         // Absent, not zero, when the picker could not size every input -- see the same read in
         // ConversionWorker and InputQuery for why the two are no longer one number.
@@ -107,7 +107,7 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 }
                 FailureOutcome.FAIL -> {
                     Log.e(TAG, "Joining failed.", e)
-                    Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Joining failed.")))
+                    Result.failure(workDataOf(KEY_ERROR to (e.message ?: GENERIC_FAILURE_MESSAGE)))
                 }
             }
         }
@@ -137,6 +137,34 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     )
 
     companion object {
+        /**
+         * What the user is told when a join arrives with fewer than two inputs.
+         *
+         * Shared with `JoinViewModel`, which refuses the same condition one layer up so the picker
+         * can answer without enqueueing anything. Two copies of this sentence existed before, and
+         * only the one here was pinned by a test (#139) — so the wording could drift on the screen
+         * without a single test noticing, for one message the user sees from one condition.
+         *
+         * Here rather than in the ViewModel because the rule is the worker's: `request(...)` takes
+         * a `List<Uri>` and checks nothing about its length, so this is the guard that always runs.
+         */
+        const val TOO_FEW_INPUTS_MESSAGE: String = "Pick at least two files to join."
+
+        /**
+         * The last resort when a join fails and the exception says nothing.
+         *
+         * Shared with `JoinViewModel`, whose `FAILED` arm falls back to the same sentence when the
+         * output `Data` carries no error at all — a worker killed before it could write one. The two
+         * are a chain rather than a coincidence: this is what the worker puts *in* `KEY_ERROR`, and
+         * that is what the ViewModel says when `KEY_ERROR` never arrived. The user cannot tell the
+         * two apart and should not have to, so they are one sentence.
+         *
+         * The `Log.e` above deliberately keeps its own literal. A log line has a different audience
+         * and carries the exception with it; coupling it to the user-facing wording would mean
+         * rewording the screen to change a log.
+         */
+        const val GENERIC_FAILURE_MESSAGE: String = "Joining failed."
+
         const val KEY_INPUT_URIS = "input_uris"
         const val KEY_TOTAL_BYTES = "total_bytes"
         const val KEY_FORMAT = "format"

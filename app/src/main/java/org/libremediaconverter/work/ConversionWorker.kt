@@ -313,7 +313,7 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
             }
             FailureOutcome.FAIL -> {
                 Log.e(TAG, "Conversion failed.", cause)
-                Result.failure(workDataOf(KEY_ERROR to (cause.message ?: "Conversion failed.")))
+                Result.failure(workDataOf(KEY_ERROR to (cause.message ?: GENERIC_FAILURE_MESSAGE)))
             }
         }
 
@@ -352,6 +352,20 @@ class ConversionWorker(context: Context, params: WorkerParameters) : CoroutineWo
     )
 
     companion object {
+        /**
+         * The last resort when a conversion fails and the exception says nothing.
+         *
+         * Shared with `ConversionViewModel`, whose `FAILED` arm falls back to the same sentence when
+         * the output `Data` carries no error — a worker killed before it could write one, which a
+         * refused foreground start after a process restart produces. The two are a chain rather than
+         * a coincidence: this is what goes *into* `KEY_ERROR`, and that is what is said when
+         * `KEY_ERROR` never arrived. The user cannot tell those apart and should not have to.
+         *
+         * See [ConcatWorker.GENERIC_FAILURE_MESSAGE] for the join-side twin, and the note there
+         * about why the neighbouring `Log.e` keeps its own literal.
+         */
+        const val GENERIC_FAILURE_MESSAGE: String = "Conversion failed."
+
         const val KEY_INPUT_URI = "input_uri"
         const val KEY_DISPLAY_NAME = "display_name"
         const val KEY_SIZE_BYTES = "size_bytes"

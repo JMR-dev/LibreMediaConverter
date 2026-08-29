@@ -19,6 +19,7 @@ import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.InputFile
 import org.libremediaconverter.convert.InputQuery
 import org.libremediaconverter.convert.PendingSave
+import org.libremediaconverter.convert.SAVE_FAILED_MESSAGE
 import org.libremediaconverter.convert.STAGED_FILE_GONE_MESSAGE
 import org.libremediaconverter.convert.ScreenOwnership
 import org.libremediaconverter.model.ConcatStrategy
@@ -194,7 +195,7 @@ class JoinViewModel @JvmOverloads constructor(
     fun onInputsPicked(uris: List<Uri>) {
         val token = ownership.claim()
         if (uris.size < 2) {
-            _state.value = JoinState.Failed("Pick at least two files to join.")
+            _state.value = JoinState.Failed(ConcatWorker.TOO_FEW_INPUTS_MESSAGE)
             return
         }
         viewModelScope.launch {
@@ -295,7 +296,7 @@ class JoinViewModel @JvmOverloads constructor(
                     WorkInfo.State.FAILED -> JoinState.Failed(
                         info.outputData.getString(ConcatWorker.KEY_ERROR)
                             ?.takeIf { it.isNotBlank() }
-                            ?: "Joining failed.",
+                            ?: ConcatWorker.GENERIC_FAILURE_MESSAGE,
                     )
 
                     WorkInfo.State.CANCELLED -> cancelled
@@ -346,7 +347,7 @@ class JoinViewModel @JvmOverloads constructor(
                 // than leaving "Start over" -- which deletes it -- as the only thing on offer.
                 // Passing `pending` rather than rebuilding it is what keeps a retry that fails
                 // again on a carrying Failed instead of a bare one.
-                _state.value = JoinState.Failed(e.message ?: "Could not save the file.", pending)
+                _state.value = JoinState.Failed(e.message ?: SAVE_FAILED_MESSAGE, pending)
             }
         }
     }
