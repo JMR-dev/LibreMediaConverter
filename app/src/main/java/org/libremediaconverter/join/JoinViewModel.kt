@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.util.UnstableApi
+import androidx.work.Data
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlinx.coroutines.CoroutineDispatcher
@@ -29,6 +30,108 @@ import org.libremediaconverter.work.Reattachment
 import org.libremediaconverter.work.jobSnapshots
 import java.io.File
 import java.util.UUID
+
+/**
+ * One update about a running join, as WorkManager last reported it.
+ *
+ * The join-side twin of `ConversionUpdate`, and deliberately the same shape: this pair of seams is
+ * one refactor done twice, and letting them diverge would make the two flows harder to compare than
+ * the duplication costs. There is no `progressPercent` here because `ConcatWorker` publishes none —
+ * a join is indeterminate.
+ */
+internal data class JoinUpdate(val state: WorkInfo.State, val runAttemptCount: Int, val outputData: Data)
+
+/**
+ * What the join screen should show, given what WorkManager last said about the job.
+ *
+ * The join-side twin of `conversionStateFrom`, extracted for the same reason and with the same two
+ * exclusions: the ownership check stays at the call site, and this takes no responsibility for the
+ * staged file. See that function's KDoc for the argument in full.
+ *
+ * Five arms had never been chosen by any test before this was cut out, because a real `ConcatWorker`
+ * only ever produces a terminal state with well-formed output.
+ *
+ * @param cancelled where a cancellation lands, which differs for a reattached job — see [observe].
+ */
+@UnstableApi
+internal fun joinStateFrom(update: JoinUpdate, inputs: List<InputFile>, cancelled: JoinState): JoinState =
+    when (update.state) {
+        // BLOCKED is a job waiting on a prerequisite, which the user has nothing to do about and
+        // nothing useful to be told about. It reads as "starting", like a fresh ENQUEUED.
+        WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> JoinState.Joining(inputs)
+
+        // ENQUEUED after a run means a retry is pending -- the same rule, and the same reasoning, as
+        // the convert side. See `conversionStateFrom`.
+        WorkInfo.State.ENQUEUED ->
+            if (update.runAttemptCount > 0) {
+                JoinState.Waiting(inputs)
+            } else {
+                JoinState.Joining(inputs)
+            }
+
+        WorkInfo.State.SUCCEEDED -> joinedFrom(update.outputData)
+
+        // A worker that dies before it can report anything leaves no output data at all, and an
+        // exception's message can be an empty string. Both would read as a failure with nothing said,
+        // so blank falls back like missing does.
+        WorkInfo.State.FAILED -> JoinState.Failed(
+            update.outputData.getString(ConcatWorker.KEY_ERROR)
+                ?.takeIf { it.isNotBlank() }
+                ?: ConcatWorker.GENERIC_FAILURE_MESSAGE,
+        )
+
+        WorkInfo.State.CANCELLED -> cancelled
+    }
+
+/**
+ * The `SUCCEEDED` arm. A join that reported success and named no file has nothing to offer.
+ */
+@UnstableApi
+private fun joinedFrom(outputData: Data): JoinState {
+    val path = outputData.getString(ConcatWorker.KEY_OUTPUT_PATH)
+        ?: return JoinState.Failed(JOINED_WITHOUT_A_FILE_MESSAGE)
+    return JoinState.Joined(
+        staged = File(path),
+        strategy = strategyFrom(outputData.getString(ConcatWorker.KEY_STRATEGY)),
+        // A join enqueued before the worker reported these carries neither, and the fallback is
+        // the format such a job really used -- ConcatWorker.request has always defaulted to it,
+        // and the join screen has never offered a choice.
+        suggestedName = outputData.getString(ConcatWorker.KEY_SUGGESTED_NAME)
+            ?.takeIf { it.isNotBlank() }
+            ?: ConcatWorker.outputNameFor(ConcatWorker.DEFAULT_FORMAT),
+        mimeType = outputData.getString(ConcatWorker.KEY_MIME_TYPE)
+            ?.takeIf { it.isNotBlank() }
+            ?: ConcatWorker.DEFAULT_FORMAT.mimeType,
+    )
+}
+
+/**
+ * The strategy a finished join reported, or [ConcatStrategy.REENCODE] when it named none.
+ *
+ * **Looked up rather than `valueOf`, and that is a fix rather than a style choice.** `valueOf`
+ * throws `IllegalArgumentException` on a name this build does not define, and this runs inside a
+ * `viewModelScope` collect with no handler -- so the throw does not become a `Failed` state, it
+ * takes the process down.
+ *
+ * Reachable for the reason `WorkerEnumFallbackTest` and `JobTags` are both written on: WorkManager
+ * keeps finished work for about a week, so a downgrade or a rollback hands this build a job
+ * enqueued by another one. `ConcatWorker` writes `result.strategy.name` into the output `Data`, so
+ * a build that added a third strategy would leave this one crashing on its own completed joins.
+ *
+ * `ConcatWorker.kt` already made exactly this change for `KEY_FORMAT`, and says why in as many
+ * words: *"Looked up rather than `valueOf` … a format name this build does not define used to throw
+ * past the catch."* The same read on this side had not been changed with it.
+ *
+ * REENCODE is the safe default rather than an arbitrary one: it is the answer for inputs that do
+ * not match, so a job whose strategy cannot be read is described as the more conservative of the
+ * two rather than being claimed as a lossless stream copy.
+ */
+private fun strategyFrom(name: String?): ConcatStrategy =
+    ConcatStrategy.entries.firstOrNull { it.name == name } ?: ConcatStrategy.REENCODE
+
+/** A join that reported success and named no file. There is nothing to offer the user to save. */
+internal const val JOINED_WITHOUT_A_FILE_MESSAGE: String =
+    "Joining reported success but produced no file."
 
 sealed interface JoinState {
     data object Idle : JoinState
@@ -251,56 +354,19 @@ class JoinViewModel @JvmOverloads constructor(
                 // takes ownership of the staged file, and a superseded observation must not do
                 // that either.
                 if (!ownership.stillHeldBy(token)) return@collect
-                _state.value = when (info.state) {
-                    WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> JoinState.Joining(inputs)
-                    WorkInfo.State.ENQUEUED ->
-                        if (info.runAttemptCount > 0) {
-                            JoinState.Waiting(inputs)
-                        } else {
-                            JoinState.Joining(inputs)
-                        }
-
-                    WorkInfo.State.SUCCEEDED -> {
-                        val path = info.outputData.getString(ConcatWorker.KEY_OUTPUT_PATH)
-                        val strategy = info.outputData.getString(ConcatWorker.KEY_STRATEGY)
-                            ?.let(ConcatStrategy::valueOf) ?: ConcatStrategy.REENCODE
-                        if (path == null) {
-                            JoinState.Failed("Joining reported success but produced no file.")
-                        } else {
-                            val staged = File(path)
-                            // Take responsibility for the file at the same moment the state
-                            // starts referring to it, so the two cannot disagree.
-                            pendingStaged = staged
-                            JoinState.Joined(
-                                staged = staged,
-                                strategy = strategy,
-                                // A join enqueued before the worker reported these carries
-                                // neither, and the fallback is the format such a job really
-                                // used -- ConcatWorker.request has always defaulted to it, and
-                                // the join screen has never offered a choice.
-                                suggestedName = info.outputData
-                                    .getString(ConcatWorker.KEY_SUGGESTED_NAME)
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?: ConcatWorker.outputNameFor(ConcatWorker.DEFAULT_FORMAT),
-                                mimeType = info.outputData
-                                    .getString(ConcatWorker.KEY_MIME_TYPE)
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?: ConcatWorker.DEFAULT_FORMAT.mimeType,
-                            )
-                        }
-                    }
-
-                    // A worker that dies before it can report anything leaves no output data at
-                    // all, and an exception's message can be an empty string. Both would read as
-                    // a failure with nothing said, so blank falls back like missing does.
-                    WorkInfo.State.FAILED -> JoinState.Failed(
-                        info.outputData.getString(ConcatWorker.KEY_ERROR)
-                            ?.takeIf { it.isNotBlank() }
-                            ?: ConcatWorker.GENERIC_FAILURE_MESSAGE,
-                    )
-
-                    WorkInfo.State.CANCELLED -> cancelled
-                }
+                val next = joinStateFrom(
+                    JoinUpdate(
+                        state = info.state,
+                        runAttemptCount = info.runAttemptCount,
+                        outputData = info.outputData,
+                    ),
+                    inputs = inputs,
+                    cancelled = cancelled,
+                )
+                // Read off the result rather than assigned inside the mapping -- see the same
+                // three lines in ConversionViewModel for why that is the better half of the swap.
+                if (next is JoinState.Joined) pendingStaged = next.staged
+                _state.value = next
             }
         }
     }
