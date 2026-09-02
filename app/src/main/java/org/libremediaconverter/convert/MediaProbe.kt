@@ -50,19 +50,42 @@ object MediaProbe {
     )
 
     fun probe(context: Context, uri: Uri): InputProbe {
-        val extracted = probeWithExtractor(context, uri)
-        val info = probeWithFFprobe(context, uri)
+        val merged = merge(probeWithExtractor(context, uri), probeWithFFprobe(context, uri))
+        if (merged.kind == InputKind.UNPARSEABLE) {
+            // Not a failure: an unparseable input is a strong signal that this job belongs on
+            // FFmpeg. Reporting an unknown codec makes the router say so.
+            Log.i(TAG, "Neither MediaExtractor nor FFprobe could read $uri; routing to FFmpeg.")
+        }
+        return merged
+    }
 
+    /**
+     * What the two probes together say about one input.
+     *
+     * A pure function, and `internal` for the same reason [extractedFrom] is: the precedence rules
+     * below are the answer to "which probe wins", and until this was pulled out of [probe] the only
+     * way to ask was to have a real `MediaExtractor` and a real FFprobe **disagree**, which nothing
+     * on any source set can arrange. `RemuxTest` drives this on a device against committed
+     * fixtures, but only ever with one probe answering and the other agreeing or also failing --
+     * so every elvis here was taken in one direction and never the other.
+     *
+     * The rules, each of which is a decision rather than an accident:
+     *
+     * - **The extractor wins on codecs.** It is the platform's own view of what it can decode,
+     *   which is the thing the router is about to ask about. FFprobe's name for the same track can
+     *   differ, and the copy planner keys off these strings.
+     * - **FFprobe alone reports the container.** `MediaExtractor` cannot, which is why [InputProbe]
+     *   carries a nullable one and `CopyPlanner` treats null as "container unknown".
+     * - **Duration is the larger of the two**, not the first non-zero. Either probe can report zero
+     *   for a file the other times correctly, and a zero duration makes the FFmpeg progress
+     *   percentage undefined.
+     */
+    internal fun merge(extracted: Extracted?, info: FFprobeInfo?): InputProbe {
         val videoCodec = extracted?.videoCodec ?: info?.videoCodec
         val audioCodec = extracted?.audioCodec ?: info?.audioCodec
         val kind = classify(extracted, info)
 
-        if (kind == InputKind.UNPARSEABLE) {
-            // Not a failure: an unparseable input is a strong signal that this job belongs on
-            // FFmpeg. Reporting an unknown codec makes the router say so.
-            Log.i(TAG, "Neither MediaExtractor nor FFprobe could read $uri; routing to FFmpeg.")
-            return UNREADABLE
-        }
+        if (kind == InputKind.UNPARSEABLE) return UNREADABLE
 
         return InputProbe(
             videoCodec = videoCodec,
@@ -83,7 +106,7 @@ object MediaProbe {
      * audio file and a corrupt file indistinguishable. The source-info card cannot describe either
      * honestly until they are separate, and neither can the copy planner.
      */
-    private fun classify(extracted: Extracted?, info: FFprobeInfo?): InputKind = when {
+    internal fun classify(extracted: Extracted?, info: FFprobeInfo?): InputKind = when {
         info?.isImage == true -> InputKind.IMAGE
         extracted == null && info == null -> InputKind.UNPARSEABLE
         (extracted?.videoCodec ?: info?.videoCodec) != null -> InputKind.VIDEO
@@ -162,7 +185,11 @@ object MediaProbe {
         }
     }
 
-    private class FFprobeInfo(
+    /**
+     * `internal` rather than `private` for the same reason [Extracted] is, and it should have been
+     * from the start: [merge] cannot be named from a test while half its signature is private.
+     */
+    internal class FFprobeInfo(
         val container: Container?,
         val videoCodec: String?,
         val audioCodec: String?,
