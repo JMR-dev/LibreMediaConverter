@@ -79,6 +79,21 @@ WEDGE_TIMEOUT=1200
 # package against `pm list packages -d`, and require a 45 s window with zero new aborts.
 # Three rounds, because one is not reliable and the failure is silent.
 # ---------------------------------------------------------------------------
+# Every device probe below is aimed at an emulator that has already failed, and on the wedge path
+# at one that has just finished proving it stopped answering. So each is bounded in time as well as
+# in exit status.
+#
+# `|| true` guards a probe that exits non-zero. It does nothing about one that never exits -- which
+# is how #122's wedge path spent 36 minutes after printing its own diagnosis, lost the job to the
+# 60-minute cap, and so reported `cancelled` instead of the wedge's own status. The header's rule
+# that "a diagnostic must never be the thing that turns a run red" was enforced for exit codes and
+# not for time; this is the other half of it.
+#
+# 20s is far more than any of these needs on a healthy device and far less than any of them costs
+# on a dead one. `-k` because adb itself can ignore the first signal when its server is wedged.
+ADB_PROBE_TIMEOUT=20
+adbq() { timeout -k 5s "$ADB_PROBE_TIMEOUT" adb "$@"; }
+
 count_aborts() { adb logcat -d -b crash 2> /dev/null | grep -c 'hasReadColorBufferDma'; }
 systemui_disabled() { adb shell pm list packages -d 2> /dev/null | grep -q 'com.android.systemui'; }
 
@@ -155,11 +170,11 @@ LOGCAT_PID=$!
 dump_diagnostics() {
   {
     echo "===== E2E api${LABEL} failure diagnostics -- $(date -u +%FT%TZ) ====="
-    echo "--- adb devices ---";                adb devices -l 2>&1 || true
-    echo "--- guest memory ---";               adb shell cat /proc/meminfo 2>&1 | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
-    echo "--- guest storage ---";              adb shell df /data 2>&1 || true
-    echo "--- is the app even installed? ---"; adb shell pm list packages 2>&1 | grep -a libremedia || true
-    echo "--- native crashes ---";             adb logcat -d -b crash 2>&1 | tail -80 || true
+    echo "--- adb devices ---";                adbq devices -l 2>&1 || true
+    echo "--- guest memory ---";               adbq shell cat /proc/meminfo 2>&1 | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
+    echo "--- guest storage ---";              adbq shell df /data 2>&1 || true
+    echo "--- is the app even installed? ---"; adbq shell pm list packages 2>&1 | grep -a libremedia || true
+    echo "--- native crashes ---";             adbq logcat -d -b crash 2>&1 | tail -80 || true
     echo "--- runner: kvm ---";                ls -l /dev/kvm 2>&1 || true
     echo "--- runner: memory ---";             free -h 2>&1 || true
     echo "--- runner: disk ---";               df -h 2>&1 || true
@@ -167,9 +182,9 @@ dump_diagnostics() {
 
   # Also to the step log, so the common case needs no artifact download.
   echo "----- FAILURE SUMMARY (api${LABEL}) -----"
-  adb shell cat /proc/meminfo 2>&1 | grep -E 'MemTotal|MemAvailable' || true
+  adbq shell cat /proc/meminfo 2>&1 | grep -E 'MemTotal|MemAvailable' || true
   echo "--- native crashes (tail 60) ---"
-  adb logcat -d -b crash 2>&1 | tail -60 || true
+  adbq logcat -d -b crash 2>&1 | tail -60 || true
 }
 
 capture_wedge() {
@@ -182,35 +197,39 @@ capture_wedge() {
     echo "--- running/last instrumented test (logcat TestRunner) ---"
     grep -a TestRunner "$LOGCAT_LOG" 2>/dev/null | tail -25 || true
     echo "--- boot state ---"
-    adb shell getprop sys.boot_completed 2>&1 || true
+    adbq shell getprop sys.boot_completed 2>&1 || true
     echo "--- are the binder services published? ---"
     for svc in input window activity media.player; do
-      echo "  service check $svc:"; adb shell service check "$svc" 2>&1 || true
+      echo "  service check $svc:"; adbq shell service check "$svc" 2>&1 || true
     done
-    APP_PID="$(adb shell pidof "$APP_ID" 2>/dev/null | tr -d '\r')" || true
-    TEST_PID="$(adb shell pidof "$TEST_ID" 2>/dev/null | tr -d '\r')" || true
+    APP_PID="$(adbq shell pidof "$APP_ID" 2>/dev/null | tr -d '\r')" || true
+    TEST_PID="$(adbq shell pidof "$TEST_ID" 2>/dev/null | tr -d '\r')" || true
     echo "--- pids --- app: ${APP_PID:-<none>}  test: ${TEST_PID:-<none>}"
     # SIGQUIT makes ART dump every thread's stack to logcat and /data/anr. This is what
     # distinguishes a deadlocked test from a stuck native encode from a dead device.
     echo "--- SIGQUIT thread dumps ---"
     for pid in $APP_PID $TEST_PID; do
-      [ -n "$pid" ] && adb shell kill -3 "$pid" 2>&1 || true
+      [ -n "$pid" ] && adbq shell kill -3 "$pid" 2>&1 || true
     done
     sleep 5
     echo "--- /data/anr/* ---"
-    adb shell 'cat /data/anr/* 2>/dev/null' 2>&1 || true
-    echo "--- dumpsys activity ---"; adb shell dumpsys activity 2>&1 || true
-    echo "--- dumpsys window ---";   adb shell dumpsys window 2>&1 || true
+    adbq shell 'cat /data/anr/* 2>/dev/null' 2>&1 || true
+    echo "--- dumpsys activity ---"; adbq shell dumpsys activity 2>&1 || true
+    echo "--- dumpsys window ---";   adbq shell dumpsys window 2>&1 || true
     # FFmpeg and Media3 both run through MediaCodec; a wedged transcode shows up here.
-    echo "--- dumpsys media.player ---"; adb shell dumpsys media.player 2>&1 || true
+    echo "--- dumpsys media.player ---"; adbq shell dumpsys media.player 2>&1 || true
     echo "--- logcat -d (tail 400, includes the SIGQUIT dump) ---"
-    adb logcat -d 2>&1 | tail -400 || true
+    adbq logcat -d 2>&1 | tail -400 || true
   } >> "$WEDGE_LOG" 2>&1 || true
   echo "::warning::E2E api${LABEL} WEDGED ($1) -- see the wedge-diagnostics-api${LABEL} artifact"
 }
 
 echo "::group::E2E api${LABEL}"
-adb shell cat /proc/meminfo 2>&1 | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
+# Bounded like the probes in the two diagnostic functions, and for the same reason. This one runs
+# against a freshly booted emulator rather than a wedged one, so it is the least likely of them to
+# hang -- but it is still a `|| true` diagnostic, and the rule this file now states is that a
+# diagnostic must never be the thing that ends the leg.
+adbq shell cat /proc/meminfo 2>&1 | grep -E 'MemTotal|MemAvailable|SwapTotal' || true
 
 status=0
 # -k 30s SIGKILLs a gradle client that ignores SIGTERM. The wrapper covers ONLY the foreground
