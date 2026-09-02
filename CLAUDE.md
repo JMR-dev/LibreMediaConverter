@@ -130,9 +130,9 @@ install for code that can never run — and on API 37 the full APK does not fit 
 - The `model` package is excluded from `ReturnCount` and `CyclomaticComplexMethod` only. It is the
   decision layer, where one branch is one documented user-visible outcome and the metric counts
   answers rather than complexity. Every other rule still applies there.
-- **Coverage is reported, not gated** — **88.9% of lines (2087/2348), 75.4% of branches
-  (1011/1340)**, measured 2026-08-29 with `./gradlew :app:jacocoTestReport`, against 546 JVM tests
-  in 76 classes.
+- **Coverage is reported, not gated** — **92.8% of lines (2183/2352), 81.3% of branches
+  (1091/1342)**, measured 2026-09-02 with `./gradlew :app:jacocoTestReport`, against 584 JVM tests
+  in 87 classes.
 
   **Every figure this file carried before 2026-08-24 was an artifact, roughly half the real one.**
   Robolectric loads classes through its own sandbox classloader with no source location, JaCoCo
@@ -173,6 +173,66 @@ install for code that can never run — and on API 37 the full APK does not fit 
   Be careful quoting a branch move on its own for that reason. A percentage that rises because the
   denominator shrank is not the same claim as one that rises because more branches are tested, and
   this entry has a history of explaining its own numbers wrongly.
+
+  Then wave 3 (#167-#178) on 2026-09-02 — 88.9% -> 92.8% line, 75.4% -> **81.3%** branch, 546 ->
+  584 tests, in ten PRs from #179 to #188.
+
+  **Its shape is different from the two before it, and the difference is the thing to carry
+  forward.** Waves 1 and 2 were finding uncovered code. By wave 3 there was not much of that left,
+  so the gaps were sorted into two kinds before any test was written:
+
+  - **coverage gaps** — the line never executes. Filtered to sites where JaCoCo reports `mi > 0`, a
+    concrete instruction no test runs, which is what separates a real gap from a partial branch on
+    a compound condition. That filter cut the candidate list roughly in half and was right to.
+  - **assertion gaps** — JaCoCo is green and nothing checks the answer. `MainActivity`'s rail and
+    bottom bar were both *executed* by `AppRootRestorationTest` and **transposing them passed the
+    entire suite**; so did swapping the two progress-notification strings, and swapping `Content`'s
+    two destinations. No coverage number would ever have found any of the three.
+
+  So **every ticket named the mutation that had to go red, and that was its acceptance criterion
+  rather than a coverage delta**. It caught **two vacuous tests written in the same session**,
+  before either shipped:
+
+  - a `firstContainerHolding` test asserting a refusal still offered *something*. True, and
+    useless: the source container is a candidate in its own right, so the list stays non-empty
+    whatever the fallback does. What it actually buys is the codec the user asked for.
+  - a staged-delete test scanning for a `"join-"` prefix `StagingNames.forJob` does not produce —
+    it names files `<jobId>.<ext>`, so the assertion was true of everything.
+
+  It also corrected a *third* test that was not vacuous: `probeForConcat`'s KDoc claimed to drive
+  the `catch` arm, and rethrowing from that catch left it green. That is how the arm turned out to
+  be unreachable — see the next paragraph. A passing test with a wrong explanation is its own
+  failure mode.
+
+  **A green mutation is only evidence when the mutation is a real change**, which is the mirror
+  trap: one `classify` mutation stayed green because reordering two arms was semantically
+  equivalent for every reachable input. A bad mutation and a weak test look identical in the output.
+
+  Three things came back **not as the ticket described them**, which is a result rather than a
+  shortfall:
+
+  - `ContainerCapabilities:282`'s `exclude` filter **cannot drop anything**. `repair` always
+    changes a codec on the shared container — a codec it left alone is one `validate` would not
+    have refused — and the one non-default `exclude` carries `COPY` while every candidate carries
+    `NONE`. F4-shaped.
+  - `probeForConcat`'s catch arm is **unreachable on this runtime**. Robolectric's `MediaExtractor`
+    never throws from `setDataSource`, measured across an unregistered `content://` authority, a
+    missing `file://`, a file of garbage bytes and an `http://` URL — all four returned with
+    `trackCount = 0`. It stays device-only.
+  - `JobSnapshots:31`'s missed arm was **not** the `!isFile` one the ticket named — that is already
+    covered by the `reclaimed` fixture. It was `path == null`: a job carrying no output path at
+    all. Read the report, not the ticket, when the two disagree.
+
+  One item was **included against** the F4 rule rather than exempted by it, and the distinction is
+  worth having written down since both live in the same function: `ContainerCapabilities:94`
+  (`accepts(container, VideoCodec.NONE, mode)`) is dead in production today — every caller guards
+  `NONE` first — and was tested anyway, because its audio twin at `:101` has had a test since #136
+  and the asymmetry was the argument. The `COPY -> error(...)` arms beside it stay exempt, because
+  a second line of defence that can be provoked is not one.
+
+  Denominators moved here too, in both directions and for two different reasons: 1340 -> 1342
+  branches from `MediaProbe.merge`, 2348 -> 2352 lines from the `ConcatJoiner` interface. Neither
+  is new untested code.
 
   And **re-measure before quoting**: this entry was once written quoting 81.4%, measured four hours
   earlier, and was already three points stale by the time it was ready to merge.
