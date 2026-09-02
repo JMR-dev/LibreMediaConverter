@@ -206,6 +206,34 @@ class FileCardTest {
     }
 
     /**
+     * A video the app knows a great deal about and cannot name the container of.
+     *
+     * Not an edge case. `InputProbe.container`'s own KDoc says `MediaExtractor` cannot report a
+     * container at all -- it comes from FFprobe -- so any run where FFprobe did not answer produces
+     * exactly this: real codec, real dimensions, real duration, `container = null`.
+     *
+     * **The twin was already tested and this one was not**, which is the argument for adding it.
+     * `FileCard` renders `probe.container?.label ?: "Unknown"` twice, once in the `AUDIO_ONLY`
+     * branch (`ConverterScreen.kt:660`) and once in the `VIDEO` branch (`:668`), and
+     * `an audio-only file nothing else could describe degrades one row at a time` drives only the
+     * first. Same expression, same fallback, one kind covered. That asymmetry is the same one
+     * `CLAUDE.md` records for including `ContainerCapabilities:94`.
+     *
+     * The other rows are asserted alongside so this is not a copy of the audio-only case: there,
+     * everything is unknown at once; here, one field is missing from a probe that is otherwise
+     * complete, and the rest must be unaffected by it.
+     */
+    @Test
+    fun `a video file whose container nothing identified says so and keeps its other rows`() {
+        setFileCard(input(probe = VIDEO_PROBE.copy(container = null)))
+
+        assertRow("Container", "Unknown")
+        assertRow("Video", "${VideoCodec.H264.label} · 1920×1080")
+        assertRow("Audio", AudioCodec.AAC.label)
+        assertRow("Length", "1:30")
+    }
+
+    /**
      * The row is one node, not a label node beside a value node. A test matching on `"Container"`
      * alone would pass against either shape.
      */
