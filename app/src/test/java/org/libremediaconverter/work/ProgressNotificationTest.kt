@@ -21,8 +21,10 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.libremediaconverter.convert.ConversionDependencies
+import org.libremediaconverter.convert.HardwareTranscoder
 import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.convert.installTestWorkManager
+import org.libremediaconverter.model.Container
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.DeviceCodecs
 import org.libremediaconverter.model.EnginePreference
@@ -130,6 +132,40 @@ class ProgressNotificationTest {
     }
 
     /**
+     * The same plumbing on the engine most conversions actually use, which had none.
+     *
+     * `ConversionWorker.kt:208-210` is a second `onProgress` lambda at a second call site — the one
+     * handed to `engine.transcode` — and it reported `ci == 0`. Every test above drives the FFmpeg
+     * path; `HardwareFallbackTest` reaches `runMedia3OrFallBack` but its recording transcoder
+     * records the call and never invokes the callback it was given. So the two engines' progress
+     * wiring was one tested and one not, and the untested one is the default: `ConversionRouter`
+     * sends everything it can to Media3.
+     *
+     * `AUTO` with a real H.264 probe, because `FORCE_SOFTWARE` is precisely what keeps the other
+     * tests out of this branch. The probe and the permissive codec profile are what let the router
+     * choose Media3 at all — `InputProbe()` reports `UNPARSEABLE`, which routes straight to FFmpeg.
+     *
+     * Asserted on the *percentage*, not merely on an update having happened: `publishProgress`
+     * takes a display name and a percent, and replacing the percent with a constant compiles.
+     */
+    @Test
+    fun `progress from the hardware engine reaches WorkManager the same way FFmpeg's does`() {
+        ConversionDependencies.probe = { _, _ -> H264_SOURCE }
+        val reporting = ReportingHardwareTranscoder { onProgress -> onProgress(PERCENT) }
+        ConversionDependencies.hardware = { reporting }
+
+        runBlocking { workerReporting(EnginePreference.AUTO) { }.doWork() }
+
+        assertEquals("the job must have gone to the hardware engine", 1, reporting.attempts)
+        val progressUpdates = updater.infos.drop(1)
+        assertEquals("one throttled progress update expected", 1, progressUpdates.size)
+        assertEquals(
+            PERCENT,
+            progressUpdates.single().notification.extras.getInt(Notification.EXTRA_PROGRESS),
+        )
+    }
+
+    /**
      * A worker routed to the software engine, whose engine is [report] and a written output.
      *
      * `FORCE_SOFTWARE` because it is the one preference that decides without consulting the input,
@@ -137,7 +173,10 @@ class ProgressNotificationTest {
      * bridge, which is native. [report] is handed the worker's own progress callback, and runs with
      * the worker as its receiver so a test can stop it mid-transcode.
      */
-    private fun workerReporting(report: ConversionWorker.((Int) -> Unit) -> Unit): ConversionWorker {
+    private fun workerReporting(
+        enginePreference: EnginePreference = EnginePreference.FORCE_SOFTWARE,
+        report: ConversionWorker.((Int) -> Unit) -> Unit,
+    ): ConversionWorker {
         val worker = TestListenableWorkerBuilder<ConversionWorker>(
             context = app,
             inputData = workDataOf(
@@ -147,7 +186,7 @@ class ProgressNotificationTest {
                 ConversionWorker.KEY_CONTAINER to SPEC.container.name,
                 ConversionWorker.KEY_VIDEO_CODEC to SPEC.videoCodec.name,
                 ConversionWorker.KEY_AUDIO_CODEC to SPEC.audioCodec.name,
-                ConversionWorker.KEY_ENGINE_PREFERENCE to EnginePreference.FORCE_SOFTWARE.name,
+                ConversionWorker.KEY_ENGINE_PREFERENCE to enginePreference.name,
             ),
             runAttemptCount = 0,
         ).setId(JOB_ID)
@@ -171,6 +210,17 @@ class ProgressNotificationTest {
         const val TICKS = 50
         val SPEC = OutputFormat.MP4_H265.spec
         val JOB_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000021")
+
+        /**
+         * A probe the router can actually route. `InputProbe()` reports `UNPARSEABLE`, which
+         * `PERMISSIVE.canDecode` refuses, so every job would reach FFmpeg with no test saying why.
+         */
+        val H264_SOURCE = InputProbe(
+            videoCodec = "h264",
+            audioCodec = "aac",
+            container = Container.MP4,
+            durationMs = 1_000,
+        )
     }
 }
 
@@ -209,5 +259,24 @@ private class ReportingTranscoder(private val report: ((Int) -> Unit) -> Unit) :
 
     private companion object {
         const val OUTPUT_BYTES = 512
+    }
+}
+
+/** A hardware engine that reports whatever [report] wants reported, then writes an output. */
+@UnstableApi
+private class ReportingHardwareTranscoder(private val report: ((Int) -> Unit) -> Unit) : HardwareTranscoder {
+
+    var attempts = 0
+
+    override suspend fun transcode(input: Uri, output: File, request: ConversionRequest, onProgress: (Int) -> Unit) {
+        attempts++
+        report(onProgress)
+        output.writeBytes(ByteArray(OUTPUT_BYTES))
+    }
+
+    override fun close() = Unit
+
+    private companion object {
+        const val OUTPUT_BYTES = 16
     }
 }
