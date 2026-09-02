@@ -28,6 +28,7 @@ class TagTableUniquenessTest {
     fun `every tag constant has its own value`() {
         val tags = tagsIn(
             TestTags::class.java,
+            TestTags.Shell::class.java,
             TestTags.Converter::class.java,
             TestTags.Join::class.java,
         )

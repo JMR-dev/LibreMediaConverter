@@ -24,9 +24,11 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.media3.common.util.UnstableApi
 import org.libremediaconverter.convert.ConverterScreen
 import org.libremediaconverter.join.JoinScreen
+import org.libremediaconverter.ui.TestTags
 import org.libremediaconverter.ui.theme.LibreMediaConverterTheme
 
 /**
@@ -114,7 +116,7 @@ internal fun AppRoot(
 
     if (useRail) {
         Row(modifier = Modifier.fillMaxSize()) {
-            NavigationRail {
+            NavigationRail(modifier = Modifier.testTag(TestTags.Shell.NAVIGATION_RAIL)) {
                 Destination.entries.forEach { item ->
                     NavigationRailItem(
                         selected = destination == item,
@@ -132,7 +134,7 @@ internal fun AppRoot(
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             bottomBar = {
-                NavigationBar {
+                NavigationBar(modifier = Modifier.testTag(TestTags.Shell.NAVIGATION_BAR)) {
                     Destination.entries.forEach { item ->
                         NavigationBarItem(
                             selected = destination == item,
