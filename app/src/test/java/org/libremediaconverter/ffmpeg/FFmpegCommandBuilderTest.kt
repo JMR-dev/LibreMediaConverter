@@ -190,6 +190,30 @@ class FFmpegCommandBuilderTest {
         assertPair(cmd(OutputFormat.M4A_AAC), "-b:a", "192k")
     }
 
+    /**
+     * Turning audio off, which the Advanced picker offers and nothing had ever built a command for.
+     *
+     * `audioArgs`' `Drop` arm was `ci == 0`. The suite's only `-an` assertion is in
+     * `gif generates a palette to avoid banding and drops audio`, and that one comes from the image
+     * path (`FFmpegCommandBuilder.kt:79`/`:90`), which emits `-an` directly and never reaches
+     * `audioArgs`. Two sites, one string, one tested.
+     *
+     * It is a live path rather than defensive code: `AdvancedPicker` renders all of
+     * `AudioCodec.entries` including `NONE`, `ContainerCapabilities.validate` permits audio-off
+     * whenever the input has video, and MKV routes the job to FFmpeg.
+     *
+     * Both halves are asserted. `-an` alone would still pass if the arm fell through to the `else`
+     * and emitted an AAC encoder beside it -- a file that is silent because the flag won, carrying
+     * an encoder nobody asked for.
+     */
+    @Test
+    fun `turning audio off drops the track instead of encoding one`() {
+        val args = cmd(OutputSpec(Container.MKV, VideoCodec.H264, AudioCodec.NONE))
+
+        assertTrue("audio turned off must emit -an, got $args", args.contains("-an"))
+        assertFalse("a dropped track must not also carry an encoder, got $args", args.contains("-c:a"))
+    }
+
     @Test
     fun `audio only formats never carry a video encoder`() {
         listOf(OutputFormat.MP3, OutputFormat.FLAC, OutputFormat.WAV, OutputFormat.OPUS)
