@@ -451,6 +451,99 @@ class ContainerCapabilitiesTest {
         }
     }
 
+    /**
+     * The video twin of `no audio track is accepted by every container in both modes`.
+     *
+     * Dead in production today, and deliberately so: every caller guards `NONE` before asking the
+     * matrix, so nothing reaches this arm through the app. **The asymmetry is the argument, not the
+     * reachability** -- its audio counterpart at the top of the same `when` has had a dedicated
+     * test since #136, and one of a matched pair being covered is how a later reader concludes the
+     * other was considered and exempted. It was not; it was simply missed.
+     *
+     * Not the same shape as the two `COPY -> error(...)` arms, which `docs/coverage-read-findings.md`
+     * records as a named exemption (F4). Those are guards that must not be provokable. This is a
+     * documented answer -- "no video track fits anywhere" -- and an answer is a thing to pin.
+     */
+    @Test
+    fun `no video track is accepted by every container in both modes`() {
+        Container.entries.forEach { container ->
+            listOf(CodecMode.COPY, CodecMode.ENCODE).forEach { mode ->
+                assertTrue(
+                    "$container should accept no video track ($mode)",
+                    ContainerCapabilities.accepts(container, VideoCodec.NONE, mode),
+                )
+            }
+        }
+    }
+
+    /**
+     * A suggestion that keeps the codec the user asked for, rather than falling back to the
+     * container's first encodable one.
+     *
+     * `repairVideo`'s third arm -- "the request is not a copy, and this container can encode it" --
+     * is the one that preserves intent, and it was the only arm of the four nothing reached. The
+     * property test above executes `repairVideo` on every case it walks and lands elsewhere each
+     * time: an explicit COPY that works, a source the container can carry untouched, or no video
+     * track at all.
+     *
+     * The route is indirect because it is the only one the app has. VP9 into WebM is a perfectly
+     * good video request; what makes it invalid is the *audio* -- WebM carries Opus and Vorbis, not
+     * AAC. So `validateAudio` refuses, `suggestions` looks for a container that can hold what was
+     * asked for, and MP4 can encode VP9. The suggestion has to come back carrying VP9: swapping to
+     * the container's first encodable codec would discard the choice the user made.
+     */
+    @Test
+    fun `a repaired suggestion keeps the video codec the user chose`() {
+        val invalid = ContainerCapabilities.validate(
+            OutputSpec(Container.WEBM, VideoCodec.VP9, AudioCodec.AAC),
+            h264Source,
+        )
+
+        assertTrue("WebM cannot hold AAC, so this spec is invalid", invalid is Validation.Invalid)
+        val suggestions = (invalid as Validation.Invalid).suggestions
+        assertTrue(
+            "expected a suggestion that still encodes VP9, got $suggestions",
+            suggestions.any { it.videoCodec == VideoCodec.VP9 },
+        )
+        assertEverySuggestionValid(invalid, h264Source)
+    }
+
+    /**
+     * The fallback in `firstContainerHolding`: when the input's own container cannot hold the
+     * codec the user asked for, any container that can will do.
+     *
+     * The preferred half -- "the container the input already uses" -- is what every other case
+     * reaches, because they all start from a file whose own container carries the codec in
+     * question. The elvis after it had never run.
+     *
+     * AVI is the input that makes it run: AVI predates H.265 and has no mapping for it, so asking
+     * an AVI for H.265 is refused, and the container the input already uses cannot be part of the
+     * answer. Without the fallback the only candidates left are AVI itself and the container
+     * holding the *source* codec -- also AVI -- so the refusal still offers something, but what it
+     * offers is H.264: the app quietly declines the codec the user asked for instead of moving them
+     * to a container that supports it.
+     *
+     * That is why this asserts the codec survives rather than that the list is non-empty. A
+     * non-empty assertion passes with the fallback deleted -- measured, not assumed.
+     */
+    @Test
+    fun `an input whose container cannot hold the requested codec is moved, not downgraded`() {
+        val aviSource = InputProbe(videoCodec = "h264", audioCodec = "aac", container = Container.AVI)
+
+        val invalid = ContainerCapabilities.validate(
+            OutputSpec(Container.AVI, VideoCodec.H265, AudioCodec.AAC),
+            aviSource,
+        )
+
+        assertTrue("AVI has no mapping for H.265", invalid is Validation.Invalid)
+        val suggestions = (invalid as Validation.Invalid).suggestions
+        assertTrue(
+            "expected a container that can actually hold H.265, got $suggestions",
+            suggestions.any { it.videoCodec == VideoCodec.H265 },
+        )
+        assertEverySuggestionValid(invalid, aviSource)
+    }
+
     @Test
     fun `resolving audio COPY before asking the matrix is required`() {
         // The audio twin of `resolving COPY before asking the matrix is required`, and the reason is

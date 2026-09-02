@@ -7,6 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.libremediaconverter.model.CodecNames
+import org.libremediaconverter.model.InputProbe
 import org.libremediaconverter.model.VideoCodec
 
 /**
@@ -133,6 +134,38 @@ class CodecVocabularyTest {
      * landed, a device with no HEVC decoder answered true for `x265` and Media3 was handed a job it
      * could not do; now the router sends it to FFmpeg without spending the attempt.
      */
+    /**
+     * The sentinel is not just another unknown name, and the difference is the whole guard.
+     *
+     * `canDecode` ends `?: true` -- a name neither table knows keeps the permissive answer, because
+     * the app would rather try than refuse a file it might handle. `InputProbe.UNPARSEABLE` has to
+     * be the exception: the platform has *already* failed to parse the input, so there is nothing
+     * for a decoder to be permissive about, and waving it through spends a Media3 attempt on a job
+     * that cannot start.
+     *
+     * The `cinepak` line is what makes the sentinel line mean something. Without it, deleting the
+     * early return leaves this test green -- both names would fall through to the same `?: true`.
+     * The pair is the assertion.
+     *
+     * `DeviceCodecs.PERMISSIVE` carries the same rule and `ConversionRouterTest` pins its routing
+     * consequence. This is the implementation that runs on a device.
+     */
+    @Test
+    fun `the unparseable sentinel is refused even where an unknown name is waved through`() {
+        val everything = AndroidDeviceCodecs.forTesting(
+            encoders = emptySet(),
+            decoders = setOf("video/avc", "video/hevc"),
+        )
+        assertFalse(
+            "the platform could not parse this input, so there is nothing to decode with",
+            everything.canDecode(InputProbe.UNPARSEABLE),
+        )
+        assertTrue(
+            "a merely unknown name still keeps the permissive answer",
+            everything.canDecode("cinepak"),
+        )
+    }
+
     @Test
     fun `a device without the decoder now says so for the aliases it used to wave through`() {
         val hevcOnly = AndroidDeviceCodecs.forTesting(encoders = emptySet(), decoders = setOf("video/hevc"))

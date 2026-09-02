@@ -232,6 +232,12 @@ class OutputPublisherPublishTest {
             RowShape.NO_SIZE_COLUMN to "a cursor with no SIZE column",
             RowShape.NULL_SIZE to "a cursor whose SIZE cell is null",
             RowShape.NO_ROWS to "a cursor holding no rows",
+            // The third case the KDoc names -- "a resolver call that throws" -- and the one the
+            // list was missing. It reaches `?: false` through `runCatching` rather than through a
+            // cursor answer, so it is the only one of the four that proves the catch is load
+            // bearing: a provider that revokes its grant between the picker and the write must not
+            // have its document deleted on the way out.
+            RowShape.QUERY_THROWS to "a provider that throws out of query",
         ).forEach { (shape, description) ->
             FakeSafProvider.deleteRequests.clear()
             FakeSafProvider.backingFile(documentUri).writeBytes(ByteArray(0))

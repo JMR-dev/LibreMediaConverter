@@ -16,6 +16,7 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import androidx.work.workDataOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -125,6 +126,39 @@ class JobSnapshotsTest {
         assertEquals(newer.absolutePath, Reattachment.choose(snapshots)?.job?.outputPath)
     }
 
+    /**
+     * A job in the tag query that never recorded an output path at all.
+     *
+     * Distinct from the three cases above, which all *have* a path and differ in what it names. A
+     * job still running, or one that finished without writing its result key, carries no path at
+     * all -- and `getWorkInfosByTagFlow` returns it alongside the finished ones, because the tag is
+     * the worker class and every attempt ever enqueued carries it.
+     *
+     * The guard is the `?.` in `path?.let(::File)`. Without it the null goes straight into a `File`
+     * constructor. What this pins is the consequence rather than the null check: such a job must
+     * not be offered as a result, so `Reattachment.choose` has to walk past it to the job that
+     * really produced a file. Choosing it would put a Converted screen in front of the user with a
+     * Save button that has nothing to save.
+     */
+    @Test
+    fun `a job that recorded no output path is not offered as a result`() {
+        val real = stagedFile("real.mp4", bytes = 4096)
+        finishedWithOutput(real)
+        finishedWithNoOutput()
+
+        val snapshots = snapshots()
+
+        assertEquals("both jobs carry the tag, so both come back", 2, snapshots.size)
+        val silent = snapshots.single { it.outputPath == null }
+        assertFalse("no path means no output, not an empty one", silent.outputExists)
+        assertEquals("and no time either, for the same reason", 0L, silent.outputModifiedAt)
+        assertEquals(
+            "the reattachment has to walk past it to the job that really produced a file",
+            real.absolutePath,
+            Reattachment.choose(snapshots)?.job?.outputPath,
+        )
+    }
+
     private fun snapshots(): List<JobSnapshot> = runBlocking {
         workManager.jobSnapshots(
             tag = ConversionWorker::class.java.name,
@@ -150,6 +184,11 @@ class JobSnapshotsTest {
                 .setInputData(workDataOf(ConversionWorker.KEY_OUTPUT_PATH to output.absolutePath))
                 .build(),
         ).result.get()
+    }
+
+    /** A job that carries the tag and no result key -- still running, or finished without one. */
+    private fun finishedWithNoOutput() {
+        workManager.enqueue(OneTimeWorkRequestBuilder<ConversionWorker>().build()).result.get()
     }
 
     private companion object {
