@@ -166,6 +166,30 @@ class FFmpegCommandBuilderTest {
         assertPair(cmd(OutputFormat.OPUS), "-c:a", "libopus")
     }
 
+    /**
+     * The arm most conversions actually take, and the only one in `audioArgs` with no test.
+     *
+     * `flac wav and opus select the right encoders` above covers the three named arms; MP3 has its
+     * own. AAC arrives through the `else`, so nothing named it and nothing pinned either half of
+     * what it emits -- neither `aac` nor `192k` appeared anywhere in this file. Both are shipped
+     * defaults: MP4 and M4A are the formats the picker offers first, so this is the audio
+     * every ordinary conversion gets.
+     *
+     * The bitrate is asserted as well as the encoder because it is the half a refactor is likelier
+     * to lose. An `-b:a` that quietly changed would not fail anything, would not look wrong in a
+     * command line, and would show up only as files that sound different from the ones the app
+     * produced last month.
+     */
+    @Test
+    fun `aac is the default encoder, at the bitrate the app ships`() {
+        assertPair(cmd(OutputFormat.MP4_H264), "-c:a", "aac")
+        assertPair(cmd(OutputFormat.MP4_H264), "-b:a", "192k")
+        // Through the `else` rather than through a named arm, so an AAC branch added above it later
+        // has to keep answering the same way.
+        assertPair(cmd(OutputFormat.M4A_AAC), "-c:a", "aac")
+        assertPair(cmd(OutputFormat.M4A_AAC), "-b:a", "192k")
+    }
+
     @Test
     fun `audio only formats never carry a video encoder`() {
         listOf(OutputFormat.MP3, OutputFormat.FLAC, OutputFormat.WAV, OutputFormat.OPUS)
