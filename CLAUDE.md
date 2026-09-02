@@ -184,10 +184,28 @@ install for code that can never run — and on API 37 the full APK does not fit 
   - **coverage gaps** — the line never executes. Filtered to sites where JaCoCo reports `mi > 0`, a
     concrete instruction no test runs, which is what separates a real gap from a partial branch on
     a compound condition. That filter cut the candidate list roughly in half and was right to.
+    **Wave 4 found it wrong in both directions, though — use the two filters below instead.**
   - **assertion gaps** — JaCoCo is green and nothing checks the answer. `MainActivity`'s rail and
     bottom bar were both *executed* by `AppRootRestorationTest` and **transposing them passed the
     entire suite**; so did swapping the two progress-notification strings, and swapping `Content`'s
     two destinations. No coverage number would ever have found any of the three.
+
+  **Wave 4 (2026-09-02) corrected that first filter, and the correction is the reusable part.**
+  `mi > 0` fails in both directions. It *over-reports* on Compose: `JoinScreen.kt:222` reads
+  `mi=10` and also `ci=38`, and `JoinStateAffordancesTest` already clicks that Save button and
+  asserts `save:joined.mp4` — the missed instructions are the synthesized `$changed`/`$dirty`
+  recomposition-skip path, the same codegen this file already warns about for *branch* counts,
+  showing up in the instruction count too. And it *under-reports* on warm methods with cold arms:
+  `ConversionViewModel.cancel()` misses no line, yet `activeWorkId?.let(...)` had only ever been
+  entered on the null side in 584 tests. Use two filters together instead:
+
+  - **`ci == 0`** — the line never executed. This is JaCoCo's own missed-line definition, so it
+    totals exactly the reported missed-line count and needs no judgement.
+  - **`ci > 0 && mb > 0` at method level** — a covered method with an arm nothing takes. This is
+    the only one that finds the `cancel()` shape.
+
+  Of wave 4's 251 missed branches, just **18** sat on lines that do execute, so the branch gap and
+  the line gap are largely the same gap; the second filter is about which of them are reachable.
 
   So **every ticket named the mutation that had to go red, and that was its acceptance criterion
   rather than a coverage delta**. It caught **two vacuous tests written in the same session**,
@@ -236,6 +254,35 @@ install for code that can never run — and on API 37 the full APK does not fit 
 
   And **re-measure before quoting**: this entry was once written quoting 81.4%, measured four hours
   earlier, and was already three points stale by the time it was ready to merge.
+
+  **Wave 4's read (2026-09-02) moved no number at all, and that is its result.** It was a triage
+  rather than a test push: twelve tickets (**#192-#203**), four deferred candidates (**#204**), and
+  five findings (**F6-F10** in `docs/coverage-read-findings.md`). What it establishes is the shape
+  of what is left, which is different again from wave 3's:
+
+  - Of 169 never-executed lines, **81 are native or device edges and stay that way** —
+    `FFmpegEngine` 33, `Media3Engine` 24, `ConcatEngine` 14, `MainActivity.onCreate` 10 — their
+    zeroes being the `testDebugUnitTest`-only measurement boundary that #84, #85, #86 and #88 each
+    recorded before. A further **34 are device-bound only until a seam moves them**:
+    `AndroidDeviceCodecs` 20 (#194) and the 14 of `MediaProbe`'s 26 that are `readMediaInformation`
+    (#195). Do not read that second group as exempt — the two tickets exist because it is not.
+  - Most of the rest is **already closed with a reason on record**, or compiler-generated: default-arg
+    bridges, DI factory lambdas, synthetic `NoWhenBranchMatchedException` arms, coroutine completion.
+  - Six of the ten findings in that document are now "no action" or "not a test gap". By this point
+    the report's remaining red is mostly arms nothing can reach, members nothing calls, and arms a
+    test *can* reach but cannot pin — and a coverage number tells none of them apart.
+
+  **The biggest single gap it found was not a missed line.** `ConversionViewModel.cancel()` and
+  `JoinViewModel.cancel()` report every line covered; only the null arm of
+  `activeWorkId?.let(workManager::cancelWorkById)` had ever been entered, so nothing in 584 tests
+  connected the Cancel button to WorkManager (#192). That is what the second filter above is for.
+
+  It also re-opened a mechanism, not a close: #86 and #133 ruled `AndroidDeviceCodecs.probe()` out
+  **through `ShadowMediaCodecList`**, on the grounds that the builder cannot set `isAlias` or
+  `canonicalName`. A pure seam does not have that constraint, and #133 did not evaluate one. Read
+  #194 before re-arguing either way — and note the reason it is worth cutting is not coverage but
+  that the `runCatching` fallback logs "assuming permissive" while returning empty sets, which makes
+  `canEncode` and `canDecode` answer *no* for everything.
 - **Testable code is not done until it is tested.** If a piece is unit testable, it gets unit
   tests before it counts as done. If it is e2e testable, it gets e2e tests. Both clauses apply —
   a change that is both needs both.
