@@ -56,6 +56,20 @@ object TestTags {
      */
     const val RETRY_SAVE: String = "action.retrySave"
 
+    /**
+     * The adaptive shell around both screens -- `AppRoot`'s two layouts.
+     *
+     * Named because there is no other way to tell them apart from a test. Both render the same two
+     * destinations with the same labels and the same selection state, so every assertion that could
+     * be written without these tags is satisfied by either layout, and transposing the two bodies
+     * passed the whole suite. Exactly one of the two exists at a time, which is what makes
+     * `assertExists` / `assertDoesNotExist` on this pair a statement about the width class.
+     */
+    object Shell {
+        const val NAVIGATION_RAIL: String = "shell.navigationRail"
+        const val NAVIGATION_BAR: String = "shell.navigationBar"
+    }
+
     /** `ConverterScreen`. */
     object Converter {
         const val CHOOSE_FILE: String = "converter.chooseFile"
