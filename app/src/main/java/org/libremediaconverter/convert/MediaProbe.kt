@@ -221,12 +221,39 @@ object MediaProbe {
         null
     }
 
-    private fun readMediaInformation(path: String): FFprobeInfo? {
-        // ffmpeg-kit-next is compiled from Kotlin with private backing fields, so these have to go
-        // through the Java getters rather than property syntax.
-        val info: MediaInformation = FFprobeKit.getMediaInformation(path).getMediaInformation()
-            ?: return null
+    /**
+     * The thin edge: spawn FFprobe, hand what it said to [ffprobeInfoFrom].
+     *
+     * Everything device-bound is on this line and the null check under it. What FFprobe *said* is a
+     * `MediaInformation`, which is an ordinary object over a `JSONObject` — so the reading of it is
+     * a decision a test can choose the inputs for, and it lives below rather than here.
+     */
+    private fun readMediaInformation(path: String): FFprobeInfo? =
+        FFprobeKit.getMediaInformation(path).getMediaInformation()?.let(::ffprobeInfoFrom)
 
+    /**
+     * What FFprobe's answer means, as a function of the answer alone.
+     *
+     * `internal` for the same reason [Extracted] and [FFprobeInfo] are: a test cannot name it
+     * otherwise, and the JVM test source set is a friend of `main`.
+     *
+     * **JVM-safe, verified rather than assumed.** `javap` over the committed AAR's runtime jar:
+     * `MediaInformation(JSONObject, List<StreamInformation>, List<Chapter>)` and
+     * `StreamInformation(JSONObject)` are plain public constructors, and neither class's `<clinit>`
+     * touches the native library — so a test builds its own without `libffmpegkit` being present.
+     * That is the whole reason this split is worth making: `readMediaInformation` was 114 missed
+     * instructions and 24 missed branches, of which exactly one line needed a device.
+     *
+     * The subtle part is the **second argument to [containerFrom]**. `matroska,webm` is reported
+     * for both MKV and WebM — they share a demuxer — so the video codec is the only thing that
+     * separates them, and dropping it silently turns every VP9 WebM into an MKV. `containerFrom`
+     * has thirty-three covered branches of its own and none of them can notice that, because the
+     * mistake is at the call rather than in the callee.
+     *
+     * ffmpeg-kit-next is compiled from Kotlin with private backing fields, so these go through the
+     * Java getters rather than property syntax.
+     */
+    internal fun ffprobeInfoFrom(info: MediaInformation): FFprobeInfo {
         val streams = info.getStreams().orEmpty()
         val video = streams.firstOrNull { it.getType() == "video" }
         val audio = streams.firstOrNull { it.getType() == "audio" }
