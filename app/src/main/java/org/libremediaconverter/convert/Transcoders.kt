@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import org.libremediaconverter.codec.AndroidDeviceCodecs
+import org.libremediaconverter.ffmpeg.ConcatEngine
 import org.libremediaconverter.ffmpeg.FFmpegEngine
 import org.libremediaconverter.model.ConversionRequest
 import org.libremediaconverter.model.DeviceCodecs
@@ -41,6 +42,27 @@ interface SoftwareTranscoder {
 }
 
 /**
+ * The join path. Implemented by [org.libremediaconverter.ffmpeg.ConcatEngine].
+ *
+ * Added last of the three, and the gap it closes was measured rather than guessed:
+ * `PerJobStagingTest`'s KDoc records that reverting `ConcatWorker` to a constant staging name left
+ * all 257 tests green, because nothing in the JVM suite can get past a `ConcatEngine` constructed
+ * in place. Everything after that line -- the failure mapping, the message fallback, the staged
+ * delete -- was untested on every source set.
+ *
+ * The result type stays nested in the implementation rather than being lifted here. Moving it would
+ * touch every call site to buy nothing: what a test needs is the ability to *not* run FFmpeg, and
+ * that is the method, not the type.
+ */
+interface ConcatJoiner {
+    suspend fun join(
+        inputs: List<Uri>,
+        output: File,
+        format: OutputFormat = OutputFormat.MP4_H264,
+    ): ConcatEngine.Result
+}
+
+/**
  * The seam that lets tests force failure paths.
  *
  * Workers are constructed by WorkManager, so they cannot take constructor arguments,
@@ -68,6 +90,9 @@ object ConversionDependencies {
 
     @Volatile
     var software: () -> SoftwareTranscoder = { FFmpegEngine() }
+
+    @Volatile
+    var concat: (Context) -> ConcatJoiner = { ConcatEngine(it) }
 
     @Volatile
     var publisher: (Context) -> OutputPublisher = { OutputPublisher(it) }
@@ -103,6 +128,7 @@ object ConversionDependencies {
     fun reset() {
         hardware = { Media3Engine(it) }
         software = { FFmpegEngine() }
+        concat = { ConcatEngine(it) }
         publisher = { OutputPublisher(it) }
         deviceCodecs = { AndroidDeviceCodecs.get() }
         probe = { context, uri -> MediaProbe.probe(context, uri) }
