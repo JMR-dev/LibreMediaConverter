@@ -15,7 +15,6 @@ import kotlinx.coroutines.CancellationException
 import org.libremediaconverter.convert.ConversionDependencies
 import org.libremediaconverter.convert.InputQuery
 import org.libremediaconverter.convert.StagingNames
-import org.libremediaconverter.ffmpeg.ConcatEngine
 import org.libremediaconverter.model.OutputFormat
 
 /**
@@ -37,7 +36,7 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
     override suspend fun doWork(): Result {
         val uris = inputData.getStringArray(KEY_INPUT_URIS)?.map(Uri::parse)
-            ?: return Result.failure(workDataOf(KEY_ERROR to "No input files."))
+            ?: return Result.failure(workDataOf(KEY_ERROR to NO_INPUTS_MESSAGE))
         if (uris.size < 2) {
             return Result.failure(workDataOf(KEY_ERROR to TOO_FEW_INPUTS_MESSAGE))
         }
@@ -77,7 +76,7 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 ),
             )
 
-            val result = ConcatEngine(applicationContext).join(uris, staged, format)
+            val result = ConversionDependencies.concat(applicationContext).join(uris, staged, format)
             Result.success(
                 workDataOf(
                     KEY_OUTPUT_PATH to staged.absolutePath,
@@ -148,6 +147,16 @@ class ConcatWorker(context: Context, params: WorkerParameters) : CoroutineWorker
          * Here rather than in the ViewModel because the rule is the worker's: `request(...)` takes
          * a `List<Uri>` and checks nothing about its length, so this is the guard that always runs.
          */
+        /**
+         * A job carrying no input array at all -- a downgrade, or a queue entry from a build that
+         * spelled the key differently.
+         *
+         * A constant rather than the literal it was, for the convention #158 established: a message
+         * the user can see is named once, so a test asserts the same string the worker writes
+         * rather than a copy of it that can drift.
+         */
+        const val NO_INPUTS_MESSAGE: String = "No input files."
+
         const val TOO_FEW_INPUTS_MESSAGE: String = "Pick at least two files to join."
 
         /**

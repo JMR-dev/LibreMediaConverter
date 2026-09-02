@@ -7,6 +7,7 @@ import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.libremediaconverter.convert.ConcatJoiner
 import org.libremediaconverter.convert.MediaProbe
 import org.libremediaconverter.convert.StagingNames
 import org.libremediaconverter.model.ConcatPlanner
@@ -24,11 +25,11 @@ import kotlin.coroutines.resumeWithException
  * reliably fail when they differ — it can emit a file whose later segments are
  * garbled. See [ConcatPlanner].
  */
-class ConcatEngine(private val context: Context) {
+class ConcatEngine(private val context: Context) : ConcatJoiner {
 
     data class Result(val strategy: ConcatStrategy, val output: File)
 
-    suspend fun join(inputs: List<Uri>, output: File, format: OutputFormat = OutputFormat.MP4_H264): Result {
+    override suspend fun join(inputs: List<Uri>, output: File, format: OutputFormat): Result {
         require(inputs.size >= 2) { "Joining needs at least two files." }
 
         val paths = inputs.map { uri ->
