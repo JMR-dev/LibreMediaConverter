@@ -51,10 +51,13 @@ import java.io.File
  *   here needs. `OutputPublisherPublishTest` owns what a real publish writes.
  * - **The screen's two buttons.** `ConverterStateAffordancesTest` and `JoinStateAffordancesTest`
  *   own what each state renders; this file owns what each state carries.
- * - **`ConverterScreen`'s `destinationMime` line itself.** It lives in the entry point, above the
- *   `ScreenContent` seam, and reaching it needs a real ViewModel inside a composition. What it
- *   reads -- `pendingSave()?.mimeType` -- is asserted directly instead, which is why that
- *   derivation was moved out of the entry point in the first place.
+ * - ~~**`ConverterScreen`'s `destinationMime` line itself.**~~ **Withdrawn 2026-09-02 (#201).** The
+ *   exemption read: "it lives in the entry point, above the `ScreenContent` seam, and reaching it
+ *   needs a real ViewModel inside a composition". That was true when written and is no longer:
+ *   `AdaptiveShellTest` (#173) established composing the real screens with real ViewModels, and
+ *   #200 added the `ShadowActivity` mechanics for reading what a launcher launched. `RetrySaveMimeTest`
+ *   now asserts the line directly. What this file still owns is the half below the seam -- what each
+ *   state *carries* -- which is why `pendingSave()?.mimeType` is also asserted here.
  * - **Picking a new input while a `Failed` carries a file.** `onInputPicked` overwrites the state
  *   without discarding, from `Converted` exactly as much as from a carrying `Failed`, and neither
  *   branch renders a picker. It is a pre-existing path this change neither opens nor widens: the
