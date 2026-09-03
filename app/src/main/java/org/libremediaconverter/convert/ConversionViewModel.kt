@@ -673,13 +673,23 @@ class ConversionViewModel @JvmOverloads constructor(
         else -> null
     }
 
-    private fun currentInput(): InputFile? = when (val s = _state.value) {
-        is ConversionState.Ready -> s.input
-        is ConversionState.Converting -> s.input
-        is ConversionState.Waiting -> s.input
-        is ConversionState.Converted -> s.input
-        else -> null
-    }
+    /**
+     * The input `convert()` may act on, which is only ever the one on a `Ready` screen.
+     *
+     * This used to answer for `Converting`, `Waiting` and `Converted` as well. Those arms were not
+     * reachable by tapping Convert -- the button renders only in the `Ready` branch -- but they
+     * were reachable through the POST_NOTIFICATIONS **result**, which `ConverterScreen.kt:91` wires
+     * to `convert()` rather than to the button. Reaching one of them enqueued a *second* job over a
+     * live one: `activeWorkId` was overwritten, and the first job kept running with its foreground
+     * notification orphaned and nothing left holding its id to cancel it.
+     *
+     * Narrowed under #202 rather than tested as it stood, because a test written against the old
+     * shape would have frozen the double-enqueue as intended behaviour -- the F1/F5 failure mode.
+     *
+     * `JoinViewModel.join()` has been `(_state.value as? JoinState.Ready)?.inputs ?: return` all
+     * along. The two screens are the same shape and only one of them was over-general.
+     */
+    private fun currentInput(): InputFile? = (_state.value as? ConversionState.Ready)?.input
 
     private companion object {
         /**
