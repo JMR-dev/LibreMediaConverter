@@ -5,7 +5,6 @@ import android.net.Uri
 import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
-import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.libremediaconverter.convert.ConcatJoiner
 import org.libremediaconverter.convert.MediaProbe
@@ -66,16 +65,16 @@ class ConcatEngine(private val context: Context) : ConcatJoiner {
     private suspend fun execute(args: List<String>) = suspendCancellableCoroutine { cont ->
         Log.i(TAG, "ffmpeg ${args.joinToString(" ")}")
         val session = FFmpegKit.executeWithArgumentsAsync(args.toTypedArray()) { completed ->
-            val rc = completed.getReturnCode()
-            when {
-                ReturnCode.isSuccess(rc) -> cont.resume(Unit)
-                ReturnCode.isCancel(rc) -> cont.cancel()
-                else -> cont.resumeWithException(
-                    FFmpegEngine.FFmpegException(
-                        "Joining failed (${rc?.value}): " +
-                            completed.getAllLogsAsString(LOG_TAIL_LIMIT).orEmpty(),
-                    ),
-                )
+            val outcome = sessionOutcome(
+                rc = completed.getReturnCode(),
+                prefix = "Joining",
+                failStackTrace = { completed.getFailStackTrace() },
+                logTail = { completed.getAllLogsAsString(LOG_TAIL_LIMIT) },
+            )
+            when (outcome) {
+                SessionOutcome.Success -> cont.resume(Unit)
+                SessionOutcome.Cancelled -> cont.cancel()
+                is SessionOutcome.Failed -> cont.resumeWithException(FFmpegEngine.FFmpegException(outcome.message))
             }
         }
         cont.invokeOnCancellation { FFmpegKit.cancel(session.getSessionId()) }
