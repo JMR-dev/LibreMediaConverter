@@ -4,7 +4,6 @@ import android.util.Log
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.Level
-import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.libremediaconverter.convert.SoftwareTranscoder
 import org.libremediaconverter.model.ConversionRequest
@@ -51,19 +50,16 @@ class FFmpegEngine : SoftwareTranscoder {
         val session = FFmpegKit.executeWithArgumentsAsync(
             args.toTypedArray(),
             { completed ->
-                val rc = completed.getReturnCode()
-                when {
-                    ReturnCode.isSuccess(rc) -> cont.resume(Unit)
-                    ReturnCode.isCancel(rc) ->
-                        cont.cancel()
-                    else -> cont.resumeWithException(
-                        FFmpegException(
-                            "FFmpeg failed (${rc?.value}): " +
-                                completed.getFailStackTrace().orEmpty().ifBlank {
-                                    completed.getAllLogsAsString(LOG_TAIL_LIMIT).orEmpty()
-                                },
-                        ),
-                    )
+                val outcome = sessionOutcome(
+                    rc = completed.getReturnCode(),
+                    prefix = "FFmpeg",
+                    failStackTrace = { completed.getFailStackTrace() },
+                    logTail = { completed.getAllLogsAsString(LOG_TAIL_LIMIT) },
+                )
+                when (outcome) {
+                    SessionOutcome.Success -> cont.resume(Unit)
+                    SessionOutcome.Cancelled -> cont.cancel()
+                    is SessionOutcome.Failed -> cont.resumeWithException(FFmpegException(outcome.message))
                 }
             },
             { log -> Log.d(TAG, log.message.trimEnd()) },
